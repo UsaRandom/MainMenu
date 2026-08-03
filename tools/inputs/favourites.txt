@@ -1,0 +1,21 @@
+# Favourite two games, then switch to the Favorites tab and confirm they are there.
+#
+# The tab is a view rebuilt from a filter, not a stored list, so the thing that can go wrong is
+# the view not being rebuilt when the flag changes -- which looks like the toggle doing nothing.
+
+wait 120
+press z             # favourite the first game
+press right x2
+press z             # and a third
+wait 20
+fbdump              # 1: N64 tab, two corner marks
+
+press l x3          # back round to Favorites
+wait 30
+fbdump              # 2: Favorites tab holding exactly those two
+
+press z             # un-favourite one from inside the tab
+wait 20
+fbdump              # 3: one left, view rebuilt under the cursor
+
+exit

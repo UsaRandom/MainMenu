@@ -1,0 +1,18 @@
+# The boot plate, sampled across its 1.64 s timeline.
+#
+# Frame counts assume 60 Hz. The library scan runs before the first frame, so t=0 here is the
+# first drawn frame and not power-on -- which is the honest thing to measure, because the scan is
+# not part of the animation and its duration depends on how many ROMs are on the card.
+
+fbdump              # 1: t=0, mark at 88 % and 22 %
+wait 18
+fbdump              # 2: t~0.30, mid-rise
+wait 16
+fbdump              # 3: t~0.57, full, hold begins
+wait 42
+fbdump              # 4: t~1.27, still holding
+wait 10
+fbdump              # 5: t~1.44, curtain part way up, grid showing underneath
+wait 12
+fbdump              # 6: t~1.64, plate gone
+exit

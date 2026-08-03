@@ -1,0 +1,31 @@
+# Open a game's detail sheet, then its cheat list, toggle two, and come back.
+#
+# The thing worth catching here is that the sheet's "N of M enabled" and the list agree, and
+# that leaving the list and returning does not discard what was ticked -- the set is loaded once
+# per game, not once per visit, and getting that wrong is invisible until you try it.
+
+wait 90
+press right         # AeroGauge: 43 cheats in the database
+press a
+wait 25
+fbdump              # 1: detail sheet with a Cheats row
+
+press z             # into the cheat list
+wait 20
+fbdump              # 2: the list, nothing enabled
+
+press a             # toggle the first
+press down
+press a             # and the second
+wait 15
+fbdump              # 3: two ticked, header count agrees
+
+press r             # page down
+wait 15
+fbdump              # 4: paged, position bar moved
+
+press b             # back to the sheet
+wait 25
+fbdump              # 5: sheet says 2 of 43 enabled
+
+exit

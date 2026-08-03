@@ -14,7 +14,8 @@
  * in the menu system.
  */
 typedef enum {
-    FNT_DEFAULT = 1, /**< Default font type */
+    FNT_DEFAULT = 1, /**< Body text, 15 px */
+    FNT_BOOT = 2,    /**< 32 px, boot plate only; 41-glyph charset, see the Makefile */
 } menu_font_type_t;
 
 /**

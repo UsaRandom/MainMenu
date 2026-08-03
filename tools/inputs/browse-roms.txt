@@ -1,0 +1,29 @@
+# Walk the grid: land, step across a row, drop rows, cross into another tab.
+#
+# The app opens straight on the grid now -- there is no first-run credits screen to dismiss,
+# so frame 0 is already the product.
+
+wait 45             # let the library scan finish and the first frame settle
+fbdump              # 1: grid at rest, selection on the first title
+
+press right x3      # across row 0, exercising repeat and the selection tween
+wait 20
+fbdump              # 2: selection at the end of row 0, column 3 next to the position bar
+
+press down x2       # two rows down, which forces a scroll
+wait 25
+fbdump              # 3: scrolled, position bar thumb moved
+
+press down x6       # deep into the library
+wait 25
+fbdump              # 4: mid-library
+
+press r             # next tab (N64 -> NES)
+wait 30
+fbdump              # 5: a different, much smaller tab
+
+press r x5          # through to an empty tab
+wait 30
+fbdump              # 6: empty tab, rail unchanged, no position bar
+
+exit

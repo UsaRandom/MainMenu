@@ -1,0 +1,16 @@
+# Jump straight to the end of the N64 tab, where the real 1000 px scans and the portrait
+# Japanese cards live, and sit there long enough for them to decode.
+#
+# This is the case that catches priority inversion: with the decoder walking the library from
+# index 0, nothing here would ever load.
+
+wait 30
+press down x9       # to the bottom of the library
+wait 900            # long enough to measure time-to-fill, not just progress
+fbdump              # 1: end of library, real scans
+
+press up x4
+wait 400
+fbdump              # 2: mid-library
+
+exit

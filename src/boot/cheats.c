@@ -26,6 +26,17 @@
 #define ENGINE_TEMPORARY_ADDRESS (PATCHER_ADDRESS + 0x10000)
 #define DEFAULT_ENGINE_ADDRESS (0x807C5C00)
 
+/* Worst-case words a single cheat entry can emit. A 0x50 repeater carries an 8-bit count and
+ * emits three instructions per iteration, so 255 * 3 = 765, plus the two-word tail this function
+ * always appends. Checked BEFORE each entry rather than after each write, because the write is
+ * `*engine_p++ =` in a dozen places and a check at each one is a dozen chances to miss one. */
+#define ENGINE_WORST_ENTRY_WORDS (765 + 2)
+
+/* The patcher region runs from PATCHER_ADDRESS up to where the engine is staged. Nothing
+ * enforced this before: a long enough list of boot-writes walked straight into the staging
+ * buffer and corrupted the engine it was about to copy. */
+#define PATCHER_MAX_WORDS ((ENGINE_TEMPORARY_ADDRESS - PATCHER_ADDRESS) / 4)
+
 /** @brief Cheat structure */
 typedef struct {
     uint8_t type; /**< Cheat type */
@@ -271,8 +282,31 @@ bool cheats_install (cic_type_t cic_type, uint32_t *cheat_list) {
 
     cheat_entry_t cheat;
 
+    /* Where the engine will END UP, not where it is staged, is what bounds it: the staging
+     * buffer has 743 KB of slack while the final location has whatever sits between it and the
+     * top of RDRAM. get_memory_size() rather than a hardcoded 8 MB, so this stays correct if the
+     * engine address is overridden by a 0xDE code to somewhere unexpected.
+     *
+     * Before this, `*engine_p++` had no bound at all. AUDIT.md 2.3: a 0x50 repeater emits three
+     * instructions per iteration with a count of up to 255, so a handful of them ran off the end
+     * of the buffer and wrote through whatever followed. */
+    uint32_t rdram_top = 0x80000000u + (uint32_t)get_memory_size();
+    uint32_t engine_final = (uint32_t)final_engine_address;
+    size_t engine_max_words = (engine_final < rdram_top) ? (rdram_top - engine_final) / 4 : 0;
+
     while (cheats_get_next(&cheat_list, &cheat)) {
         cheat_t *c = &cheat.main;
+
+        if ((size_t)(engine_p - engine_start) + ENGINE_WORST_ENTRY_WORDS > engine_max_words) {
+            debugf("cheats: engine full at %u words (max %u), refusing to install\n",
+                   (unsigned)(engine_p - engine_start), (unsigned)engine_max_words);
+            return false;
+        }
+        if ((size_t)(patcher_p - patcher_start) + ENGINE_WORST_ENTRY_WORDS > PATCHER_MAX_WORDS) {
+            debugf("cheats: patcher full at %u words, refusing to install\n",
+                   (unsigned)(patcher_p - patcher_start));
+            return false;
+        }
 
         switch (c->type) {
             case SPECIAL_WRITE_BYTE_ON_BOOT:

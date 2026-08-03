@@ -1,13 +1,13 @@
 #include <libdragon.h>
 
+#include "app.h"
 #include "boot/boot.h"
-#include "menu/menu.h"
 
 
 int main (void) {
     boot_params_t boot_params;
 
-    menu_run(&boot_params);
+    app_run(&boot_params);
 
     disable_interrupts();
 

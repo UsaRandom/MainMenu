@@ -6,6 +6,7 @@
 
 #include <string.h>
 #include <libdragon.h>
+#include "app.h"
 #include "cart_load.h"
 #include "path.h"
 #include "utils/fs.h"
@@ -19,15 +20,21 @@
 #endif
 
 /**
- * @brief Check if the 64DD is connected.
- * 
- * @return true if the 64DD is connected, false otherwise.
+ * @brief The SNES core, and the one it replaced.
+ *
+ * lithium64 is our own fork of sodium64, targeting this console specifically: sodium64 sizes its
+ * ROM cache to fill exactly 4 MB of RDRAM and programs the VI, AI, PI and SI with values a stock
+ * N64 happens to accept, both of which are assumptions an FPGA reimplementation is entitled to
+ * break. On an M64 the fork is the one that has been tested; upstream is the fallback, so a card
+ * carrying only sodium64.z64 still plays SNES titles rather than reporting a missing emulator.
+ *
+ * The two are interchangeable at this seam by construction and it is worth saying why, because
+ * nothing here would catch it if they stopped being: both declare `sram256k`, matching the
+ * FLASHCART_SAVE_TYPE_SRAM_256KBIT below, and lithium64 reads the emulated ROM from PI address
+ * 0x10200000 (memory.S:225), which is the 0x200000 emulated_rom_offset below.
  */
-static bool is_64dd_connected (void) {
-    bool is_64dd_io_present = ((io_read(0x05000540) & 0x0000FFFF) == 0x0000);
-    bool is_64dd_ipl_present = (io_read(0x06001010) == 0x2129FFF8);
-    return (is_64dd_io_present || is_64dd_ipl_present);
-}
+#define SNES_CORE               "lithium64.z64"
+#define SNES_CORE_FALLBACK      "sodium64.z64"
 
 /**
  * @brief Create the saves subdirectory.
@@ -91,25 +98,25 @@ char *cart_load_convert_error_message (cart_load_err_t err) {
 
 /**
  * @brief Load an N64 ROM and its save file.
- * 
- * @param menu Pointer to the menu structure.
- * @param progress Progress callback function.
- * @return cart_load_err_t Error code.
+ *
+ * Takes app_t and reads what it needs out of app->launch, rather than reaching into a browser
+ * cursor. That is the whole coupling this file had to the old UI: it wanted "the entry the file
+ * list is sitting on", which does not exist in a grid of games.
  */
-cart_load_err_t cart_load_n64_rom_and_save (menu_t *menu, flashcart_progress_callback_t progress) {
-    path_t *path = path_clone(menu->load.rom_path);
+cart_load_err_t cart_load_n64_rom_and_save (app_t *app, flashcart_progress_callback_t progress) {
+    path_t *path = path_clone(app->launch.rom_path);
 
-    bool byte_swap = (menu->load.rom_info.endianness == ENDIANNESS_BYTE_SWAP);
-    flashcart_save_type_t save_type = convert_save_type(rom_info_get_save_type(&menu->load.rom_info));
+    bool byte_swap = (app->launch.rom_info.endianness == ENDIANNESS_BYTE_SWAP);
+    flashcart_save_type_t save_type = convert_save_type(rom_info_get_save_type(&app->launch.rom_info));
 
-    menu->flashcart_err = flashcart_load_rom(path_get(path), byte_swap, progress);
-    if (menu->flashcart_err != FLASHCART_OK) {
+    app->flashcart_err = flashcart_load_rom(path_get(path), byte_swap, progress);
+    if (app->flashcart_err != FLASHCART_OK) {
         path_free(path);
         return CART_LOAD_ERR_ROM_LOAD_FAIL;
     }
 
     path_ext_replace(path, "sav");
-    if (menu->settings.use_saves_folder) {
+    if (app->settings.use_saves_folder) {
         if ((save_type != FLASHCART_SAVE_TYPE_NONE) && create_saves_subdirectory(path)) {
             path_free(path);
             return CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL;
@@ -117,19 +124,19 @@ cart_load_err_t cart_load_n64_rom_and_save (menu_t *menu, flashcart_progress_cal
         path_push_subdir(path, SAVE_DIRECTORY_NAME);
     }
 
-    menu->flashcart_err = flashcart_load_save(path_get(path), save_type);
-    if (menu->flashcart_err != FLASHCART_OK) {
+    app->flashcart_err = flashcart_load_save(path_get(path), save_type);
+    if (app->flashcart_err != FLASHCART_OK) {
         path_free(path);
         return CART_LOAD_ERR_SAVE_LOAD_FAIL;
     }
 
 #ifndef FEATURE_AUTOLOAD_ROM_ENABLED
-    if (menu->settings.rom_fast_reboot_enabled) {
+    if (app->settings.rom_fast_reboot_enabled) {
         if (!flashcart_has_feature(FLASHCART_FEATURE_ROM_REBOOT_FAST)) {
             return CART_LOAD_ERR_FUNCTION_NOT_SUPPORTED;
         }
-        menu->flashcart_err = flashcart_set_next_boot_mode(FLASHCART_REBOOT_MODE_ROM);
-        if (menu->flashcart_err != FLASHCART_OK) {
+        app->flashcart_err = flashcart_set_next_boot_mode(FLASHCART_REBOOT_MODE_ROM);
+        if (app->flashcart_err != FLASHCART_OK) {
             path_free(path);
             return CART_LOAD_ERR_BOOT_MODE_FAIL;
         }
@@ -142,79 +149,15 @@ cart_load_err_t cart_load_n64_rom_and_save (menu_t *menu, flashcart_progress_cal
 }
 
 /**
- * @brief Load the 64DD IPL and disk.
- * 
- * @param menu Pointer to the menu structure.
- * @param progress Progress callback function.
- * @return cart_load_err_t Error code.
- */
-cart_load_err_t cart_load_64dd_ipl_and_disks (menu_t *menu, flashcart_progress_callback_t progress) {
-    if (!flashcart_has_feature(FLASHCART_FEATURE_64DD)) {
-        return CART_LOAD_ERR_FUNCTION_NOT_SUPPORTED;
-    }
-
-    if (is_64dd_connected()) {
-        return CART_LOAD_ERR_64DD_PRESENT;
-    }
-
-    if (!is_memory_expanded()) {
-        return CART_LOAD_ERR_EXP_PAK_NOT_FOUND;
-    }
-
-    path_t *path = path_init(menu->storage_prefix, DDIPL_LOCATION);
-    flashcart_disk_parameters_t disk_parameters;
-
-    disk_parameters.development_drive = (menu->load.disk_slots.primary.disk_info.region == DISK_REGION_DEVELOPMENT);
-    disk_parameters.disk_type = menu->load.disk_slots.primary.disk_info.disk_type;
-    memcpy(disk_parameters.bad_system_area_lbas, menu->load.disk_slots.primary.disk_info.bad_system_area_lbas, sizeof(disk_parameters.bad_system_area_lbas));
-    memcpy(disk_parameters.defect_tracks, menu->load.disk_slots.primary.disk_info.defect_tracks, sizeof(disk_parameters.defect_tracks));
-
-    switch (menu->load.disk_slots.primary.disk_info.region) {
-        case DISK_REGION_DEVELOPMENT:
-            path_push(path, "NDXJ0.n64");
-            break;
-        case DISK_REGION_JAPANESE:
-            path_push(path, "NDDJ2.n64");
-            break;
-        case DISK_REGION_USA:
-            path_push(path, "NDDE0.n64");
-            break;
-    }
-
-    if (!file_exists(path_get(path))) {
-        path_free(path);
-        return CART_LOAD_ERR_64DD_IPL_NOT_FOUND;
-    }
-
-    menu->flashcart_err = flashcart_load_64dd_ipl(path_get(path), progress);
-    if (menu->flashcart_err != FLASHCART_OK) {
-        path_free(path);
-        return CART_LOAD_ERR_64DD_IPL_LOAD_FAIL;
-    }
-
-    path_free(path);
-
-    // TODO: Support multi-disk 64DD games and implement rules for disk swapping.
-    // e.g. menu->flashcart_err = flashcart_load_64dd_disks(&menu->load.disk_slots.primary.disk_path, &disk_parameters, menu->load.disk_slot[], swap_disk_count);
-
-    menu->flashcart_err = flashcart_load_64dd_disk(path_get(menu->load.disk_slots.primary.disk_path), &disk_parameters);
-    if (menu->flashcart_err != FLASHCART_OK) {
-        return CART_LOAD_ERR_64DD_DISK_LOAD_FAIL;
-    }
-
-    return CART_LOAD_OK;
-}
-
-/**
  * @brief Load an emulator and its ROM.
  * 
- * @param menu Pointer to the menu structure.
+ * @param app Pointer to the application state.
  * @param emu_type The type of emulator to load.
  * @param progress Progress callback function.
  * @return cart_load_err_t Error code.
  */
-cart_load_err_t cart_load_emulator (menu_t *menu, cart_load_emu_type_t emu_type, flashcart_progress_callback_t progress) {
-    path_t *path = path_init(menu->storage_prefix, EMU_LOCATION);
+cart_load_err_t cart_load_emulator (app_t *app, cart_load_emu_type_t emu_type, flashcart_progress_callback_t progress) {
+    path_t *path = path_init(app->storage, EMU_LOCATION);
 
     flashcart_save_type_t save_type = FLASHCART_SAVE_TYPE_NONE;
     uint32_t emulated_rom_offset = 0x200000;
@@ -227,7 +170,7 @@ cart_load_err_t cart_load_emulator (menu_t *menu, cart_load_emu_type_t emu_type,
             save_type = FLASHCART_SAVE_TYPE_SRAM_1MBIT;
             break;
         case CART_LOAD_EMU_TYPE_SNES:
-            path_push(path, "sodium64.z64");
+            path_push(path, SNES_CORE);
             save_type = FLASHCART_SAVE_TYPE_SRAM_256KBIT;
             break;
         case CART_LOAD_EMU_TYPE_GAMEBOY:
@@ -250,20 +193,33 @@ cart_load_err_t cart_load_emulator (menu_t *menu, cart_load_emu_type_t emu_type,
             break;
     }
 
+    if (!file_exists(path_get(path)) && emu_type == CART_LOAD_EMU_TYPE_SNES) {
+        path_pop(path);
+        path_push(path, SNES_CORE_FALLBACK);
+    }
+
     if (!file_exists(path_get(path))) {
         path_free(path);
         return CART_LOAD_ERR_EMU_NOT_FOUND;
     }
 
-    menu->flashcart_err = flashcart_load_rom(path_get(path), false, progress);
-    if (menu->flashcart_err != FLASHCART_OK) {
+    /* Which core was actually chosen, said out loud. Every decision here -- the system-to-core
+     * mapping, whether the sodium64 fallback was taken, and below whether a copier header was
+     * stripped -- becomes invisible the moment the console reboots into the core, and on hardware
+     * there is no framebuffer left to inspect. Two lines, each next to the decision it reports. */
+    debugf("emu: type=%d core=%s\n", (int)emu_type, path_get(path));
+
+    app->flashcart_err = flashcart_load_rom(path_get(path), false, progress);
+    if (app->flashcart_err != FLASHCART_OK) {
         path_free(path);
         return CART_LOAD_ERR_EMU_LOAD_FAIL;
     }
 
     path_free(path);
 
-    path = path_clone_push(menu->browser.directory, menu->browser.entry->name);
+    /* The emulated ROM itself. app->launch.rom_path already holds it, where upstream rebuilt it
+     * from the browser's directory plus the highlighted entry's name. */
+    path = path_clone(app->launch.rom_path);
 
     switch (emu_type) {
         case CART_LOAD_EMU_TYPE_SNES:
@@ -274,14 +230,17 @@ cart_load_err_t cart_load_emulator (menu_t *menu, cart_load_emu_type_t emu_type,
             break;
     }
 
-    menu->flashcart_err = flashcart_load_file(path_get(path), emulated_rom_offset, emulated_file_offset);
-    if (menu->flashcart_err != FLASHCART_OK) {
+    debugf("emu: rom=%s dst=0x%08lX skip=0x%lX\n", path_get(path),
+           (unsigned long)emulated_rom_offset, (unsigned long)emulated_file_offset);
+
+    app->flashcart_err = flashcart_load_file(path_get(path), emulated_rom_offset, emulated_file_offset);
+    if (app->flashcart_err != FLASHCART_OK) {
         path_free(path);
         return CART_LOAD_ERR_EMU_ROM_LOAD_FAIL;
     }
 
     path_ext_replace(path, "sav");
-    if (menu->settings.use_saves_folder) {
+    if (app->settings.use_saves_folder) {
         if ((save_type != FLASHCART_SAVE_TYPE_NONE) && create_saves_subdirectory(path)) {
             path_free(path);
             return CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL;
@@ -289,8 +248,8 @@ cart_load_err_t cart_load_emulator (menu_t *menu, cart_load_emu_type_t emu_type,
         path_push_subdir(path, SAVE_DIRECTORY_NAME);
     }
 
-    menu->flashcart_err = flashcart_load_save(path_get(path), save_type);
-    if (menu->flashcart_err != FLASHCART_OK) {
+    app->flashcart_err = flashcart_load_save(path_get(path), save_type);
+    if (app->flashcart_err != FLASHCART_OK) {
         path_free(path);
         return CART_LOAD_ERR_SAVE_LOAD_FAIL;
     }

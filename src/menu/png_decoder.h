@@ -49,8 +49,43 @@ typedef void png_callback_t (png_err_t err, surface_t *decoded_image, void *call
 png_err_t png_decoder_start (char *path, int max_width, int max_height, png_callback_t *callback, void *callback_data);
 
 /**
+ * @brief Decode a PNG straight into a @p dst_w x @p dst_h surface, scaled and cover-cropped.
+ *
+ * Accepts any source size and aspect, which the real art corpus requires: it ranges from
+ * 112 px to 1020 px wide and a quarter of it is portrait. Scales to cover and crops -- never
+ * letterboxes, never squashes -- with the horizontal crop centred and the vertical crop
+ * anchored 40 % from the top so a portrait box scan keeps its logo.
+ *
+ * Allocates only the destination surface plus one accumulator row: a 1020 x 747 scan costs
+ * 27 KB rather than 1.5 MB. This is now true of the code as well as of the intent -- it used to
+ * allocate the file-sized surface first and free it, which put a 2118 x 1457 card in the corpus
+ * at 6.17 MB and failed it outright with PNG_ERR_OUT_OF_MEM.
+ */
+png_err_t png_decoder_start_scaled (char *path, int dst_w, int dst_h,
+                                    png_callback_t *callback, void *callback_data);
+
+/**
+ * @brief Decode rows until @p budget_us microseconds have been spent.
+ *
+ * png_decoder_poll() manages exactly one pixel row per call. That is the right shape for an
+ * interactive screen decoding one image, and hopeless for filling a grid: a 196-row card needs
+ * 196 main-loop iterations, so a 20-tile working set takes nearly four thousand frames to
+ * appear. This spends a stated slice of the frame instead, so the caller can trade fill rate
+ * against how fast art lands and can say which it chose.
+ *
+ * Always manages at least one row, so a budget of zero still makes progress rather than
+ * deadlocking the job that is waiting on it.
+ */
+void png_decoder_poll_budget (uint32_t budget_us);
+
+/** Rows decoded, and the worst single row, since these were last zeroed. */
+extern uint32_t png_rows_done, png_worst_row_us;
+/** Row cost split: time inside spng_decode_row vs inside the box-filter scaler. */
+extern uint32_t png_inflate_us, png_scale_us;
+
+/**
  * @brief Abort the PNG decoding process.
- * 
+ *
  * This function aborts the ongoing PNG decoding process.
  */
 void png_decoder_abort (void);

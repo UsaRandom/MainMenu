@@ -1,0 +1,13 @@
+# Sit completely still for ten seconds after the art has settled.
+#
+# This exists to test one claim: a frame that is only drawing allocates nothing. Any per-frame
+# malloc is invisible at 60 Hz until the heap fragments an hour later, and there is no MMU here
+# to turn that into a crash you can find.
+#
+# The long wait first is load-bearing. Measuring while art is still decoding measures the
+# decoder, which allocates legitimately, and would report a number that looks like a leak and is
+# not one.
+
+wait 1200
+fbdump
+exit

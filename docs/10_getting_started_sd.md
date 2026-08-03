@@ -53,7 +53,7 @@ SD:\
 │   │    
 │   └── emulators\
 │        ├── neon64bu.rom
-│        ├── sodium64.z64
+│        ├── lithium64.z64
 │        ├── gb.v64
 │        ├── gbc.v64
 │        ├── smsPlus64.z64

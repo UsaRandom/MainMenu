@@ -1,0 +1,30 @@
+# Scroll far enough, and back, that the thumbnail working set is evicted and refilled twice.
+#
+# The point is to keep the decoder permanently behind. browse-roms lands, steps around and
+# settles, so most of its frames are drawn against art that is already resident and it reports
+# a frame rate the product does not actually have while you are moving. Here the selection never
+# stops long enough for the cache to catch up, which is the state the frame budget has to
+# survive and the only state in which the decode budget means anything.
+#
+# Long by design: the interesting numbers are the steady-state ones, and a run short enough to
+# finish before the first eviction measures the startup transient instead.
+
+wait 60             # library scan, first screen of art
+
+press down x10      # straight down past the bottom of the resident set
+wait 40
+fbdump              # 1: deep in the library, mid-refill
+
+press down x10      # keep going, never letting the cache land
+wait 40
+fbdump              # 2: deeper still
+
+press up x18        # all the way back, evicting everything just decoded
+wait 40
+fbdump              # 3: returned to the top, refilled from scratch
+
+press down x6       # settle somewhere with art resident
+wait 90             # long enough for the decoder to actually finish
+fbdump              # 4: at rest, everything on screen decoded
+
+exit

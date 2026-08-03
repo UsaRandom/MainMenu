@@ -6,7 +6,6 @@
 
 #include <stdbool.h>
 #include <libdragon.h>
-#include "mp3_player.h"
 #include "sound.h"
 
 #define DEFAULT_FREQUENCY   (44100)
@@ -34,8 +33,6 @@ static void sound_reconfigure (int frequency) {
         // Attempt to initialize wav64 compression level 1
         wav64_init_compression(1);
 
-        // Initialize MP3 player mixer
-        mp3player_mixer_init();
         sound_initialized = true;
 
         if (sfx_enabled) {
@@ -49,13 +46,6 @@ static void sound_reconfigure (int frequency) {
  */
 void sound_init_default (void) {
     sound_reconfigure(DEFAULT_FREQUENCY);
-}
-
-/**
- * @brief Initialize the sound system for MP3 playback.
- */
-void sound_init_mp3_playback (void) {
-    sound_reconfigure(mp3player_get_samplerate());
 }
 
 /**

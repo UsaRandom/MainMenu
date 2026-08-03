@@ -10,7 +10,6 @@
 #include <stdbool.h>
 
 #define SOUND_SFX_CHANNEL           (0) /**< Channel for sound effects */
-#define SOUND_MP3_PLAYER_CHANNEL    (2) /**< Channel for MP3 player sound */
 
 
 /**
@@ -34,14 +33,6 @@ typedef enum {
  * necessary resources and configurations.
  */
 void sound_init_default(void);
-
-/**
- * @brief Initialize the MP3 playback system.
- * 
- * This function initializes the MP3 playback system, preparing it
- * for playing MP3 files.
- */
-void sound_init_mp3_playback(void);
 
 /**
  * @brief Initialize the sound effects system.

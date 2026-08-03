@@ -1,0 +1,79 @@
+/**
+ * @file debug_emux.c
+ * @brief Framebuffer capture for the ares harness.
+ * @ingroup dev
+ */
+
+#ifdef DEV_HARNESS
+
+#include <libdragon.h>
+#include <stdlib.h>
+
+#include "debug_emux.h"
+
+/* Sized for the worst case we ever ask for: 640x480 at scale 2 is 320x240 shorts. Allocated
+ * once and kept, because allocating per dump would perturb the heap between frames and make
+ * a memory regression look like a rendering one. */
+#define DBG_FB_MAX_PIXELS (320 * 240)
+
+static uint16_t *scratch = NULL;
+
+bool dbg_emux_present (void) {
+    /* Subcode 1, not 0. The EMUX_FEAT1_* constants name the *second* bitmask: ares reports
+     * opcodes 0x20-0x3F there (XHEXDUMP 0x27 lands on bit 0x7, XIOCTL 0x2C on bit 0xC), while
+     * subcode 0 covers opcodes 0x00-0x1F and is empty on every host that exists. Asking for 0
+     * returns zero and reports the harness absent while hexdump and exit demonstrably work --
+     * a detector that fails closed on a working system is worse than no detector. */
+    uint32_t feat = emux_detect(1);
+    bool ok = (feat & EMUX_FEAT1_HEXDUMP) && (feat & EMUX_FEAT1_IOCTL);
+    debugf("EMUX %s (FEAT1 0x%08lX)\n",
+           ok ? "present" : "ABSENT -- is Homebrew Mode on?", (unsigned long)feat);
+    return ok;
+}
+
+void dbg_fbdump (surface_t *fb, int scale) {
+    if (fb == NULL) {
+        debugf("FBDUMP skipped: no surface\n");
+        return;
+    }
+    if (scale < 1) {
+        scale = 1;
+    }
+
+    int w = fb->width / scale;
+    int h = fb->height / scale;
+
+    /* Refuse rather than truncate. A silently shortened dump still decodes to an image, just a
+     * wrong one, and that reads as a rendering fault instead of a harness limit. */
+    if (w * h > DBG_FB_MAX_PIXELS) {
+        debugf("FBDUMP skipped: %dx%d at scale %d exceeds the %d-pixel scratch\n",
+               fb->width, fb->height, scale, DBG_FB_MAX_PIXELS);
+        return;
+    }
+
+    if (scratch == NULL && (scratch = malloc(DBG_FB_MAX_PIXELS * sizeof(uint16_t))) == NULL) {
+        debugf("FBDUMP skipped: scratch allocation failed\n");
+        return;
+    }
+
+    /* The RDP writes through its own path, so the CPU's view of the framebuffer is stale
+     * without this. Skipping it yields a dump of whatever the previous frame left in cache --
+     * which is subtly wrong in a way that looks like a one-frame render lag. */
+    rspq_wait();
+    data_cache_hit_invalidate(fb->buffer, fb->stride * fb->height);
+
+    const uint8_t *src = (const uint8_t *)fb->buffer;
+    for (int y = 0; y < h; y++) {
+        const uint16_t *row = (const uint16_t *)(src + (size_t)(y * scale) * fb->stride);
+        uint16_t *dst = &scratch[y * w];
+        for (int x = 0; x < w; x++) {
+            dst[x] = row[x * scale];
+        }
+    }
+
+    debugf("FBDUMP w=%d h=%d scale=%d fmt=rgba5551\n", w, h, scale);
+    emux_hexdump((const uint8_t *)scratch, (int)(w * h * sizeof(uint16_t)));
+    debugf("FBEND\n");
+}
+
+#endif /* DEV_HARNESS */

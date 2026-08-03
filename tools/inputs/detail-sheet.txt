@@ -1,0 +1,26 @@
+# Open the detail sheet on a game with art, then close it and open another.
+#
+# Covers the two things the sheet can get wrong that a still frame shows: the rise animation
+# landing at the right y, and the metadata rows reading from launch.rom_info rather than from
+# whatever the grid happened to have selected before.
+
+wait 120
+fbdump              # 1: grid at rest
+
+press a             # open the sheet on the first title
+wait 4
+fbdump              # 2: mid-rise, sheet part way up
+
+wait 30
+fbdump              # 3: sheet fully risen, metadata legible
+
+press b             # close it
+wait 20
+fbdump              # 4: back on the grid
+
+press right x2      # a different game
+press a
+wait 30
+fbdump              # 5: sheet for a different title, different metadata
+
+exit

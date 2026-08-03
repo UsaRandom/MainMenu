@@ -1,0 +1,31 @@
+# Launch a SNES title, to prove the emulator path runs at all.
+#
+# It lives in manual/ rather than in tools/inputs/ because it cannot be part of the hash gate:
+# the run ends with boot() rebooting the console, so there is no clean `exit` and every run costs
+# the full timeout. regress.sh globs tools/inputs/*.txt and does not recurse, so this is excluded
+# by where it sits rather than by a list someone has to remember to update.
+#
+# Run it on its own and read the log:
+#
+#     tools/regress.sh -t 40 -o build/regress/snes tools/inputs/manual/launch-snes.txt
+#     grep 'emu:' build/regress/snes/*.ares.log
+#
+# What it is checking is the two lines cart_load.c prints. `type=1 core=rom:/menu/emulators/
+# lithium64.z64` says the system-to-core mapping and the new preference both landed; `skip=0x200`
+# on the second title and `skip=0x0` on the first says the copier-header test actually
+# discriminates rather than always answering the same way. Both were unreachable until the
+# fixture grew an emulators directory -- every SNES launch stopped at EMU_NOT_FOUND before it.
+
+wait 120
+press r x2          # Favorites/Recent/Most Played/N64 -> NES -> SNES
+wait 30
+fbdump              # 1: the SNES tab, three titles
+
+press right x2      # Star Relic -- the one with the copier header
+wait 20
+press a             # detail sheet
+wait 30
+fbdump              # 2: sheet for a SNES title
+
+press start         # launch
+wait 60

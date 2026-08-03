@@ -7,10 +7,13 @@
 #ifndef CART_LOAD_H__
 #define CART_LOAD_H__
 
-#include "disk_info.h"
 #include "flashcart/flashcart.h"
-#include "menu_state.h"
 #include "rom_info.h"
+
+/* app_t rather than menu_t, and forward-declared rather than included: app.h includes this
+ * header for cart_load_err_t, so including app.h back would be circular. 64DD is de-scoped --
+ * see cart_load.c -- so disk_info.h is gone with it. */
+typedef struct app_s app_t;
 
 #ifndef SAVE_DIRECTORY_NAME
 #define SAVE_DIRECTORY_NAME "saves"
@@ -79,16 +82,7 @@ char *cart_load_convert_error_message(cart_load_err_t err);
  * @param progress Callback function for progress updates.
  * @return cart_load_err_t Error code.
  */
-cart_load_err_t cart_load_n64_rom_and_save(menu_t *menu, flashcart_progress_callback_t progress);
-
-/**
- * @brief Load the 64DD IPL (BIOS) and disk.
- * 
- * @param menu Pointer to the menu structure.
- * @param progress Callback function for progress updates.
- * @return cart_load_err_t Error code.
- */
-cart_load_err_t cart_load_64dd_ipl_and_disks(menu_t *menu, flashcart_progress_callback_t progress);
+cart_load_err_t cart_load_n64_rom_and_save(app_t *app, flashcart_progress_callback_t progress);
 
 /**
  * @brief Load an emulator and its ROM.
@@ -98,6 +92,6 @@ cart_load_err_t cart_load_64dd_ipl_and_disks(menu_t *menu, flashcart_progress_ca
  * @param progress Callback function for progress updates.
  * @return cart_load_err_t Error code.
  */
-cart_load_err_t cart_load_emulator(menu_t *menu, cart_load_emu_type_t emu_type, flashcart_progress_callback_t progress);
+cart_load_err_t cart_load_emulator(app_t *app, cart_load_emu_type_t emu_type, flashcart_progress_callback_t progress);
 
 #endif /* CART_LOAD_H__ */
