@@ -1,98 +1,145 @@
-![Build](https://github.com/polprzewodnikowy/N64FlashcartMenu/actions/workflows/build.yml/badge.svg)
-![GitHub Org's stars](https://img.shields.io/github/stars/Polprzewodnikowy/N64FlashcartMenu)
-[![Average time to resolve an issue](http://isitmaintained.com/badge/resolution/Polprzewodnikowy/N64FlashcartMenu.svg)](http://isitmaintained.com/project/Polprzewodnikowy/N64FlashcartMenu "Average time to resolve an issue")
-[![Percentage of issues still open](http://isitmaintained.com/badge/open/Polprzewodnikowy/N64FlashcartMenu.svg)](http://isitmaintained.com/project/Polprzewodnikowy/N64FlashcartMenu "Percentage of issues still open")
-[![#yourfirstpr](https://img.shields.io/badge/first--timers--only-friendly-blue.svg)](https://github.com/Polprzewodnikowy/N64FlashcartMenu/blob/main/CONTRIBUTING.md)
+# MainMenu
 
-# N64FlashcartMenu
-An open source menu for N64 flashcarts that aims to support as many as possible.  
-This menu is not affiliated with any particular flashcart and does not necessarily expose all possible firmware features.
+A box-art game launcher for the **ModRetro M64** with a [SummerCart64](https://github.com/Polprzewodnikowy/SummerCart64).
 
-> [!TIP]
-> Help sponsor development [NetworkFusion on Ko-Fi](https://ko-fi.com/networkfusion). Or submit your Pull Request.
+A fork of [N64FlashcartMenu](https://github.com/Polprzewodnikowy/N64FlashcartMenu) that keeps all
+of its hardware plumbing and replaces the entire presentation layer. Upstream is a file browser —
+a nineteen-row text list, no animation, no thumbnail cache. This presents **games, not files**: a
+tabbed grid of box art that scrolls, remembers what you played, and requires you to prepare
+nothing in advance.
 
-> [!TIP]
-> New users are invited to read the latest [Documentation / User Guide](./docs/00_index.md).
+> [!IMPORTANT]
+> **This has never run on real hardware.** Every measurement in the audit was taken under
+> [ares](https://ares-emu.net/). Read [Status](#status) before expecting it to work on a console.
 
-## Flashcart Support
-This menu aims to support as many N64 flashcarts as possible.  
-The current state of support is:
+---
 
-### Supported
-* SummerCart64
-* 64Drive
+## Status
 
-### Work in Progress
-* EverDrive-64 (X and V series)
-* ED64P (clones)
+Working under ares, against both a synthetic SD tree and real box art:
 
-### Not yet planned
-* Doctor V64
-* PicoCart
-* DaisyDrive
+- Tabbed box-art grid — 140 × 98 tiles, four columns, twelve visible plus a peek row
+- Resident library index built from upstream's 450-game database, with save-type and feature detection
+- Thumbnail cache with on-cart generation and palette quantisation
+- Detail sheet, cheats screen, settings, launch transition, boot plate, fault screen
+- Launching N64 titles, and NES / SNES / GB / GBC / SMS / GG / Channel F through emulator cores
 
+Not done, and stated plainly:
 
-## Current (notable) menu features
-* Fully Open Source.
-* Loads all known N64 games, even if they are byteswapped.
-* Fully emulates the 64DD and loads 64DD disks (SummerCart64 only).
-* Emulator support (NES, SNES, GB, GBC, SMS, GG, CHF) ROMs.
-* N64 ROM box art image support.
-* Background image (PNG) support.
-* Comprehensive ROM save database (including homebrew headers).
-* Comprehensive ROM information display.
-* Real Time Clock support.
-* Music playback (MP3).
-* Menu sound effects.
-* N64 ROM fast reboot option (on reset).
-* ROM history and favorites.  
+- **Nothing writes to the SD card.** The thumbnail cache, play history and cheat selections are
+  in memory only. ares' filesystem is read-only, and a write path that has never executed is not
+  a feature. These land with hardware.
+- **No hardware validation of any kind.** Five open questions are listed in
+  [AUDIT.md §4](docs/AUDIT.md), starting with whether libdragon's custom IPL3 boots on an M64 at
+  all — which blocks everything else if it fails.
+- **The development cart has no working USB**, so `sc64deployer upload` and the UNFLoader debug
+  channel are both unavailable, and there is currently no telemetry path on hardware at all.
+  See [HARDWARE.md](docs/HARDWARE.md).
 
-Experimental (beta):
-* ROM Datel code editor.
-* Zip archive browsing and file extraction.
-* Controller Pak backup and restore (including individual notes).
-* Game art image switching.
+## What is kept, and what is replaced
 
+Upstream's roughly 15,000 lines of hardware-correct plumbing are worth considerably more than its
+UI, so they are untouched.
 
-## Aims
-* Support as many N64 Flashcarts as possible.
-* Be open source, using permissively licensed third-party libraries.
-* Be testable in an emulated environment (Ares).
-* Encourage active development from community members and N64 FlashCart owners.
-* Support as many common mods and features as possible (flashcart dependent).
+| kept verbatim | replaced |
+|---|---|
+| `src/boot/` — bootloader, CIC, Datel cheat engine | `src/menu/views/` — all 23 views |
+| `src/flashcart/{flashcart,flashcart_utils,sc64}` | `src/menu/ui_components/` except `background.c` |
+| `rom_info.c` — the 450-game database | `menu.c`, `actions.c`, `menu_state.h` |
+| `ini_parser.c`, `path.c`, `settings.c`, `src/utils/` | |
 
+**De-scoped:** the ED64 and 64Drive drivers, and the MP3 player. This targets one cart on one
+console. If you want broad flashcart support,
+[upstream](https://github.com/Polprzewodnikowy/N64FlashcartMenu) is actively maintained and does
+that job properly.
 
-## Flashcart specific information
+Two decisions are load-bearing enough to state up front:
 
-### SummerCart64
-Download the latest `sc64menu.n64` file from the [releases](https://github.com/Polprzewodnikowy/N64FlashcartMenu/releases/) page, then put it in the root directory of your SD card.  
-  
-> [!TIP]
-> A quick video tutorial can be found here:
->
-> [![Video tutorial](https://img.youtube.com/vi/IGX0XXf0wgo/default.jpg)](https://www.youtube.com/shorts/IGX0XXf0wgo)
+**`render()` does no I/O and no allocation.** Streaming happens in a third phase, `background()`,
+which runs while the RDP drains. Motion is specified in seconds rather than frames, so the scroll
+feel does not change with the video mode.
 
+**Cheats are toggled as named groups, never per line.** Upstream emits one address-value pair per
+independently enabled line, while the engine consumes two consecutive entries for a `0x50` or
+`0xD_` conditional — so disabling half of a pair silently patches an unrelated address. The group
+model makes that unrepresentable. See [AUDIT.md §2](docs/AUDIT.md).
 
-### 64drive
-* Ensure the cart has the latest [firmware](https://64drive.retroactive.be/support.php) installed.
-* Download the latest `menu.bin` file from the [releases](https://github.com/Polprzewodnikowy/N64FlashcartMenu/releases/) page, then put it in the root directory of your SD card.
+## Build
 
+```sh
+export N64_INST="$HOME/n64inst-preview"     # NOT ~/n64inst — see AUDIT.md §2.1
+git submodule update --init --recursive
+make sc64 -j8                                # -> output/sc64menu.n64
+```
 
-# Contributors
-The features in this project were made possible by the [contributors](https://github.com/Polprzewodnikowy/N64FlashcartMenu/graphs/contributors).
+The pinned libdragon (`5cb976a`) must be installed to a **separate prefix**. Installing it over a
+shared `~/n64inst` silently changes the memory map for anything else built against it. **Never set
+`N64_GCCPREFIX`** — splitting the compiler prefix from the install prefix links a stale
+`libdragon.a` and produces undefined references that look like the submodule being too old.
 
-# License
-This project is released under the [GNU AFFERO GENERAL PUBLIC LICENSE](LICENSE.md) as compatible with all other dependent project licenses.  
-Other license options may be available upon request with permissions of the original `N64FlashcartMenu` project authors / maintainers.  
+Corpora are fetched, never committed. The art repository is 1.77 GB and the cheat corpus is
+someone else's work; neither belongs in this history.
+
+```sh
+tools/getart.py --count 40      # box art -> build/artcache
+tools/mkcheatdb.py --fetch      # cheats  -> build/cheats.db
+```
+
+## SD card layout
+
+```
+/sc64menu.n64
+/roms/n64/*.z64                            games
+/roms/{nes,snes,gb,gbc,sms}/*              emulated systems
+/menu/emulators/{neon64bu.rom,lithium64.z64,gb.v64,gbc.v64,smsPlus64.z64,Press-F.z64}
+/menu/metadata/<G>/<A>/<M>/<E>/boxart_front.png
+/menu/cheats.db                            optional; from tools/mkcheatdb.py
+```
+
+SNES titles run on [lithium64](https://github.com/UsaRandom/lithium64), a fork of sodium64
+targeting this console, falling back to `sodium64.z64` when it is absent.
+
+## Documentation
+
+- [AUDIT.md](docs/AUDIT.md) — every measurement, every dead end, every harness trap. Append-only.
+- [DESIGN.md](docs/DESIGN.md) — layout geometry, and where the spec and the implementation disagree.
+- [HARDWARE.md](docs/HARDWARE.md) — the order to bring hardware up in, and why that order.
+
+The numbered guides under [`docs/`](docs/) are inherited from upstream and describe upstream's
+behaviour. Some — the file browser and MP3 player pages in particular — document features this
+fork removed.
+
+## House rules
+
+Measure, don't assert: any claim about speed, size or memory carries a number and says how it was
+obtained. Check that a test can fail before trusting a green result. Record negative results —
+ruled-out hypotheses and harness traps go into AUDIT.md and stay there, struck through when fixed
+rather than deleted.
+
+---
+
+# Licence
+
+Released under the [GNU Affero General Public License](LICENSE.md), inherited from upstream.
+
+Substantially the work of the N64FlashcartMenu authors and
+[contributors](https://github.com/Polprzewodnikowy/N64FlashcartMenu/graphs/contributors); this
+fork replaces the presentation layer and takes responsibility for its own bugs.
+
 * [Mateusz Faderewski / Polprzewodnikowy](https://github.com/Polprzewodnikowy)
 * [Robin Jones / NetworkFusion](https://github.com/networkfusion)
 
-# Open source software and licenses used
+Not affiliated with or endorsed by ModRetro, Nintendo, or the upstream project. The GitHub Actions
+workflows are upstream's and have not been adapted — the build artifact is still labelled for a
+flashcart this fork no longer supports.
+
+# Open source software and licences used
+
 ## Libraries
 * [libdragon](https://github.com/DragonMinded/libdragon/tree/preview) - [UNLICENSE License](https://github.com/DragonMinded/libdragon/blob/preview/LICENSE.md)
 * [libspng](https://github.com/randy408/libspng) - [BSD 2-Clause License](https://github.com/randy408/libspng/blob/master/LICENSE)
-* [minimp3](https://github.com/lieff/minimp3) - [CC0 1.0 Universal](https://github.com/lieff/minimp3/blob/master/LICENSE)
 * [miniz](https://github.com/richgel999/miniz) - [MIT License](https://github.com/richgel999/miniz/blob/master/LICENSE)
+* [minimp3](https://github.com/lieff/minimp3) - [CC0 1.0 Universal](https://github.com/lieff/minimp3/blob/master/LICENSE) — still vendored as a submodule, no longer compiled
 
 ## Sounds
 See [License](https://pixabay.com/en/service/license-summary/) for the following sounds:
