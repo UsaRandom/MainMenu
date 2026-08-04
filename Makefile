@@ -8,7 +8,10 @@ FILESYSTEM_DIR = filesystem
 BUILD_DIR = build
 OUTPUT_DIR = output
 
-MENU_VERSION ?= "Preview release"
+# Numbering restarts at the fork rather than continuing upstream's V0.3.2: the presentation
+# layer is new code, and a V0.4.0 here would read as one of their releases. It stays at 0.x
+# because nothing in this tree has run on a console -- see the banner at the top of README.md.
+MENU_VERSION ?= "v0.1.0"
 BUILD_TIMESTAMP = "$(shell TZ='UTC' date "+%Y-%m-%d %H:%M:%S %:z")"
 
 # A harness build stamps a fixed time instead. credits.o is force-rebuilt every make, so the
