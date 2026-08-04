@@ -7,17 +7,22 @@ plumbing and replace the entire presentation layer with a box-art grid.
 Read [`docs/AUDIT.md`](docs/AUDIT.md) before changing anything. Layout numbers live in
 [`docs/DESIGN.md`](docs/DESIGN.md).
 
-## Corpora (fetched, never committed)
+## Corpora (never committed)
 
 ```sh
-tools/getart.py --count 40                 # box art -> build/artcache
 tools/mkcheatdb.py --fetch                 # libretro cheats -> build/cheats.db
 tools/mkcheatkeys.py -i build/cht          # -> tools/data/n64_keys.tsv (this one IS committed)
 ```
 
-`build/` is gitignored in full. The art repo is 1.77 GB and the cheat corpus is someone else's
-work; neither belongs in this history. `n64_keys.tsv` is committed because it is a table of pure
-facts -- a filename and three header fields -- and regenerating it needs both corpora.
+`build/` is gitignored in full. The cheat corpus is someone else's work and does not belong in
+this history. `n64_keys.tsv` is committed because it is a table of pure facts -- a filename and
+three header fields.
+
+**`build/artcache` has to be populated by hand** and nothing fetches it. Any tree of
+`<GAMECODE>/boxart_front.png` works. Without it every fixture rebuild swaps real cards for
+procedural gradients, which look fine and change every decode number in AUDIT.md -- and
+`real-art.txt` and `jpeg-art.txt` go on passing while testing gradients. See the Makefile comment
+above `ARTCACHE_DIR`.
 
 ## Build
 

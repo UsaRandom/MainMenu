@@ -275,9 +275,10 @@ def main():
     ap.add_argument("--ipl3", help="4032-byte IPL3 to inject so stubs are bootable")
     ap.add_argument("--no-art", action="store_true", help="skip box art (faster; tests the placeholder path)")
     ap.add_argument("--art-from", metavar="DIR",
-                    help="use real art from tools/getart.py where a game code matches, and fall "
-                         "back to generated art otherwise. The real corpus is the one that finds "
-                         "bugs: it is 112-1020 px wide and a quarter of it is portrait.")
+                    help="a tree of <GAMECODE>/boxart_front.png to draw real art from where a "
+                         "game code matches, falling back to generated art otherwise. The real "
+                         "corpus is the one that finds bugs: it is 112-2118 px wide and a quarter "
+                         "of it is portrait.")
     ap.add_argument("--rom-info", default=ROM_INFO)
     args = ap.parse_args()
 

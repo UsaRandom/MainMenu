@@ -1421,6 +1421,12 @@ Unlicense, 1,672 PNGs, **1.77 GB**, mean 1 MB per file, 711 games with a `boxart
 Nothing from it is committed; `tools/getart.py` fetches a bounded, gitignored subset into
 `build/artcache/`.
 
+> **`getart.py` has since been removed** — this repository no longer ships a fetcher for someone
+> else's scans. `build/artcache/` is still what `--art-from` reads and still has to exist for any
+> measurement on this page to be reproducible; populate it by hand with a tree of
+> `<GAMECODE>/boxart_front.png`. Everything measured below stands, but re-deriving it now takes
+> a step that used to be one command.
+
 Measured over a 120-card sample stratified across the size distribution:
 
 | dimensions | count | aspect |

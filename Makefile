@@ -32,9 +32,14 @@ include $(N64_INST)/include/n64.mk
 #                  self-termination, frame-time reporting)
 FIXTURE_DIR = $(BUILD_DIR)/fixture
 
-# tools/getart.py leaves real box art here. Passed to mkfixture whenever it exists, because
-# without it an automatic regenerate quietly swaps 21 MB of real cards for procedural gradients --
-# and every decode measurement in AUDIT.md was taken against the real ones. The trap is that both
+# Real box art goes here, and is passed to mkfixture whenever the directory exists. Populate it
+# yourself: any tree of <GAMECODE>/boxart_front.png, or the n64-flashcart-menu-metadata layout it
+# mirrors. Nothing fetches it -- 1.77 GB of someone else's scans is not this repo's business.
+#
+# It matters more than it looks. Without this directory an automatic regenerate quietly swaps real
+# cards for procedural gradients, and every decode measurement in AUDIT.md was taken against the
+# real ones -- 259,633 us a card, dominated by one 2118 x 1457 scan that gradients do not contain.
+# real-art.txt and jpeg-art.txt then test gradients while still going green. The trap is that both
 # fixtures look fine; only the numbers change.
 ARTCACHE_DIR = $(BUILD_DIR)/artcache
 FIXTURE_ART  = $(if $(wildcard $(ARTCACHE_DIR)),--art-from $(ARTCACHE_DIR),)

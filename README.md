@@ -22,13 +22,18 @@ Working under ares, against both a synthetic SD tree and real box art:
 - Resident library index built from upstream's 450-game database, with save-type and feature detection
 - Thumbnail cache with on-cart generation and palette quantisation
 - Detail sheet, cheats screen, settings, launch transition, boot plate, fault screen
-- Launching N64 titles, and NES / SNES / GB / GBC / SMS / GG / Channel F through emulator cores
+- Launching N64 titles, and NES / SNES / GB / GBC / SMS / GG through emulator cores
+
+`cart_load.c` can also boot a Fairchild Channel F ROM, but nothing can reach that path: the
+scanner has no `SYS_` for it and no extension maps to one, so such a title never enters the
+library. `Press-F.z64` is listed below for when that is wired up, not because it works today.
 
 Not done, and stated plainly:
 
-- **Nothing writes to the SD card.** The thumbnail cache, play history and cheat selections are
-  in memory only. ares' filesystem is read-only, and a write path that has never executed is not
-  a feature. These land with hardware.
+- **The write half has never executed.** Favourites, play history, the library index, the
+  thumbnail atlas and cheat selections all persist through one layer that decides at boot whether
+  storage is writable, and under ares it never is — the DFS is read-only. The code is there and
+  host-tested against real files; it has not run against a real card.
 - **No hardware validation of any kind.** Five open questions are listed in
   [AUDIT.md §4](docs/AUDIT.md), starting with whether libdragon's custom IPL3 boots on an M64 at
   all — which blocks everything else if it fails.
@@ -36,33 +41,10 @@ Not done, and stated plainly:
   channel are both unavailable, and there is currently no telemetry path on hardware at all.
   See [HARDWARE.md](docs/HARDWARE.md).
 
-## What is kept, and what is replaced
-
-Upstream's roughly 15,000 lines of hardware-correct plumbing are worth considerably more than its
-UI, so they are untouched.
-
-| kept verbatim | replaced |
-|---|---|
-| `src/boot/` — bootloader, CIC, Datel cheat engine | `src/menu/views/` — all 23 views |
-| `src/flashcart/{flashcart,flashcart_utils,sc64}` | `src/menu/ui_components/` except `background.c` |
-| `rom_info.c` — the 450-game database | `menu.c`, `actions.c`, `menu_state.h` |
-| `ini_parser.c`, `path.c`, `settings.c`, `src/utils/` | |
-
 **De-scoped:** the ED64 and 64Drive drivers, and the MP3 player. This targets one cart on one
 console. If you want broad flashcart support,
 [upstream](https://github.com/Polprzewodnikowy/N64FlashcartMenu) is actively maintained and does
 that job properly.
-
-Two decisions are load-bearing enough to state up front:
-
-**`render()` does no I/O and no allocation.** Streaming happens in a third phase, `background()`,
-which runs while the RDP drains. Motion is specified in seconds rather than frames, so the scroll
-feel does not change with the video mode.
-
-**Cheats are toggled as named groups, never per line.** Upstream emits one address-value pair per
-independently enabled line, while the engine consumes two consecutive entries for a `0x50` or
-`0xD_` conditional — so disabling half of a pair silently patches an unrelated address. The group
-model makes that unrepresentable. See [AUDIT.md §2](docs/AUDIT.md).
 
 ## Build
 
@@ -77,23 +59,87 @@ shared `~/n64inst` silently changes the memory map for anything else built again
 `N64_GCCPREFIX`** — splitting the compiler prefix from the install prefix links a stale
 `libdragon.a` and produces undefined references that look like the submodule being too old.
 
-Corpora are fetched, never committed. The art repository is 1.77 GB and the cheat corpus is
-someone else's work; neither belongs in this history.
+The cheat corpus is fetched, never committed — it is someone else's work and does not belong in
+this history.
 
 ```sh
-tools/getart.py --count 40      # box art -> build/artcache
-tools/mkcheatdb.py --fetch      # cheats  -> build/cheats.db
+tools/mkcheatdb.py --fetch      # -> build/cheats.db, for /menu/cheats.db on the card
 ```
 
-## SD card layout
+## Setting up a card
+
+Only the first line is required. Everything else is optional and the menu degrades cleanly
+without it — no art, no cheats and no emulators each cost you exactly that one feature.
 
 ```
-/sc64menu.n64
-/roms/n64/*.z64                            games
-/roms/{nes,snes,gb,gbc,sms}/*              emulated systems
+/sc64menu.n64                              the menu itself
+/roms/**                                   your games, in any layout you like
+/menu/emulators/…                          cores for non-N64 systems
+/menu/cheats.db                            built by tools/mkcheatdb.py --fetch
+/menu/metadata/…                           a downloaded box-art pack
+/menu/cache/                               created by the menu; do not hand-edit
+```
+
+**ROM layout is yours.** The scan walks `/roms` recursively — four levels deep — and reads a 4 KB
+header from each file, so subfolders, naming and nesting are free. Tabs come from what a file *is*,
+not from what its folder is called. A directory per system is a reasonable habit and nothing more.
+
+| system | extensions |
+|---|---|
+| N64 | `.z64` `.n64` `.v64` `.rom` |
+| NES | `.nes` |
+| SNES | `.sfc` `.smc` |
+| Game Boy / Color | `.gb` / `.gbc` |
+| Master System / Game Gear | `.sms` `.gg` `.sg` |
+
+Anything else is ignored, which is what lets art and save files sit in the same folders.
+
+### Box art, and which one wins
+
+Art can come from a file you dropped next to a ROM or from a bulk pack, and the two are looked up
+in a fixed order. **A loose file always outranks the pack**, deliberately: a pack is something you
+downloaded, a file you placed is a decision, and a decision should win.
+
+| | where | example |
+|---|---|---|
+| 1 | a loose image named for the **game code**, anywhere under `/roms` | `NGEE.png` |
+| 2 | a loose image named for the **ROM file**, anywhere under `/roms` | `Super Mario 64.jpg` |
+| 3 | the metadata pack, region-specific | `/menu/metadata/N/G/E/E/boxart_front.png` |
+| 4 | the metadata pack, region-agnostic | `/menu/metadata/N/G/E/boxart_front.png` |
+| 5 | the metadata pack, flat | `/menu/metadata/NGEE.png` |
+
+Worth knowing about each half:
+
+- Loose files may be **`.png`, `.jpg` or `.jpeg`**; the metadata pack is read as **`.png` only**.
+- Matching ignores case and the extension, so `ngee.JPG` and `NGEE.png` are the same key. Where
+  two loose files collide the shallower one wins.
+- Rules 1 and 3–5 need an N64 game code, which **NES, SNES, GB, GBC, SMS and GG titles do not
+  have**. Rule 2 is the only one that works for them: name the image after the ROM.
+- Any size and either orientation is fine. Everything is scaled and cover-cropped to 140 × 98 on
+  the way in. The corpus this was measured against runs from 112 px to 2118 px wide and a quarter
+  of it is portrait.
+- A title with no art draws a plain tile and its name. That is the intended appearance, not a
+  placeholder for something missing.
+
+The first decode of a card costs real time — **about a quarter of a second per tile**, and far
+more for an oversized one. It happens once: decoded tiles are written to `/menu/cache` and every
+later boot reads them back. On a read-only card, or before that cache exists, expect the grid to
+fill in over the first minute.
+
+### Cheats
+
+`/menu/cheats.db` is built by `tools/mkcheatdb.py --fetch` from
+[libretro's cheat corpus](https://github.com/libretro/libretro-database) (MIT). It is a release
+artifact — never committed, never linked into the ROM.
+
+**Cheats are toggled as named groups, never per line.** A `D0` conditional and the write it guards
+are one indivisible thing; upstream let you enable half a pair, which silently patched an
+unrelated address. See [AUDIT.md §2](docs/AUDIT.md).
+
+### Emulator cores
+
+```
 /menu/emulators/{neon64bu.rom,lithium64.z64,gb.v64,gbc.v64,smsPlus64.z64,Press-F.z64}
-/menu/metadata/<G>/<A>/<M>/<E>/boxart_front.png
-/menu/cheats.db                            optional; from tools/mkcheatdb.py
 ```
 
 SNES titles run on [lithium64](https://github.com/UsaRandom/lithium64), a fork of sodium64
