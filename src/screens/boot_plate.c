@@ -6,8 +6,12 @@
  * docs/design/README.md section 4.1, transcribed:
  *
  *   Black -- literal #000000, the one screen outside the theme. SC64 mark (192 x 135) centred at
- *   y 120, `MAIN MENU` at 32 px / 10 px tracking at y 296, `SUMMERCART64` at 16 px y 340, and
- *   `MENU <version>` / `<n> TITLES` at 16 px on the bottom safe line.
+ *   y 120, `MAIN MENU` at 32 px / 10 px tracking at y 296, and `MENU <version>` / `<n> TITLES` at
+ *   16 px on the bottom safe line.
+ *
+ * The spec also puts `SUMMERCART64` at 16 px on y 340. Dropped: the mark directly above it already
+ * says so, and spelling it out under the product's own name made the plate read as a vendor splash
+ * rather than as the menu starting.
  *
  *   t=0.00 mark at 88 % scale, 22 % opacity, boot SFX fires - t=0.55 full, holds -
  *   t~1.30 the whole plate translates -480 px over 0.34 s. The grid is already composited
@@ -16,8 +20,13 @@
  * That last sentence is why this is an overlay on the grid rather than a screen of its own. A
  * separate SCREEN_BOOT would have to hand over at t=1.64, and whatever it handed over to would
  * be arriving cold -- one frame of empty grid before the first tile lands, which is precisely the
- * "second fade-in" the spec rules out. Drawn on top of a live grid, the reveal is a reveal: the
- * library has been scanning and decoding underneath for the whole 1.64 s.
+ * "second fade-in" the spec rules out. Drawn on top of a live grid, the reveal is a reveal.
+ *
+ * This file used to end that paragraph by claiming the library "has been scanning and decoding
+ * underneath for the whole 1.64 s". It had been doing neither: grid_update() returns early while
+ * the plate is up, above the counter that gates background decoding, so the gate never opened and
+ * the first decode began a quarter-second AFTER the curtain lifted. See AUDIT.md 1q. The claim is
+ * true now, and the hold is elastic so that it can stay true on art we have not measured.
  */
 
 #include <stdio.h>
@@ -31,16 +40,27 @@
 #include "ui/theme.h"
 #include "ui/tween.h"
 
-/* Timeline, seconds. Straight from section 5's table and section 4.1's prose. */
+/* Timeline, seconds. The rise is section 5's table; the hold is no longer a single number.
+ *
+ * Section 4.1 specifies a 1.30 s hold and a <= 1.64 s total, and that is still the floor and
+ * still what a warm or artless library gets. But the sentence at the top of this file -- that the
+ * grid underneath has been decoding for the whole hold -- was aspirational rather than true, and
+ * a fixed hold cannot make it true, because how long the first row takes is a property of the
+ * user's art and not of ours. So the hold is elastic between the two: it never ends before the
+ * mark has finished arriving and settled, and it does not end after that until the grid has
+ * something on it, up to a ceiling that exists so nobody with 2000 x 1400 covers is stranded.
+ *
+ * At the measured ~155,000 us per card the first row costs ~0.62 s, which lands inside the
+ * 1.30 s floor. So the common case is unchanged at 1.64 s total -- the difference is that the
+ * curtain now lifts on painted tiles instead of on placeholders. */
 #define T_RISE_END      0.55f
-#define T_HOLD_END      1.30f
-#define T_TOTAL         (T_HOLD_END + DUR_BOOT_CURTAIN)   /* 1.64 */
+#define T_HOLD_MIN      1.30f
+#define T_HOLD_MAX      3.00f
 
 #define MARK_W          192
 #define MARK_H          135
 #define MARK_Y          120
 #define TITLE_Y         296
-#define SUBTITLE_Y      340
 #define TITLE_TRACKING  10       /**< docs/design/README.md 4.1: 32 px / 10 px tracking */
 #define CURTAIN_DY      480
 
@@ -61,15 +81,30 @@ static void mark_load (void) {
 void boot_plate_reset (boot_plate_t *bp) {
     mark_load();
     bp->t = 0.0f;
+    bp->curtain_at = 0.0f;
+    bp->released = false;
     bp->done = false;
 }
 
-bool boot_plate_step (boot_plate_t *bp, float dt) {
+bool boot_plate_working (const boot_plate_t *bp) {
+    return !bp->done && !bp->released && bp->t >= T_RISE_END;
+}
+
+bool boot_plate_step (boot_plate_t *bp, float dt, bool ready) {
     if (bp->done) {
         return false;
     }
     bp->t += dt;
-    if (bp->t >= T_TOTAL) {
+
+    if (!bp->released && bp->t >= T_HOLD_MIN && (ready || bp->t >= T_HOLD_MAX)) {
+        bp->released = true;
+        bp->curtain_at = bp->t;
+        /* One line per boot, kept because the hold is now a negotiation rather than a constant
+         * and "why was the plate up that long" is otherwise unanswerable from a log. */
+        debugf("BOOT plate held %d ms, released by %s\n", (int)(bp->t * 1000.0f),
+               ready ? "the grid" : "the ceiling");
+    }
+    if (bp->released && bp->t >= bp->curtain_at + DUR_BOOT_CURTAIN) {
         bp->done = true;
         return false;
     }
@@ -103,8 +138,8 @@ void boot_plate_draw (const boot_plate_t *bp, const char *version, int title_cou
     /* Curtain: the WHOLE plate translates, mark and type together, so it reads as one object
      * leaving rather than as elements animating out separately. */
     int dy = 0;
-    if (t >= T_HOLD_END) {
-        float k = (t - T_HOLD_END) / DUR_BOOT_CURTAIN;
+    if (bp->released) {
+        float k = (t - bp->curtain_at) / DUR_BOOT_CURTAIN;
         if (k > 1.0f) {
             k = 1.0f;
         }
@@ -148,8 +183,6 @@ void boot_plate_draw (const boot_plate_t *bp, const char *version, int title_cou
                                           .char_spacing = TITLE_TRACKING,
                                           .style_id = STL_DEFAULT, .disable_aa_fix = true },
                      FNT_BOOT, 0, TITLE_Y + dy, TITLE, strlen(TITLE));
-
-    ui_text(0, SUBTITLE_Y + dy, SCREEN_W, ALIGN_CENTER, STL_GRAY, "SUMMERCART64");
 
     char left[48], right[32];
     snprintf(left, sizeof(left), "MENU %s", version != NULL ? version : "");

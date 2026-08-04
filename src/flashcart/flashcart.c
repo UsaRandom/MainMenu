@@ -191,6 +191,10 @@ flashcart_err_t flashcart_init (const char **storage_prefix) {
  * 
  * @return flashcart_err_t Error code.
  */
+bool flashcart_is_dummy (void) {
+    return cart_type == CART_NULL;
+}
+
 flashcart_err_t flashcart_deinit (void) {
     if (flashcart->deinit) {
         return flashcart->deinit();

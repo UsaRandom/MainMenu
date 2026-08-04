@@ -38,7 +38,6 @@ const theme_t THEME_MIDNIGHT = {
     .badge_save    = RGBA5551(0x42, 0xBD, 0x63),
     .overlay       = RGBA5551(0x08, 0x08, 0x10), .overlay_a = 199,     /* 78% */
     .tile_dim_a    = 87,                                               /* 34% */
-    .ambient_wash  = true,
 };
 
 const theme_t THEME_CARTRIDGE = {
@@ -59,7 +58,6 @@ const theme_t THEME_CARTRIDGE = {
     .badge_save    = RGBA5551(0x29, 0x84, 0x4A),
     .overlay       = RGBA5551(0xF7, 0xF7, 0xEF), .overlay_a = 204,     /* 80% */
     .tile_dim_a    = 87,
-    .ambient_wash  = true,
 };
 
 const theme_t THEME_PHOSPHOR = {
@@ -80,7 +78,6 @@ const theme_t THEME_PHOSPHOR = {
     .badge_save    = RGBA5551(0x52, 0xDE, 0x7B),
     .overlay       = RGBA5551(0x00, 0x10, 0x08), .overlay_a = 209,     /* 82% */
     .tile_dim_a    = 102,                                              /* 40% */
-    .ambient_wash  = true,
 };
 
 static const theme_t *const THEMES[] = {

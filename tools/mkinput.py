@@ -40,7 +40,10 @@ DIRS = {
 }
 NONE = 0xFF
 
-BUTTONS = {"a": 1 << 0, "b": 1 << 1, "start": 1 << 2, "l": 1 << 3, "r": 1 << 4, "z": 1 << 5}
+# Must match ISCRIPT_BTN_* in src/dev/inputscript.h. "cright" is the Fav button: it is a button
+# and not a C-pad direction, so it is spelled `press cright`, never `cpress right`.
+BUTTONS = {"a": 1 << 0, "b": 1 << 1, "start": 1 << 2, "l": 1 << 3, "r": 1 << 4, "z": 1 << 5,
+           "cright": 1 << 6}
 
 ACT_NONE, ACT_FBDUMP, ACT_EXIT = 0, 1, 2
 

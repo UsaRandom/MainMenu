@@ -18,6 +18,7 @@
 #include "app.h"
 #include "cheats/cheatdb.h"
 #include "menu/fonts.h"
+#include "library/cache.h"
 #include "menu/settings.h"
 #include "menu/sound.h"
 #include "screens.h"
@@ -62,9 +63,12 @@ static void settings_update (app_t *app, float dt) {
 
     if (input_pressed(in, BTN_B) || input_pressed(in, BTN_START)) {
         sound_play_effect(SFX_EXIT);
-        /* Not written to the card. settings_save() is a write and every write feature in this
-         * build is deferred until there is hardware to test one against, so a change lasts the
-         * session. Said in the footer rather than left to be discovered. */
+        /* Written on the way out rather than on every toggle: the settings screen is a handful
+         * of booleans and a user flipping four of them should cost one write, not four. On
+         * read-only storage this fails and says so in the log, and the change lasts the session
+         * exactly as it did before -- which is what the footer still promises when
+         * cache_writable() is false. */
+        settings_save(&app->settings);
         app_goto(app, SCREEN_GRID);
         return;
     }
@@ -174,7 +178,7 @@ static void settings_render (app_t *app, surface_t *fb) {
     (void)ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Change");
     ui_button(SAFE_X + SAFE_W - UI_BTN_D, FOOTER_Y + 14, "B", BTN_B_COLOR, UI_BTN_DISC);
     ui_label(SAFE_X, FOOTER_Y + 14 + UI_BTN_D - 5, SAFE_W - UI_BTN_D - 6, ALIGN_RIGHT,
-             STL_GRAY, "Back (not saved to card)");
+             STL_GRAY, cache_writable() ? "Back" : "Back (not saved to card)");
 
     rdpq_detach_show();
 }

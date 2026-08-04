@@ -38,7 +38,6 @@ typedef struct {
     uint16_t badge_fav, badge_save;
     uint16_t overlay;      uint8_t overlay_a;
     uint8_t  tile_dim_a;   /**< wash of bg over every unselected tile */
-    bool     ambient_wash; /**< per-game accent behind the grid */
 } theme_t;
 
 /** @brief Controller glyph colours. Hardware, not theme. */
@@ -90,6 +89,19 @@ typedef struct {
 #define SEL_SHADOW_DY       6
 #define SEL_OUTLINE         2
 
+/* How far a selected tile reaches outside its own cell, vertically.
+ *
+ * It is centred on the cell as it grows, so it gains (SEL_H - TILE_H) / 2 = 4 px at each end,
+ * then the outline adds 2 above and the shadow offset adds 6 below. The grid is scissored top and
+ * bottom -- it has to be, or tiles would scroll over the tab rail and the footer -- so at the
+ * ends of the list the overhang has nowhere to go and the first and last rows were being clipped:
+ * 6 px off the top of the top row, 10 px off the bottom of the last one, visible as a flat cut
+ * across the selection outline. Padding the scrollable content by the overhang gives it room
+ * inside the window instead. Costs 16 px of the peek row, which is the right trade. */
+#define SEL_GROW_Y          ((SEL_H - TILE_H) / 2)                  /* 4 */
+#define GRID_PAD_TOP        (SEL_GROW_Y + SEL_OUTLINE)              /* 6 */
+#define GRID_PAD_BOT        (SEL_GROW_Y + SEL_SHADOW_DY)            /* 10 */
+
 /* The handoff puts the position bar at 616. A selected column-3 tile spans 466..618 and its
  * shadow reaches 622, so both would sit on top of it -- and column 3 is a quarter of all
  * selections. Moved to 618 so the tile's exclusive right edge at 617 clears it, and drawn
@@ -110,22 +122,16 @@ typedef struct {
 #define BADGE_INSET         4
 #define FAV_TRIANGLE        18
 
-/* Ambient wash, docs/design/README.md section 4. Centred on the grid viewport, deliberately
- * smaller than it so the colour reads as light in the room rather than as a coloured panel. */
-#define AMBIENT_W           420
-#define AMBIENT_H           300
-#define AMBIENT_X           ((SCREEN_W - AMBIENT_W) / 2)
-#define AMBIENT_Y           (GRID_Y + (GRID_H - AMBIENT_H) / 2)
-#define AMBIENT_ALPHA       38          /**< ~15 %; any more and unselected tiles take a tint */
-#define AMBIENT_RATE        6.0f        /**< smooth_towards rate; 0.22 s to settle, per DUR_AMBIENT_REKEY */
+/* The ambient wash's geometry lived here. Removed with the wash itself -- see the note in
+ * screen_grid.c's render() for why a hard-edged quad behind a gapped grid could not work. */
 
 #define HAIRLINE            1
 #define ACCENT_BAR          4
 
 /** @brief Left edge of column @p c. */
 #define COL_X(c)            (GRID_X + (c) * COL_PITCH)
-/** @brief Top edge of row @p r in content space, before scroll. */
-#define ROW_Y(r)            (GRID_Y + (r) * ROW_PITCH)
+/** @brief Top edge of row @p r in content space, before scroll. Includes the overhang pad. */
+#define ROW_Y(r)            (GRID_Y + GRID_PAD_TOP + (r) * ROW_PITCH)
 
 extern const theme_t THEME_MIDNIGHT;
 extern const theme_t THEME_CARTRIDGE;

@@ -11,6 +11,7 @@
 
 #include "menu/image_decoder.h"
 #include "thumbcache.h"
+#include "thumbstore.h"
 #include "ui/theme.h"
 #include "utils/fs.h"
 
@@ -35,6 +36,10 @@ struct thumbcache_s {
     uint32_t clock;
 
     int decoding_slot;      /**< -1 when nothing is being decoded */
+    /** Source path and size of the decode in flight. decode_done() needs both to key the atlas
+     *  write, and by then art_resolve() has long returned. */
+    char     decoding_src[512];
+    int64_t  decoding_bytes;
     /** No record is startable; the per-frame walk is skipped until something clears this. */
     bool idle;
     uint16_t decoding_id;
@@ -61,6 +66,10 @@ struct thumbcache_s {
  * left alone deliberately: the job here is inherently serial and a decoder pool would add
  * concurrency to something bounded by CPU, not by latency. */
 static thumbcache_t *active;
+
+/** The library thumbcache_run() is working against. decode_done() is a callback from the image
+ *  decoder and is handed only the record, but it needs the library to mark the index stale. */
+static library_t *active_lib;
 
 thumbcache_t *thumbcache_init (const char *storage_prefix) {
     thumbcache_t *tc = calloc(1, sizeof(thumbcache_t));
@@ -187,6 +196,7 @@ static int64_t art_resolve (thumbcache_t *tc, const library_t *lib, lib_record_t
         int64_t bytes = file_get_size(out);
         if (bytes >= 0) {
             rec->art_file = strdup(out);
+            library_touch((library_t *)lib);   /* worth writing back; see library_t::dirty */
             debugf("ART %s: loose %s\n", rec->game_code[0] ? rec->game_code : "----", out);
             return bytes;
         }
@@ -309,6 +319,25 @@ static void decode_done (img_err_t err, surface_t *decoded, void *data) {
     slot->used = true;
     rec->art_state = ART_READY;
     tc->resident++;
+
+    /* Pay the 32 KB write once so no future boot pays the 259,633 us decode again. Deliberately
+     * synchronous and deliberately here: we have just spent a quarter of a second on this image,
+     * so an 11 ms append is 4 % on the cold path and 100 % of the saving on every warm one. */
+    thumbstore_put(tc->decoding_src, tc->decoding_bytes, decoded, rec->dominant);
+    /* Publish every eight tiles. The pak is appended to as we go, but a tile the index has not
+     * recorded is a tile nobody can find -- so a user who fills a cold grid and then power-cycles
+     * without launching anything would throw away every decode. Eight bounds that loss to about
+     * two seconds of work while keeping the index rewrite off the per-tile path. */
+    if ((thumbstore_count() % 8) == 0) {
+        thumbstore_flush();
+    }
+
+    /* dominant is derived from the decoded pixels and is worth carrying in the index too: it
+     * drives the ambient wash, which would otherwise be flat until each tile finished decoding. */
+    if (active_lib != NULL) {
+        library_touch(active_lib);
+    }
+
     tc->decoding_slot = -1;
     if ((tc->decoded_count % 8) == 0) {
         debugf("THUMB %lu decoded, %lu us total, %lu us each, resident=%d\n",
@@ -396,6 +425,8 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
         return false;
     }
 
+    active_lib = lib;
+
     uint32_t scan_t0 = TICKS_READ();
 
     /* Nothing in flight. Four passes, in order: cheap-and-visible, cheap-and-anywhere,
@@ -439,8 +470,47 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
             int64_t art_bytes = art_resolve(tc, lib, rec, path, sizeof(path));
             if (art_bytes < 0) {
                 rec->art_state = ART_NONE;    /* no art for this game; settled, never retried */
+                library_touch(lib);           /* "there is none" is the expensive answer to cache */
                 continue;
             }
+            /* The atlas is checked BEFORE the cost gate, and that ordering is the point. A
+             * cached tile is 27 KB off the card no matter how ruinous its source was to decode,
+             * so the 2118 x 1457 card that monopolises the decoder for 38 seconds becomes an
+             * ordinary tile the moment it has been decoded once. Deferring a cached tile to the
+             * costly pass would throw that away for no reason. */
+            if (thumbstore_available()) {
+                int slot = claim_slot(tc, lib, (uint16_t)i);
+                if (slot < 0) {
+                    thumb_scan_us += TIMER_MICROS(TICKS_SINCE(scan_t0));
+                    return false;
+                }
+                surface_t *cached = malloc(sizeof(surface_t));
+                if (cached != NULL) {
+                    *cached = surface_alloc(FMT_RGBA16, TILE_W, TILE_H);
+                    uint16_t dom = 0;
+                    if (cached->buffer != NULL &&
+                        thumbstore_fetch(path, art_bytes, cached, &dom)) {
+                        tc->slots[slot].rom_id = (uint16_t)i;
+                        tc->slots[slot].last_wanted = tc->clock;
+                        tc->slots[slot].art = cached;
+                        tc->slots[slot].used = true;
+                        tc->resident++;
+                        rec->dominant = dom;
+                        rec->art_state = ART_READY;
+                        rec->art_age = 0.0f;        /* still pops in; it is new to the screen */
+                        thumb_scan_us += TIMER_MICROS(TICKS_SINCE(scan_t0));
+                        return true;
+                    }
+                    surface_free(cached);
+                    free(cached);
+                }
+                /* Miss. The slot was claimed but nothing was put in it, so release it before
+                 * falling through -- otherwise a cold library leaks one slot per tile and the
+                 * pool is exhausted after twenty misses. */
+                tc->slots[slot].used = false;
+                tc->slots[slot].rom_id = 0xFFFF;
+            }
+
             if (!allow_costly && art_bytes > THUMB_CHEAP_BYTES) {
                 rec->art_state = ART_COSTLY;  /* measured once; a later pass will take it */
                 continue;
@@ -452,6 +522,8 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
                 return false;       /* pool full of tiles wanted right now; try next frame */
             }
 
+            snprintf(tc->decoding_src, sizeof(tc->decoding_src), "%s", path);
+            tc->decoding_bytes = art_bytes;
             img_err_t perr = image_decoder_start_scaled(path, TILE_W, TILE_H, decode_done, rec);
             if (perr != IMG_OK) {
                 debugf("THUMB %d: image_decoder_start_scaled(%s) = %d\n", i, path, (int)perr);

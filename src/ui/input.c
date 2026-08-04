@@ -70,6 +70,7 @@ void input_poll (input_t *in, float dt) {
         pressed.l     = inputscript_pressed(ISCRIPT_BTN_L);
         pressed.r     = inputscript_pressed(ISCRIPT_BTN_R);
         pressed.z     = inputscript_pressed(ISCRIPT_BTN_Z);
+        pressed.c_right = inputscript_pressed(ISCRIPT_BTN_CRIGHT);
     } else {
         JOYPAD_PORT_FOREACH (i) {
             dir = joypad_get_direction(i, JOYPAD_2D_DPAD | JOYPAD_2D_STICK);
@@ -85,6 +86,20 @@ void input_poll (input_t *in, float dt) {
                 break;
             }
         }
+    }
+
+    /* The C-pad is the fast-scroll pad on the vertical axis ONLY.
+     *
+     * Left and right step one tile in a four-column grid, which the d-pad already does at a
+     * perfectly good rate -- there is nothing there to hurry. Down steps a whole row, and
+     * crossing a 500-title library is the entire reason the fast pad exists. So up and down are
+     * kept, left and right are dropped, and C-right is free to be a button.
+     *
+     * That last part is not a side effect, it is required: if C-right stayed a direction, every
+     * press of Fav would also step the cursor one tile right and favourite the game you just
+     * left. Diagonals go too -- a diagonal containing right would reintroduce exactly that. */
+    if (cdir != JOYPAD_8WAY_UP && cdir != JOYPAD_8WAY_DOWN) {
+        cdir = JOYPAD_8WAY_NONE;
     }
 
     bool fast = false;
@@ -129,4 +144,5 @@ void input_poll (input_t *in, float dt) {
     if (pressed.l)     in->pressed |= BTN_L;
     if (pressed.r)     in->pressed |= BTN_R;
     if (pressed.z)     in->pressed |= BTN_Z;
+    if (pressed.c_right) in->pressed |= BTN_CRIGHT;
 }

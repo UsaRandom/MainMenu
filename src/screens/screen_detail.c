@@ -19,6 +19,8 @@
 
 #include "app.h"
 #include "cheats/cheatdb.h"
+#include "cheats/cheatstate.h"
+#include "library/playstate.h"
 #include "menu/fonts.h"
 #include "menu/rom_info.h"
 #include "menu/sound.h"
@@ -47,6 +49,22 @@
 static tween_t rise;
 static bool    closing;
 
+/**
+ * @brief Which record app->cheats currently holds, or -1 for none.
+ *
+ * `group_count == 0` used to stand in for this, and it is not the same question. Leaving the
+ * sheet with Start does NOT free the set -- screen_launch has to read it -- so the set outlives
+ * the sheet that loaded it, and the next game's sheet then found group_count non-zero and skipped
+ * the load entirely. Two different games showed one game's cheats: NGEE and NTEA rendered a
+ * byte-identical "0 of N enabled" row off GoldenEye's set, and cheatstate_capture() went on to
+ * persist those group-name hashes under the other game's key -- a selection the user never made,
+ * written to the card, against a game it does not belong to.
+ *
+ * Reproduced by tools/inputs/cheat-leak.txt. It is unmissable under ares, where a launch always
+ * returns to the grid, and reachable on hardware wherever a launch does not end in boot().
+ */
+static int cheats_for_rom = -1;
+
 static const char *SAVE_NAME[] = {
     "None", "EEPROM 4K", "EEPROM 16K", "SRAM 256K", "SRAM banked",
     "SRAM 1M", "FlashRAM 1M", "FlashRAM (PKST2)",
@@ -66,10 +84,20 @@ static void detail_enter (app_t *app) {
     tween_start(&rise, DUR_SHEET_OPEN);
 
     /* Load once per game rather than once per visit: coming back from the cheats screen must not
-     * throw away what the user just ticked. */
-    if (app->cheats.group_count == 0 && app->launch.rom_id >= 0) {
+     * throw away what the user just ticked. Keyed on WHICH game, not on whether anything is
+     * loaded -- see cheats_for_rom. */
+    if (app->launch.rom_id >= 0 && cheats_for_rom != app->launch.rom_id) {
+        cheatdb_free(&app->cheats);
+        cheats_for_rom = app->launch.rom_id;
         const lib_record_t *r = &app->lib->records[app->launch.rom_id];
         cheatdb_load(r->check_code, r->game_code, r->version, &app->cheats);
+        /* Re-tick whatever the user had on last time. Matched by group NAME, so a refreshed
+         * cheats.db that reorders its entries cannot silently enable a different cheat --
+         * see cheatstate.h. */
+        int on = cheatstate_apply(&app->cheats, playstate_key(r));
+        if (on > 0) {
+            debugf("CHEATSTATE restored %d cheats for %s\n", on, r->game_code);
+        }
     }
 }
 
@@ -88,6 +116,16 @@ static void detail_update (app_t *app, float dt) {
         return;
     }
 
+    /* Favouriting from the sheet, which was not possible before: the sheet is where you decide
+     * whether you want a game, and the only way to act on that was to back out to the grid and
+     * find the tile again. Same button as the grid, so Fav means one thing everywhere. */
+    if (input_pressed(in, BTN_CRIGHT) && app->launch.rom_id >= 0) {
+        lib_record_t *r = &app->lib->records[app->launch.rom_id];
+        r->flags ^= LIBF_FAVORITE;
+        playstate_touch();
+        sound_play_effect(SFX_SETTING);
+    }
+
     if (input_pressed(in, BTN_Z) && app->cheats.group_count > 0) {
         sound_play_effect(SFX_ENTER);
         app_goto(app, SCREEN_CHEATS);
@@ -96,7 +134,16 @@ static void detail_update (app_t *app, float dt) {
 
     if (input_pressed(in, BTN_B)) {
         sound_play_effect(SFX_EXIT);
+        /* Capture before the free: the groups own the names cheatstate hashes. Done on the way
+         * out of the sheet rather than on every checkbox, for the same reason favourites are. */
+        if (app->launch.rom_id >= 0) {
+            cheatstate_capture(&app->cheats,
+                               playstate_key(&app->lib->records[app->launch.rom_id]));
+        }
         cheatdb_free(&app->cheats);
+        /* Required, not tidiness: without it, re-entering this same sheet would match
+         * cheats_for_rom, skip the load, and show a game with cheats as a game with none. */
+        cheats_for_rom = -1;
         closing = true;
         tween_start(&rise, DUR_SHEET_CLOSE);
         return;
@@ -231,6 +278,7 @@ static void detail_render (app_t *app, surface_t *fb) {
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel_alt);
     int hx = SAFE_X;
     hx = ui_hint(hx, FOOTER_Y + 14, "S", BTN_START_COLOR, UI_BTN_DISC, "Play");
+    hx = ui_hint(hx, FOOTER_Y + 14, ">", BTN_C_COLOR, UI_BTN_DISC, "Fav");
     if (app->cheats.group_count > 0) {
         hx = ui_hint(hx, FOOTER_Y + 14, "Z", BTN_Z_COLOR, UI_BTN_TALL, "Cheats");
     }

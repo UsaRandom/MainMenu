@@ -1,0 +1,81 @@
+#!/bin/sh
+# Compile the portable parts of the cache layer natively and round-trip them.
+#
+# The write half of src/library/cache.c cannot run under ares -- the storage prefix there is the
+# ROM's own read-only DFS, so cache_writable() is false and cache_store() returns before touching
+# any serialisation code. This runs the real file on the host instead, against real files.
+#
+#     tools/hosttest/run.sh              # run the tests
+#     tools/hosttest/run.sh --mutate     # also prove the suite can fail
+#
+# --mutate is the house rule made executable: it breaks the CRC seed in a copy of cache.c and
+# checks that the suite notices. Note which tests survive that mutation -- every round-trip check
+# still passes, because writer and reader share the broken function. That is why the suite also
+# pins CRC32 against the published IEEE check value for "123456789", which is the only assertion
+# in it that a self-consistent mistake cannot satisfy.
+
+set -eu
+
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+cd "$ROOT"
+
+CC=${CC:-cc}
+OUT=build/hosttest
+mkdir -p "$OUT"
+
+CFLAGS="-std=c11 -Wall -Wextra -Werror -Itools/hosttest/shim -Isrc -Isrc/library"
+
+echo "== cache round trip"
+rm -rf "$OUT/dir"
+$CC $CFLAGS tools/hosttest/test_cache.c src/library/cache.c -o "$OUT/test_cache"
+TESTDIR="$OUT/dir" "$OUT/test_cache" 2>/dev/null
+
+echo
+echo "== thumbnail atlas round trip"
+rm -rf "$OUT/thumbdir" "$OUT/thumbdir-ro"
+$CC $CFLAGS tools/hosttest/test_thumbstore.c src/library/cache.c src/library/thumbstore.c \
+    -o "$OUT/test_thumbstore"
+TESTDIR="$OUT/thumbdir" "$OUT/test_thumbstore" 2>/dev/null
+
+if [ "${1:-}" = "--mutate" ]; then
+    echo
+    echo "== mutation: move every slot down by one, the atlas suite must go red"
+    # slot_offset() is the arithmetic the whole file rests on and the one thing no other test can
+    # reach. Dropping the +1 puts slot 0 on top of the header, which is exactly the class of
+    # mistake that would have shipped: it still writes, still indexes, still reports a hit.
+    sed 's/return (long)((slot + 1) \* SLOT_BYTES);/return (long)(slot * SLOT_BYTES);/' \
+        src/library/thumbstore.c > "$OUT/thumbstore_mutant.c"
+    grep -q 'return (long)(slot \* SLOT_BYTES);' "$OUT/thumbstore_mutant.c" ||
+        { echo "slot_offset mutation did not apply" >&2; exit 1; }
+
+    rm -rf "$OUT/mutant_thumbdir" "$OUT/mutant_thumbdir-ro"
+    $CC -std=c11 -Wall -Itools/hosttest/shim -Isrc -Isrc/library \
+        tools/hosttest/test_thumbstore.c src/library/cache.c "$OUT/thumbstore_mutant.c" \
+        -o "$OUT/test_thumbstore_mutant"
+
+    if TESTDIR="$OUT/mutant_thumbdir" "$OUT/test_thumbstore_mutant" \
+            >"$OUT/thumb_mutant.log" 2>/dev/null; then
+        echo "MUTANT PASSED -- the atlas suite cannot detect a wrong slot offset" >&2
+        exit 1
+    fi
+    grep -E 'FAIL|failures' "$OUT/thumb_mutant.log"
+    echo "mutation detected, so a green atlas run above means something"
+
+    echo
+    echo "== mutation: break the CRC seed, the suite must go red"
+    sed 's/uint32_t crc = 0xFFFFFFFFu;/uint32_t crc = 0x00000000u;/' \
+        src/library/cache.c > "$OUT/cache_mutant.c"
+    grep -q '0x00000000u;' "$OUT/cache_mutant.c" || { echo "mutation did not apply" >&2; exit 1; }
+
+    rm -rf "$OUT/mutant_dir"
+    # -Werror dropped: the point is to run the mutant, not to lint it.
+    $CC -std=c11 -Wall -Itools/hosttest/shim -Isrc -Isrc/library \
+        tools/hosttest/test_cache.c "$OUT/cache_mutant.c" -o "$OUT/test_cache_mutant"
+
+    if TESTDIR="$OUT/mutant_dir" "$OUT/test_cache_mutant" >"$OUT/mutant.log" 2>/dev/null; then
+        echo "MUTANT PASSED -- the suite cannot detect a broken CRC, which makes it worthless" >&2
+        exit 1
+    fi
+    grep -E 'FAIL|failures' "$OUT/mutant.log"
+    echo "mutation detected, so a green run above means something"
+fi

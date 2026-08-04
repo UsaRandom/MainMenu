@@ -22,7 +22,8 @@ Unchanged from the pre-spec working set except the left margin. All device pixel
 | Grid viewport | 596 × 352 at 16,72. **Clips top and bottom only** — 8 px horizontal bleed. |
 | Tile | 140 × 98, aspect 1.4286 : 1 |
 | Column origins | 16, 168, 320, 472 (pitch 152 = 140 + 12) |
-| Row origins | 72, 182, 292, 402 (pitch 110 = 98 + 12) |
+| Row origins | 78, 188, 298, 408 (pitch 110 = 98 + 12), including the overhang pad |
+| Overhang pad | 6 px top, 10 px bottom, added to the scrolled content — see below |
 | Selected tile | **152 × 106 at −6, −4 from its cell. Whole pixels, not a scale factor.** |
 | Selection shadow | 152 × 106 at +4 x, +6 y from the selected rect. Solid, no blur. |
 | Selection outline | 2 px, drawn outside the 152 × 106 rect |
@@ -31,7 +32,16 @@ Unchanged from the pre-spec working set except the left margin. All device pixel
 | Radius | **0 everywhere**, except baked button glyphs |
 | Spacing scale | 4 · 8 · 12 · 16 · 32. Nothing between, nothing outside. |
 
-12 tiles fully visible plus a 22 px peek of row 4.
+12 tiles fully visible plus a 16 px peek of row 4.
+
+**Overhang pad.** A selected tile reaches outside its own cell: 4 px at each end from growing
+centred to 152 × 106, then 2 px more above for the outline and 6 px more below for the shadow
+offset. The viewport clips top and bottom, so at either end of the list that overhang had nowhere
+to go and the first and last rows were cut — 6 px and 10 px respectively. The scrolled content
+therefore carries a 6 px top pad and a 10 px bottom pad, which is why the row origins above start
+at 78 rather than 72 and why the peek is 16 px rather than 22. Widening the scissor instead does
+not work downward: the footer is drawn after the grid and would cover the overhang regardless.
+See AUDIT.md 1q.
 
 **Whole-pixel rule.** Scroll targets are always a multiple of the 110 px row pitch. Ease in
 float, round to integer *before* the display list. Sub-pixel texture scroll shimmers here.

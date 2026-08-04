@@ -1,0 +1,21 @@
+# Tab order, the opening tab, and what an empty tab looks like.
+#
+# The fixture now carries a hand-built menu/cache/playstate.dat (tools/mkplaystate.py), which is
+# the only way to reach this branch under ares: the menu cannot WRITE a cache there, but it reads
+# one perfectly well, so baking one into the fixture exercises the whole load path for real.
+#
+# With two SNES titles marked played, Recent is non-empty and the menu must open on it rather than
+# falling back to N64 -- which is the half of "first non-empty tab" that was previously untestable.
+
+wait 300            # boot plate, then let the first rows decode
+fbdump              # 1: the opening tab. Must be RECENT, not N64.
+
+press r
+wait 30
+fbdump              # 2: Favourites -- one title, from the same playstate file
+
+press r x2
+wait 30
+fbdump              # 3: NES, which is empty. Nothing should be drawn in the grid area.
+
+exit

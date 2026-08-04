@@ -1,0 +1,34 @@
+# Does a cheat set outlive the game it was loaded for?
+#
+# app->cheats is loaded by detail_enter() and freed ONLY by detail_update()'s B handler. Leaving
+# the sheet with Start does not free it -- deliberately, because screen_launch reads it. But under
+# ares the launch cannot boot, so it returns to the grid with the set still loaded, and
+# detail_enter()'s "load once per game" guard is `group_count == 0`, which is now false.
+#
+# So the next game's sheet skips the load and shows the PREVIOUS game's cheats. Worse,
+# cheatstate_capture() then writes those group-name hashes under the new game's key, persisting a
+# selection the user never made against a game it does not belong to.
+#
+# Golden Eye 007 (N64 index 5) is one of the fixture games the cheat database covers.
+# Donkey Kong 64 (index 4) has none, so its sheet must show no Cheats row at all. If frame 3
+# carries one, it is Golden Eye's, and the leak is real.
+
+wait 300            # boot plate, then let the first rows decode
+press r x2          # Recent -> Favourites -> N64
+wait 30
+
+press right x5      # Golden Eye 007
+press a             # its detail sheet
+wait 40
+fbdump              # 1: Golden Eye. A Cheats row here is correct and expected.
+
+press start         # Play -- leaves the sheet WITHOUT freeing the set
+wait 220            # the fade, the simulated load, and the fall back to the grid
+fbdump              # 2: back on the grid
+
+press left          # Donkey Kong 64, which the database does not cover
+press a             # its detail sheet
+wait 40
+fbdump              # 3: THE TEST. No Cheats row, and no Z hint in the footer.
+
+exit

@@ -32,6 +32,16 @@ done
 
 # Warn rather than refuse: an interactive look at the UI is still useful with the harness off,
 # unlike a measurement run. But say so, because "no dumps appeared" is otherwise mystifying.
+# Defocus must not be Pause. ares with "Defocus: Pause" stops emulating the moment its window
+# loses focus, which a background or headless run never has -- so the ROM never reaches its exit
+# opcode and the run dies on the timeout with an EMPTY log, because ares buffers stdout and a
+# killed process never flushes it. That looks exactly like a ROM that hangs. It cost an hour of
+# bisecting working code before the setting was found, so it is asserted here now.
+grep -qE "^[[:space:]]*Defocus:[[:space:]]*Allow" "$SETTINGS" 2>/dev/null || {
+    echo "ares Defocus is not Allow in $SETTINGS -- a background run will pause and time out" >&2
+    exit 1
+}
+
 for setting in HomebrewMode ExpansionPak; do
     grep -qE "^[[:space:]]*$setting:[[:space:]]*true" "$SETTINGS" 2>/dev/null \
         || echo "warning: ares $setting is not true in $SETTINGS" >&2

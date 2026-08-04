@@ -11,9 +11,9 @@
  * The handoff calls this the one signal that survives a room's width. So the common case is a
  * blended quad per unselected tile, and the grow, shadow and outline are reinforcement.
  *
- * Art is not wired up yet -- every tile renders in its "no art" state, which is a fully
- * specified state rather than a placeholder, so the grid is legitimately the product with an
- * empty cache.
+ * A tile has three appearances, not one: decoded art, a "no art" state that is fully specified
+ * rather than a placeholder, and a loading state carrying the title and a decode progress worm.
+ * A cold or unillustrated library therefore stays navigable instead of becoming a wall of grey.
  */
 
 #include <stdio.h>
@@ -25,6 +25,7 @@
 #include "menu/fonts.h"
 #include "menu/image_decoder.h"
 #include "menu/sound.h"
+#include "library/playstate.h"
 #include "screens.h"
 #include "screens/boot_plate.h"
 #include "ui/draw.h"
@@ -36,17 +37,23 @@
 static uint16_t view[MAX_VIEW];
 static int view_count;
 
-static tab_t tab = TAB_N64;
+static tab_t tab = TAB_N64;      /**< replaced at first entry; see pick_opening_tab() */
 static int cursor;              /**< index into view[] */
 static float scroll_y;          /**< pixels, content space; always rounded before use */
 static float scroll_target;
 static float pulse_phase;
 static boot_plate_t boot_anim;   /* not `boot`: boot/boot.h already has a function by that name */
 static bool boot_armed;
-static uint16_t ambient;        /**< current wash colour, eased toward the selection's */
-static uint16_t ambient_target;
 static tween_t grow;
-static int frames_since_move;
+
+/** Frames of stillness before the decode budget opens up. ~0.25 s at 60 Hz. */
+#define DECODE_SETTLE_FRAMES    15
+
+/* Starts settled rather than at zero. The cursor cannot move while the boot plate is up, so this
+ * still holds its initial value on the first frame after the curtain -- which means decoding
+ * carries straight on through the reveal instead of stopping for a quarter of a second at the
+ * exact moment the user first sees the grid. */
+static int frames_since_move = DECODE_SETTLE_FRAMES;
 
 /* ------------------------------------------------------------------ small drawing helpers */
 
@@ -58,13 +65,24 @@ static int rows_total (void) {
 }
 
 static float scroll_max (void) {
-    int content = rows_total() * ROW_PITCH - TILE_GAP;
+    /* The pads are part of the content, not of the window: the last row has to be able to scroll
+     * GRID_PAD_BOT further than its cell needs, or its shadow lands under the scissor. */
+    int content = rows_total() * ROW_PITCH - TILE_GAP + GRID_PAD_TOP + GRID_PAD_BOT;
     float m = (float)(content - GRID_H);
     return m > 0.0f ? m : 0.0f;
 }
 
 static void rebuild_view (app_t *app) {
     view_count = library_tab_view(app->lib, tab, view, MAX_VIEW);
+    /* Say so when a tab is clipped. library_tab_view() stops at cap and returns cap, which is
+     * indistinguishable from a tab that happens to hold exactly that many -- so a card with more
+     * than MAX_VIEW titles on one system would quietly present a library missing its tail, with
+     * nothing anywhere saying which games went. 1024 is comfortably past the 500+ this is
+     * designed for; the log line is here so that if it is ever not, the symptom names itself. */
+    if (view_count == MAX_VIEW && app->lib->count > MAX_VIEW) {
+        debugf("GRID %s clipped at %d titles; the library holds %d\n",
+               library_tab_label(tab), MAX_VIEW, app->lib->count);
+    }
     if (cursor >= view_count) {
         cursor = view_count > 0 ? view_count - 1 : 0;
     }
@@ -73,7 +91,9 @@ static void rebuild_view (app_t *app) {
 /** @brief Centre the selected row, clamped, snapped to whole pixels. */
 static void retarget_scroll (void) {
     int row = cursor / GRID_COLS;
-    float want = (float)(row * ROW_PITCH) - (float)(GRID_H - TILE_H) * 0.5f;
+    /* GRID_PAD_TOP appears here because ROW_Y() carries it: the scroll that puts row r's cell at
+     * a given screen y is larger by the pad than the cell arithmetic alone would say. */
+    float want = (float)(GRID_PAD_TOP + row * ROW_PITCH) - (float)(GRID_H - TILE_H) * 0.5f;
     scroll_target = roundf(clampf(want, 0.0f, scroll_max()));
 }
 
@@ -82,15 +102,12 @@ static void retarget_scroll (void) {
 /**
  * @brief Draw one tile in its "no art" state.
  *
- * bg_alt fill, 2 px panel_alt inner border, system code as a large watermark, title clipped
- * along the bottom. Still identifiable -- which is the point: a grid with a cold cache must be
- * navigable, not a wall of grey rectangles.
+ * bg_alt fill, 2 px panel_alt inner border, title clipped along the bottom. Still identifiable --
+ * which is the point: a grid with a cold cache must be navigable, not a wall of grey rectangles.
  */
 static void draw_tile (app_t *app, const lib_record_t *rec, uint16_t rom_id,
                        int x, int y, int w, int h, bool selected) {
     const theme_t *th = app->theme;
-    static const char *SYS_CODE[SYS_COUNT] = { "N64", "NES", "SNES", "GB", "GBC", "SMS" };
-    const char *code = (rec->system < SYS_COUNT) ? SYS_CODE[rec->system] : "?";
 
     surface_t *art = thumbcache_get(app->thumbs, app->lib, rom_id);
 
@@ -120,14 +137,18 @@ static void draw_tile (app_t *app, const lib_record_t *rec, uint16_t rom_id,
             .scale_y = (float)ah / (float)TILE_H,
         });
     } else if (rec->art_state == ART_NONE) {
-        /* No art: bg_alt fill, 2 px inner border, the system code as a watermark, and the title
-         * clipped along the bottom. Still identifiable, which is the point -- a cold or artless
-         * library must stay navigable rather than becoming a wall of grey rectangles. */
+        /* No art: bg_alt fill, 2 px inner border, and the title. Nothing else.
+         *
+         * There used to be a large system-code watermark here -- N64, SNES, SMS -- on the
+         * reasoning that a tile should say something rather than nothing. It says the wrong
+         * thing: the tab rail above already states the system, so the watermark repeated known
+         * information in the largest type on the tile, and it read as a label for the game
+         * rather than for the console. An empty plate with the title on it is honest about
+         * there being no art; a big SNES across the middle is not. */
         ui_fill(x, y, w, h, th->bg_alt);
         ui_border(x, y, w, h, 2, th->panel_alt);
         rdpq_set_mode_standard();
         rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
-        ui_text(x, y + h / 2 - 18, w, ALIGN_CENTER, STL_GRAY, code);
         if (rec->title != NULL) {
             ui_text(x + 4, y + h - 16, w - 8, ALIGN_CENTER, STL_DEFAULT, rec->title);
         }
@@ -211,8 +232,8 @@ static void grid_open (app_t *app, screen_id_t screen) {
  * @brief Glyph for a virtual tab, drawn when it is not the active one.
  *
  * Favourites is a corner triangle, matching the badge used on a favourited tile so the two teach
- * each other. Recent is a clock. Most Played is a rising bar chart. All three are built from
- * fills rather than sprites -- three shapes did not justify an asset pipeline.
+ * each other. Recent is a clock. Both are built from fills rather than sprites -- two shapes did
+ * not justify an asset pipeline.
  */
 static void draw_tab_icon (int x, int y, tab_t t, uint16_t c) {
     switch (t) {
@@ -226,11 +247,6 @@ static void draw_tab_icon (int x, int y, tab_t t, uint16_t c) {
             ui_fill(x + TAB_ICON / 2 - 1, y + 5, 2, TAB_ICON / 2 - 4, c);   /* hand, up */
             ui_fill(x + TAB_ICON / 2, y + TAB_ICON / 2 - 1, TAB_ICON / 4, 2, c); /* hand, right */
             break;
-        case TAB_MOST_PLAYED:
-            ui_fill(x, y + TAB_ICON - 6, 4, 6, c);
-            ui_fill(x + 6, y + TAB_ICON - 12, 4, 12, c);
-            ui_fill(x + 12, y + TAB_ICON - 18, 4, 18, c);
-            break;
         default:
             break;
     }
@@ -241,13 +257,15 @@ static void draw_tab_rail (app_t *app) {
 
     ui_fill(TABRAIL_X, TABRAIL_Y, TABRAIL_W, TABRAIL_H, th->panel);
 
-    /* All nine tabs are always present, empty or not, left-aligned, never centred or
+    /* All eight tabs are always present, empty or not, left-aligned, never centred or
      * distributed. A tab you have nothing for is still exactly where you left it.
      *
-     * The three virtual tabs are icon-only until selected, which is section 4.3 and also the only
-     * way the rail fits: nine labels at the body font's 12 px glyph metric measure 744 px against
-     * a 608 px rail. Icons for the inactive ones brings the worst case -- Most Played active --
-     * to 576. */
+     * The two virtual tabs are icon-only until selected, which is section 4.3 and also what makes
+     * the rail fit. At the body font's 12 px glyph metric, spelling every label out measures
+     * 8 * 20 padding + 108 + 72 + 36 + 36 + 48 + 24 + 36 + 36 = 556 against a 608 px rail -- which
+     * now fits, since dropping Most Played took 132 px off it. Icons for the inactive virtual tabs
+     * are kept anyway: the worst case with Favourites active is 468, and the rail reads better
+     * with room in it than filled to 92 %. */
     int x = TABRAIL_X + TAB_PAD;
     for (int t = 0; t < TAB_COUNT; t++) {
         bool active = (t == (int)tab);
@@ -301,7 +319,11 @@ static void draw_footer (app_t *app) {
      * advertise themselves and the shoulder buttons are the only thing they could mean. */
     int hx = SAFE_X;
     hx = ui_hint(hx, FOOTER_Y + 32, "A", BTN_A_COLOR, UI_BTN_DISC, "Details");
-    hx = ui_hint(hx, FOOTER_Y + 32, "Z", BTN_Z_COLOR, UI_BTN_TALL, "Favourite");
+    /* Fav is C-right: a yellow disc carrying the arrow that is printed on the pad itself, so the
+     * hint names the key by its shape rather than by a letter nobody calls it. Labelled "Fav"
+     * rather than "Favourite" because the same hint has to fit the detail sheet's footer beside
+     * Play and Cheats. */
+    hx = ui_hint(hx, FOOTER_Y + 32, ">", BTN_C_COLOR, UI_BTN_DISC, "Fav");
     (void)ui_hint(hx, FOOTER_Y + 32, "S", BTN_START_COLOR, UI_BTN_DISC, "Settings");
     if (buf[0]) {
         ui_text(SAFE_X, FOOTER_Y + 48, SAFE_W, ALIGN_RIGHT, STL_ORANGE, buf);
@@ -331,12 +353,37 @@ static void draw_position_bar (app_t *app) {
 
 /* ------------------------------------------------------------------ screen */
 
+/**
+ * @brief Open on the first tab that has anything in it.
+ *
+ * Rail order is the priority order, so this resolves to Recent if you have played anything,
+ * Favourites if you have not but have starred something, and otherwise the first system you own
+ * games for. A fixed starting tab was N64, which on a first boot is right by luck and on every
+ * subsequent boot lands you one tab away from the thing you were doing.
+ *
+ * Falls back to N64 when the whole library is empty, so the empty state appears somewhere
+ * sensible rather than on Recent, where "nothing here" is ambiguous between "no library" and
+ * "nothing played yet".
+ */
+static tab_t pick_opening_tab (app_t *app) {
+    static uint16_t probe[MAX_VIEW];
+    for (int t = 0; t < TAB_COUNT; t++) {
+        if (library_tab_view(app->lib, (tab_t)t, probe, MAX_VIEW) > 0) {
+            return (tab_t)t;
+        }
+    }
+    return TAB_N64;
+}
+
 static void grid_enter (app_t *app) {
     /* Armed once per power-on, not once per visit: coming back from the detail sheet must not
-     * replay the boot animation. */
+     * replay the boot animation -- nor silently move the user to another tab, which is why the
+     * opening tab is chosen here and not on every entry. */
     if (!boot_armed) {
         boot_armed = true;
         boot_plate_reset(&boot_anim);
+        tab = pick_opening_tab(app);
+        debugf("GRID opening on %s\n", library_tab_label(tab));
     }
 
     rebuild_view(app);
@@ -347,13 +394,44 @@ static void grid_enter (app_t *app) {
     tween_start(&grow, DUR_TILE_GROW);
 }
 
+/**
+ * @brief Is the grid worth revealing yet?
+ *
+ * The first row, counting a tile with no art as settled -- waiting for a card that will never
+ * arrive is how an adaptive hold turns into the fixed ceiling for every user with an
+ * unillustrated library.
+ *
+ * One row and not two, which is what this asked for first. On the SD card's own corpus a card
+ * costs 259,633 us, and the plate converts 72 % of its working hold into decode (1.04 s of decode
+ * inside the 1.45 s between the rise ending and the release). One row therefore lands at a
+ * measured 1,998 ms hold, released by the grid. Two rows would be 2.89 s of hold, which overruns
+ * the 3.0 s ceiling and gives the worst of both -- the longest possible plate AND an incomplete
+ * first screen, which is exactly what the two-row version measured before this was cut back.
+ */
+static bool grid_worth_revealing (app_t *app) {
+    if (app->lib == NULL) {
+        return true;            /* nothing to wait for; the fault screen owns this case */
+    }
+    int want = GRID_COLS;
+    if (want > view_count) {
+        want = view_count;
+    }
+    for (int i = 0; i < want; i++) {
+        uint8_t s = app->lib->records[view[i]].art_state;
+        if (s != ART_READY && s != ART_NONE) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void grid_update (app_t *app, float dt) {
     const input_t *in = &app->input;
 
     /* The plate swallows input while it is up, so a button pressed during boot does not land on
      * a grid the user cannot see yet. It does NOT stop the grid updating -- scrolling, decoding
      * and the selection tween all run underneath, which is what makes the reveal a reveal. */
-    if (boot_plate_step(&boot_anim, dt)) {
+    if (boot_plate_step(&boot_anim, dt, grid_worth_revealing(app))) {
         return;
     }
     int prev = cursor;
@@ -401,12 +479,13 @@ static void grid_update (app_t *app, float dt) {
         sound_play_effect(SFX_ENTER);
         grid_open(app, SCREEN_DETAIL);
     }
-    if (view_count > 0 && input_pressed(in, BTN_Z)) {
-        /* In memory only, and lost on reboot until playstate.dat exists -- writing to the card is
-         * deferred until there is hardware to test a write against. The interaction is here
-         * because the Favorites tab is otherwise permanently empty and unreviewable. */
+    if (view_count > 0 && input_pressed(in, BTN_CRIGHT)) {
+        /* Marked dirty, not written. A favourite is one button press and the user may make a
+         * dozen in a row; a file rewritten per press is a filesystem round trip per press.
+         * playstate_save() runs when the menu is on its way out instead. */
         lib_record_t *r = &app->lib->records[view[cursor]];
         r->flags ^= LIBF_FAVORITE;
+        playstate_touch();
         sound_play_effect(SFX_SETTING);
         if (tab == TAB_FAVORITES) {
             rebuild_view(app);          /* un-favouriting from the Favorites tab removes it */
@@ -430,34 +509,10 @@ static void grid_update (app_t *app, float dt) {
         scroll_y = scroll_target;
     }
 
-    /* Track the selection's colour. Eased per channel in 5-bit space rather than crossfaded in
-     * RGBA, because the destination is a single RGBA5551 value and interpolating the packed word
-     * would walk through colours that are in neither endpoint. */
-    if (view_count > 0) {
-        uint16_t want = app->lib->records[view[cursor]].dominant;
-        if (want != 0) {
-            ambient_target = want;
-        }
-    }
-    if (ambient_target != 0) {
-        int cr = (ambient >> 11) & 0x1F, cg = (ambient >> 6) & 0x1F, cb = (ambient >> 1) & 0x1F;
-        int tr = (ambient_target >> 11) & 0x1F, tg = (ambient_target >> 6) & 0x1F,
-            tb = (ambient_target >> 1) & 0x1F;
-        float k = 1.0f - expf(-AMBIENT_RATE * dt);
-        cr += (int)roundf((tr - cr) * k);
-        cg += (int)roundf((tg - cg) * k);
-        cb += (int)roundf((tb - cb) * k);
-        /* Snap when within one step, or the rounding leaves it one level short forever. */
-        if (cr == tr && cg == tg && cb == tb) {
-            ambient = ambient_target;
-        } else {
-            ambient = (uint16_t)((cr << 11) | (cg << 6) | (cb << 1) | 1);
-        }
-    }
-
-    /* Only the visible window is advanced. Walking all 500 records every frame to age a timer
-     * that only matters for the twelve on screen is the same shape of waste the idle cache flag
-     * was added to remove. */
+    /* The whole tab view, not just the visible window -- the comment here used to claim the
+     * opposite of what the loop does. It is a compare and a rare add per record, so at 500 titles
+     * it is roughly 50 us a frame against 16,700, and narrowing it to the twelve on screen would
+     * mean tracking which twelve. Left as it is, described as it is. */
     for (int i = 0; i < view_count; i++) {
         lib_record_t *r = &app->lib->records[view[i]];
         if (r->art_age < DUR_TILE_ARRIVAL) {
@@ -493,19 +548,39 @@ static void grid_render (app_t *app, surface_t *fb) {
 
     thumbcache_begin_frame(app->thumbs);
 
+    /* Ask for the selected tile before anything else.
+     *
+     * The draw loop below runs unselected-first, so the selection's shadow and growth land on top
+     * of its neighbours instead of under them. The side effect is that the tile the user is
+     * actually looking at is the LAST one added to the decoder's want list -- sixteenth of
+     * sixteen on a full screen -- and the decoder serves that list in order. On the SD card's own
+     * library that put 1080 Snowboarding, the tile under the cursor at boot, behind every other
+     * visible card: its art path was not even resolved until log line 10,246, by which point the
+     * rest of the grid had filled in and it was still drawing as a placeholder.
+     *
+     * This is the same priority inversion recorded in AUDIT.md 1f.1, arriving by a different
+     * route -- that one was the decoder walking the library from index 0, this one is the want
+     * list being built in painter's order. thumbcache_get() dedupes, so this only reorders. */
+    if (view_count > 0) {
+        (void)thumbcache_get(app->thumbs, app->lib, view[cursor]);
+    }
+
     rdpq_attach(fb, NULL);
     rdpq_set_mode_fill(color_from_packed16(th->bg));
     rdpq_fill_rectangle(0, 0, SCREEN_W, SCREEN_H);
 
-    /* Ambient wash: a soft field of the selected game's own colour behind the grid, so moving
-     * across the library shifts the whole screen slightly. docs/design/README.md asks for a
-     * 420x300 dithered quad; this is that, eased so the colour slides rather than cuts.
+    /* The ambient wash used to be here: a 420 x 300 quad of the selected game's colour, eased,
+     * meant to read as light in the room behind the art.
      *
-     * The handoff also nominates this as the FIRST thing to cut if fill rate runs out (10.3),
-     * so it is one blended quad and nothing more -- no gradient, no second layer. */
-    if (ambient != 0) {
-        ui_wash(AMBIENT_X, AMBIENT_Y, AMBIENT_W, AMBIENT_H, ambient, AMBIENT_ALPHA);
-    }
+     * It never did. The quad has hard edges and the grid does not cover it -- not on an empty tab,
+     * not on a sparse one, and not even on a full one, because the 12 px gaps between tiles let it
+     * through in a band that stops dead at the quad's border. What it actually read as was a
+     * rectangle sitting behind the library, which is precisely the failure docs/design/README.md
+     * warned about when it asked for "light in the room rather than a coloured panel".
+     *
+     * The handoff already nominated it as the first thing to cut (10.3). Cut. That also buys back
+     * the 126,000 blended pixels DESIGN.md section 4 costed it at, roughly 2.0 ms of the 10.3 ms
+     * fill estimate. */
 
     draw_tab_rail(app);
 
@@ -607,14 +682,40 @@ static void grid_render (app_t *app, surface_t *fb) {
 #define DECODE_BUDGET_MOVING_US 1200
 #endif
 
-/** Frames of stillness before the budget opens up. ~0.25 s at 60 Hz. */
-#define DECODE_SETTLE_FRAMES    15
+/* During the plate's hold there is nothing to protect: the plate is one fill and one sprite, no
+ * input is accepted, and the only thing the frame rate governs is a mark that is standing still.
+ * So the budget is most of a field, and it is the one place in the program where dropping frames
+ * is free. */
+#ifndef DECODE_BUDGET_BOOT_US
+#define DECODE_BUDGET_BOOT_US   14000
+#endif
 
 /**
  * @brief Decode art in the window where the CPU would otherwise wait on the RDP.
  */
 static void grid_background (app_t *app, uint32_t budget_ticks) {
     (void)budget_ticks;
+
+    /* The boot plate decoded nothing at all, for its entire duration.
+     *
+     * grid_update() returns early while the plate is stepping, before the frames_since_move++
+     * below it, so the counter sat at 0 for all ~78 frames of the plate and the settle gate never
+     * opened. The file comment in boot_plate.c claims the library "has been scanning and decoding
+     * underneath for the whole 1.64 s"; it had been doing neither, and the first decode began a
+     * quarter-second AFTER the curtain lifted, which is exactly the cold reveal the plate exists
+     * to prevent. Found by reading, not by measurement -- it is invisible unless you notice that
+     * the tiles pop in slightly too late.
+     *
+     * boot_plate_working() excludes the rise and the curtain, so the two animated stretches keep
+     * the whole field and only the static hold is spent working. */
+    if (boot_plate_working(&boot_anim)) {
+        thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
+        return;
+    }
+    if (!boot_anim.done) {
+        return;
+    }
+
     /* Decode NOTHING while the selection is moving, rather than decoding on a small budget.
      *
      * A budget can only stop between rows, and one row of a real card costs 5,000-19,000 us --

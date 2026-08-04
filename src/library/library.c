@@ -17,7 +17,7 @@
 #define SCAN_MAX_DEPTH  4
 
 static const char *TAB_LABELS[TAB_COUNT] = {
-    "FAVORITES", "RECENT", "MOST PLAYED",
+    "RECENT", "FAVORITES",
     "N64", "NES", "SNES", "GB", "GBC", "SMS",
 };
 
@@ -136,7 +136,13 @@ static bool is_image (const char *name) {
 
 /** @brief Grow by doubling. Upstream's browser reallocs once per entry; at 500 files that is
  *  500 reallocs and the fragmentation to match. */
-static lib_record_t *library_push (library_t *lib) {
+void library_touch (library_t *lib) {
+    if (lib != NULL) {
+        lib->dirty = true;
+    }
+}
+
+lib_record_t *library_push (library_t *lib) {
     if (lib->count == lib->capacity) {
         int cap = lib->capacity * 2;
         lib_record_t *grown = realloc(lib->records, cap * sizeof(lib_record_t));
@@ -329,6 +335,13 @@ static int compare_title (const void *a, const void *b) {
     return c != 0 ? c : strcasecmp(x->path ? x->path : "", y->path ? y->path : "");
 }
 
+void library_join (char *out, size_t cap, const char *storage_prefix, const char *root) {
+    size_t plen = strlen(storage_prefix);
+    bool prefix_slash = (plen > 0 && storage_prefix[plen - 1] == '/');
+    snprintf(out, cap, "%s%s", storage_prefix,
+             (prefix_slash && root[0] == '/') ? root + 1 : root);
+}
+
 int library_scan (library_t *lib, const char *storage_prefix, const char *root) {
     char base[512];
 
@@ -339,10 +352,7 @@ int library_scan (library_t *lib, const char *storage_prefix, const char *root) 
      * DFS accepts it, which is why it survived: `rom://roms/snes/Star Relic.sfc` opened, sized
      * and launched correctly under ares. FatFs over the SC64 has never been asked, and a path
      * separator is a poor thing to discover on hardware. Joined properly instead. */
-    size_t plen = strlen(storage_prefix);
-    bool prefix_slash = (plen > 0 && storage_prefix[plen - 1] == '/');
-    snprintf(base, sizeof(base), "%s%s", storage_prefix,
-             (prefix_slash && root[0] == '/') ? root + 1 : root);
+    library_join(base, sizeof(base), storage_prefix, root);
 
     uint32_t t0 = TICKS_READ();
     int added = scan_dir(lib, base, 0);
@@ -366,9 +376,8 @@ int library_tab_view (const library_t *lib, tab_t tab, uint16_t *out, int cap) {
         bool keep = false;
 
         switch (tab) {
-            case TAB_FAVORITES:   keep = (r->flags & LIBF_FAVORITE) != 0; break;
             case TAB_RECENT:      keep = r->last_played != 0; break;
-            case TAB_MOST_PLAYED: keep = r->play_count != 0; break;
+            case TAB_FAVORITES:   keep = (r->flags & LIBF_FAVORITE) != 0; break;
             case TAB_N64:         keep = r->system == SYS_N64; break;
             case TAB_NES:         keep = r->system == SYS_NES; break;
             case TAB_SNES:        keep = r->system == SYS_SNES; break;
@@ -383,20 +392,14 @@ int library_tab_view (const library_t *lib, tab_t tab, uint16_t *out, int cap) {
         }
     }
 
-    /* Records are already title-sorted, so the system tabs come out ordered for free. Recent
-     * and Most Played need their own key. */
-    if (tab == TAB_RECENT || tab == TAB_MOST_PLAYED) {
+    /* Records are already title-sorted, so every system tab and Favourites come out ordered for
+     * free. Recent is the one tab whose order is not the title order: most recent first. */
+    if (tab == TAB_RECENT) {
         for (int i = 1; i < n; i++) {
             uint16_t v = out[i];
-            const lib_record_t *rv = &lib->records[v];
-            uint32_t kv = (tab == TAB_RECENT) ? rv->last_played : rv->play_count;
+            uint32_t kv = lib->records[v].last_played;
             int j = i - 1;
-            while (j >= 0) {
-                const lib_record_t *rj = &lib->records[out[j]];
-                uint32_t kj = (tab == TAB_RECENT) ? rj->last_played : rj->play_count;
-                if (kj >= kv) {
-                    break;
-                }
+            while (j >= 0 && lib->records[out[j]].last_played < kv) {
                 out[j + 1] = out[j];
                 j--;
             }

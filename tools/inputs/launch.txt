@@ -1,0 +1,42 @@
+# Launch a game with cheats on, and watch the loading screen.
+#
+# Under an emulator there is no cart to stream a ROM onto, so this exercises everything up to the
+# handoff -- cheat flattening, play history, the progress bar -- and stops short of boot(). See
+# simulate_load() in screen_launch.c for why that is the honest behaviour rather than a test hook.
+#
+# Golden Eye 007 is index 5 in the N64 tab (1080, AeroFighters, Banjo, Conkers, Donkey Kong 64,
+# Golden Eye) and is one of the fixture games the cheat database actually covers. A game with no
+# cheats reaches the same loading screen and proves nothing about the cheat path -- the first
+# version of this script picked Donkey Kong 64, which has none, and its Z press did nothing.
+#
+# A is deliberately not used on the detail sheet: A is Play there, not "open cheats". The first
+# version used it to mean the latter and launched the game four steps early.
+
+wait 300            # boot plate, then let the first rows decode
+
+press right x5      # Golden Eye 007
+press a             # detail sheet
+wait 40
+fbdump              # 1: the sheet, showing its cheat count
+
+press z             # cheats screen
+wait 30
+press a             # tick the first group
+press down
+press a             # and a second, so the emitter has more than one to flatten
+wait 20
+fbdump              # 2: two groups ticked
+
+press b             # back to the sheet
+wait 40
+press start         # Play
+wait 12
+fbdump              # 3: mid-fade -- the sheet dimming, not a cleared screen
+
+wait 12
+fbdump              # 4: further into the fade, so it must be darker than frame 3
+
+wait 180            # let it finish and fall back to the grid
+fbdump              # 5: back on the grid, not booted into nothing
+
+exit

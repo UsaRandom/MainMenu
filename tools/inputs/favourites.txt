@@ -2,19 +2,22 @@
 #
 # The tab is a view rebuilt from a filter, not a stored list, so the thing that can go wrong is
 # the view not being rebuilt when the flag changes -- which looks like the toggle doing nothing.
+#
+# Fav is C-right, spelled `press cright`. It is a button, not a C-pad direction: `cpress right`
+# would step the cursor instead, which is exactly the collision input.c drops C-left/right to avoid.
 
 wait 120
-press z             # favourite the first game
+press cright        # favourite the first game
 press right x2
-press z             # and a third
+press cright        # and a third
 wait 20
 fbdump              # 1: N64 tab, two corner marks
 
-press l x3          # back round to Favorites
+press l             # N64 -> Favourites, which is now the tab immediately left of it
 wait 30
 fbdump              # 2: Favorites tab holding exactly those two
 
-press z             # un-favourite one from inside the tab
+press cright        # un-favourite one from inside the tab
 wait 20
 fbdump              # 3: one left, view rebuilt under the cursor
 

@@ -9,6 +9,11 @@
 #include <libdragon.h>
 
 #include "app.h"
+#include "cheats/cheatstate.h"
+#include "library/cache.h"
+#include "library/libindex.h"
+#include "library/playstate.h"
+#include "library/thumbstore.h"
 #include "cheats/cheatdb.h"
 #include "menu/image_decoder.h"
 #include "dev/allocwatch.h"
@@ -86,7 +91,11 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     fonts_init(NULL);
 
     if (ferr != FLASHCART_OK) {
-        app_fault(app, "No supported flashcart detected.");
+        /* Say which failure it was. "No supported flashcart detected" was printed for every one
+         * of them, including FLASHCART_ERR_SD_CARD -- which means an unreadable or unformatted
+         * card would have sent someone hunting a cart-detection problem that was not there. The
+         * cases are distinguishable and this is the screen that has to distinguish them. */
+        app_fault(app, flashcart_convert_error_message(ferr));
         return;
     }
 
@@ -95,7 +104,19 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
         app_fault(app, "Out of memory building the library.");
         return;
     }
-    library_scan(app->lib, app->storage, "/roms");
+    /* Cache first, scan only if it will not do. At a measured 11,499 us per ROM a 500-title
+     * scan is 5.75 s, which is the single largest fixed cost in the product; libindex_load()
+     * answers the same question with a directory enumeration and no file opens at all. */
+    cache_init(app->storage);
+    if (!libindex_load(app->lib, app->storage, "/roms")) {
+        library_scan(app->lib, app->storage, "/roms");
+        libindex_save(app->lib, app->storage, "/roms");
+    }
+
+    /* After the library exists, never before: playstate is applied onto records and keys on the
+     * check codes the index or the scan just produced. */
+    playstate_load(app->lib);
+    cheatstate_load();
 
     /* Opened once and held: the index is 24 bytes a game, and the alternative is reopening the
      * file every time a detail sheet appears. Absent is normal -- a card with no cheats.db is a
@@ -106,11 +127,35 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     if (app->thumbs == NULL) {
         app_fault(app, "Out of memory allocating the art cache.");
     }
+    thumbstore_open();
 }
 
 static void app_deinit (app_t *app) {
     /* cheats is NOT freed here: boot_params->cheat_list may point into a buffer built from it,
      * and main() calls boot() the moment this returns. */
+    /* Last chance to persist. This runs on the way to booting a ROM, so anything not written
+     * here is lost -- the menu does not come back, the game does. Ordered before the frees
+     * because playstate_save() reads the library it is about to lose. */
+    if (app->lib != NULL && app->lib->dirty) {
+        /* Rewrite the index now that art resolution has run. The copy written at boot was made
+         * before a single tile had been asked for, so it carried no art paths at all -- see
+         * library_t::dirty. Without this the five-rule art search is repeated in full on every
+         * boot for the entire library, which is the one cost the index was supposed to remove. */
+        libindex_save(app->lib, app->storage, "/roms");
+    }
+    /* app->lib is NULL whenever app_init() faulted before building it -- no flashcart, or out of
+     * memory. Nothing can have marked playstate dirty in that case, so this guard has never
+     * fired; it is here because "has never fired" is a property of the current fault paths and
+     * not of this function, and the failure would be a null dereference on the way out. */
+    if (app->lib != NULL && playstate_dirty()) {
+        playstate_save(app->lib);
+    }
+    if (cheatstate_dirty()) {
+        cheatstate_save();
+    }
+    thumbstore_close();
+    cheatstate_free();
+
     cheatdb_close();
     thumbcache_free(app->thumbs);
     app->thumbs = NULL;
@@ -278,10 +323,14 @@ void app_run (boot_params_t *boot_params) {
             /* Separate line so the frame line stays greppable as one shape. The claim under test
              * is that a frame which is only drawing allocates nothing; art decoding legitimately
              * allocates, so read this alongside rows=. */
-            debugf("HEAP n=%lu mallocs=%lu reallocs=%lu frees=%lu bytes=%lu\n",
+            heap_stats_t hs;
+            sys_get_heap_stats(&hs);
+            debugf("HEAP n=%lu mallocs=%lu reallocs=%lu frees=%lu bytes=%lu "
+                   "total=%d used=%d free=%d\n",
                    (unsigned long)app->frame,
                    (unsigned long)alloc_stats.mallocs, (unsigned long)alloc_stats.reallocs,
-                   (unsigned long)alloc_stats.frees, (unsigned long)alloc_stats.bytes);
+                   (unsigned long)alloc_stats.frees, (unsigned long)alloc_stats.bytes,
+                   hs.total, hs.used, hs.total - hs.used);
             allocwatch_reset();
             for (int i = 0; i < FRAMESTAT_BINS; i++) app->fieldbin[i] = 0;
             app->worst_us = app->update_us = app->render_us = app->bg_us = app->spin_us = 0;

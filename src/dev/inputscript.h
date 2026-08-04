@@ -29,6 +29,8 @@ typedef enum {
     ISCRIPT_BTN_L        = (1 << 3),
     ISCRIPT_BTN_R        = (1 << 4),
     ISCRIPT_BTN_Z        = (1 << 5),
+    ISCRIPT_BTN_CRIGHT   = (1 << 6),   /**< the Fav button; see input.c on why C-right is not a
+                                        *   direction */
 } iscript_button_t;
 
 /** @brief Side effects a script step can trigger. */

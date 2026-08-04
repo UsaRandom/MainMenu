@@ -38,6 +38,11 @@ typedef enum {
     LIBF_HAS_SAVE = (1 << 1),
     LIBF_HOMEBREW = (1 << 2),
     LIBF_NO_MATCH = (1 << 3),   /**< not found in the ROM database */
+    /** Art was looked for and is not there. Persisted, because "no art" is the answer that costs
+     *  the most to reach -- five resolution rules and up to three filesystem probes -- and it is
+     *  the answer for every title on a card with no art pack. Without this the warm path pays the
+     *  full search again on every boot for exactly the records that gain nothing from it. */
+    LIBF_ART_MISSING = (1 << 4),
 } lib_flags_t;
 
 /**
@@ -117,6 +122,16 @@ typedef struct {
     art_entry_t *art;
     int art_count;
     int art_capacity;
+
+    /** Set when a record has changed in a way the index does not yet know about.
+     *
+     * This exists because of an ordering problem: libindex_save() runs straight after the scan,
+     * but art resolution is lazy and happens later, per tile, as the grid asks for them. So the
+     * index written at boot records no art paths at all, and the search -- five rules, up to
+     * three filesystem probes, and the AUDIT's 180-probe cautionary tale -- would be repeated in
+     * full on every single boot forever. The flag lets the index be rewritten on the way out
+     * once the answers are actually known. */
+    bool dirty;
 } library_t;
 
 /**
@@ -128,11 +143,21 @@ typedef struct {
  */
 const char *library_find_art (const library_t *lib, const char *name);
 
-/** @brief Tabs, in rail order. All are always shown, empty or not. */
+/**
+ * @brief Tabs, in rail order. All are always shown, empty or not.
+ *
+ * Recent leads, because the overwhelmingly common reason to open a launcher is to carry on with
+ * the thing you were already playing, and that should cost no navigation at all. Favourites is
+ * second: deliberate, but a smaller set and a less frequent intent than "again".
+ *
+ * There is no Most Played. It was a third ranking of the same handful of games, and a tab whose
+ * contents are almost always a permutation of the two beside it is a tab that costs rail width
+ * and decision time to tell you nothing new. play_count is still recorded and still shown on the
+ * detail sheet -- the statistic was worth keeping, the tab was not.
+ */
 typedef enum {
-    TAB_FAVORITES = 0,
-    TAB_RECENT,
-    TAB_MOST_PLAYED,
+    TAB_RECENT = 0,
+    TAB_FAVORITES,
     TAB_N64,
     TAB_NES,
     TAB_SNES,
@@ -148,8 +173,27 @@ const char *library_tab_label (tab_t tab);
 /** @brief Allocate an empty library. */
 library_t *library_init (void);
 
+/**
+ * @brief Append a zeroed record and return it, growing the array. NULL if out of memory.
+ *
+ * Exposed for libindex.c, which fills the library from a cache file rather than from a scan.
+ * Both paths must grow the array the same way or the two produce differently-shaped libraries.
+ */
+lib_record_t *library_push (library_t *lib);
+
+/**
+ * @brief Join a storage prefix and an absolute root without doubling the separator.
+ *
+ * Shared with libindex.c so the directory signatures are taken over exactly the path the scan
+ * walked. See the comment in library_scan() for what the doubled separator cost last time.
+ */
+void library_join (char *out, size_t cap, const char *storage_prefix, const char *root);
+
 /** @brief Free the library and every string it owns. */
 void library_free (library_t *lib);
+
+/** @brief Note that a record changed and the on-disk index is now behind. */
+void library_touch (library_t *lib);
 
 /**
  * @brief Walk @p root recursively and index every ROM found.

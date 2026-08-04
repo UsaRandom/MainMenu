@@ -47,6 +47,16 @@ done
 # so there are no dumps and no self-termination -- a run that looks exactly like a ROM that
 # crashed before reaching the instrumentation. With the Expansion Pak off the menu is running
 # on 4 MB, which is not the M64 and not what any measurement here is about.
+# Defocus must not be Pause. ares with "Defocus: Pause" stops emulating the moment its window
+# loses focus, which a background or headless run never has -- so the ROM never reaches its exit
+# opcode and the run dies on the timeout with an EMPTY log, because ares buffers stdout and a
+# killed process never flushes it. That looks exactly like a ROM that hangs. It cost an hour of
+# bisecting working code before the setting was found, so it is asserted here now.
+grep -qE "^[[:space:]]*Defocus:[[:space:]]*Allow" "$SETTINGS" 2>/dev/null || {
+    echo "ares Defocus is not Allow in $SETTINGS -- a background run will pause and time out" >&2
+    exit 1
+}
+
 for setting in HomebrewMode ExpansionPak; do
     if ! grep -qE "^[[:space:]]*$setting:[[:space:]]*true" "$SETTINGS" 2>/dev/null; then
         echo "ares $setting is not true in $SETTINGS -- fix it before measuring anything" >&2

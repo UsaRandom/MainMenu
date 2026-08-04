@@ -94,8 +94,16 @@ tools/            fixture, input scripts, regression, art + cheat corpus fetcher
 - **Motion is specified in seconds, never frames.** The frame rate is still an open question.
 - **Every cache file carries a magic and a format version**, and a mismatch deletes and rebuilds
   rather than trying to migrate. `src/cheats/cheatdb.c` is the reference implementation.
-- **Nothing writes to the card yet.** Thumbnail cache, play history and cheat selections are all
-  in-memory only, because ares' DFS is read-only and a write path that has never run is not a
-  feature. These land with hardware.
+- **Every write is soft.** Settings, `library.idx`, `playstate.dat`, `cheatstate.dat` and
+  `thumbs.pak`/`.idx` all persist through `src/library/cache.c`, which decides once at boot whether
+  storage is writable and short-circuits every writer if it is not. Under ares it never is — the
+  DFS is read-only — so the menu must behave *identically* to the way it did before any of this
+  existed, only slower. Nothing in this layer may ever become load-bearing.
+- **The write half is unexecuted on real storage.** ares cannot reach it. `tools/hosttest/run.sh`
+  compiles the real `cache.c` and `thumbstore.c` natively and round-trips them against actual
+  files, and `--mutate` proves both suites can go red — breaking the CRC seed, and dropping the
+  `+ 1` from `slot_offset()`, which 10 of the atlas suite's 31 checks catch. `libindex.c`,
+  `playstate.c` and `cheatstate.c` are still verified only by compile-time size assertions. See
+  AUDIT.md 1r for the hardware bring-up order and 1s for the pre-hardware bug scan.
 - **Cheats are toggled as named groups, never per line.** A `D0` conditional and the write it
   guards are one indivisible thing; see AUDIT.md 2.2 for what per-line toggling did.

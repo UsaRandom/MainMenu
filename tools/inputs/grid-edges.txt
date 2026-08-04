@@ -1,0 +1,18 @@
+# The two rows the scissor used to cut.
+#
+# A selected tile grows past its own cell -- 4 px at each end, plus a 2 px outline above and a
+# 6 px shadow offset below -- and the grid is scissored top and bottom because otherwise tiles
+# would scroll over the tab rail and the footer. At either end of the list the overhang therefore
+# had nowhere to go: 6 px off the top of the top row, 10 px off the bottom of the last one.
+#
+# Frame 1 is row 0 at scroll 0. Frame 2 is the last row at maximum scroll. Both must show a
+# closed rectangle of outline with the shadow complete beneath it.
+
+wait 300            # boot plate, then long enough for the first rows to decode
+fbdump              # 1: cursor on row 0, scrolled hard to the top
+
+press down x8       # walks past the last row; the cursor clamps to the final title
+wait 400
+fbdump              # 2: cursor on the last row, scrolled hard to the bottom
+
+exit

@@ -29,6 +29,10 @@ typedef enum {
     BTN_L     = (1 << 3),
     BTN_R     = (1 << 4),
     BTN_Z     = (1 << 5),
+    /** C-right, read as a button rather than as a direction. See input_poll() for what that
+     *  costs: the C-pad is otherwise the fast-scroll pad, so this one direction is no longer
+     *  available for it. */
+    BTN_CRIGHT = (1 << 6),
 } button_t;
 
 typedef struct {

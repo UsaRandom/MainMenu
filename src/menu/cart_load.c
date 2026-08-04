@@ -133,6 +133,9 @@ cart_load_err_t cart_load_n64_rom_and_save (app_t *app, flashcart_progress_callb
 #ifndef FEATURE_AUTOLOAD_ROM_ENABLED
     if (app->settings.rom_fast_reboot_enabled) {
         if (!flashcart_has_feature(FLASHCART_FEATURE_ROM_REBOOT_FAST)) {
+            /* Leaked `path` before this. The only return in the function that did not free it,
+             * and reachable only with fast reboot turned on against a cart that lacks it. */
+            path_free(path);
             return CART_LOAD_ERR_FUNCTION_NOT_SUPPORTED;
         }
         app->flashcart_err = flashcart_set_next_boot_mode(FLASHCART_REBOOT_MODE_ROM);

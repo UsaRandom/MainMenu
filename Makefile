@@ -71,9 +71,7 @@ endif
 # from the other tree. Name a stamp after the current setting and drop the outputs whenever it
 # changes. This runs while the makefile is read, before any dependency is considered, because
 # a rule would fire too late to affect decisions make has already made.
-CONFIG_STAMP := $(BUILD_DIR)/.config-$(if $(FIXTURE),fixture,plain)-$(if $(DEV_HARNESS),dev-$(notdir $(basename $(INPUT_SCRIPT)))-$(FBSCALE),nodev)-$(shell echo '$(TUNE)' | tr -c 'A-Za-z0-9=' '_')
-$(shell [ -f $(CONFIG_STAMP) ] || rm -rf $(BUILD_DIR)/menu $(BUILD_DIR)/dev $(BUILD_DIR)/ui $(BUILD_DIR)/screens $(BUILD_DIR)/library $(BUILD_DIR)/app.o $(BUILD_DIR)/inputscript_generated.h $(BUILD_DIR)/.config-* $(BUILD_DIR)/$(PROJECT_NAME).elf $(BUILD_DIR)/$(PROJECT_NAME).dfs)
-$(shell mkdir -p $(BUILD_DIR) && touch $(CONFIG_STAMP))
+# (moved below SRCS -- the stamp is now keyed on the source list too)
 
 N64_ROM_SAVETYPE = none
 N64_ROM_RTC = 1
@@ -105,8 +103,13 @@ SRCS = \
 	libs/miniz/miniz_zip.c \
 	libs/miniz/miniz.c \
 	cheats/cheatdb.c \
+	cheats/cheatstate.c \
+	library/cache.c \
+	library/libindex.c \
 	library/library.c \
+	library/playstate.c \
 	library/thumbcache.c \
+	library/thumbstore.c \
 	menu/cart_load.c \
 	menu/ini_parser.c \
 	menu/fonts.c \
@@ -127,6 +130,25 @@ SRCS = \
 	ui/theme.c \
 	ui/tween.c \
 	utils/fs.c
+
+# Drop the build whenever the CONFIGURATION or the SOURCE LIST changes.
+#
+# Two different traps, one mechanism. FIXTURE and DEV_HARNESS change what is compiled without
+# touching any timestamp, so make would happily link objects from the other configuration and
+# pack a DFS from the other tree.
+#
+# The source list is in the key for a second reason, learned the hard way twice: adding a file
+# leaves every existing .d referring to a header set that no longer matches, and *removing* one
+# leaves .d files naming headers that are simply gone -- at which point make refuses to build
+# anything at all with "No rule to make target src/cheats/cheatstate.h". The old cleanup list was
+# also hand-maintained and had already fallen behind: $(BUILD_DIR)/cheats was never in it.
+#
+# So the cleanup now finds every .o and .d rather than naming directories, which cannot fall
+# behind. This runs while the makefile is read, before any dependency is considered, because a
+# rule would fire too late to affect decisions make has already made.
+CONFIG_STAMP := $(BUILD_DIR)/.config-$(if $(FIXTURE),fixture,plain)-$(if $(DEV_HARNESS),dev-$(notdir $(basename $(INPUT_SCRIPT)))-$(FBSCALE),nodev)-$(shell echo '$(TUNE)' | tr -c 'A-Za-z0-9=' '_')-$(shell echo '$(SRCS)' | cksum | cut -d' ' -f1)
+$(shell [ -f $(CONFIG_STAMP) ] || { find $(BUILD_DIR) \( -name '*.o' -o -name '*.d' \) -delete 2>/dev/null; rm -rf $(BUILD_DIR)/inputscript_generated.h $(BUILD_DIR)/.config-* $(BUILD_DIR)/$(PROJECT_NAME).elf $(BUILD_DIR)/$(PROJECT_NAME).dfs; })
+$(shell mkdir -p $(BUILD_DIR) && touch $(CONFIG_STAMP))
 
 # FirpleBoot.ttf has no file of its own. It is the same face as Firple-Bold baked at a
 # different size, and its rule below names that source explicitly; it is listed here only
@@ -223,6 +245,17 @@ dfsroot: $(FILESYSTEM)
 		python3 tools/mkfixture.py -o $(FIXTURE_DIR) $(FIXTURE_ART) >/dev/null; \
 	fi
 	@cp -R $(FIXTURE_DIR)/. $(DFS_ROOT_DIR)/
+	@# A hand-built playstate.dat, which is the ONLY way to reach the cache READ path under ares:
+	@# the DFS is read-only so nothing can ever write one, but the menu will happily load one that
+	@# is already there. Without it Recent and Favourites are unreachable and the grid always
+	@# falls back to N64 -- so tabs.txt silently stops testing "open on the first non-empty tab",
+	@# which is exactly what happened after a `make clean` removed a copy that had been generated
+	@# by hand. Generated here so it cannot go missing again.
+	@# Names must exist in the generated tree or the records load and match nothing, which looks
+	@# identical to the file being absent. mkfixture.py's SNES titles are the three below.
+	@python3 tools/mkplaystate.py -o $(DFS_ROOT_DIR)/menu/cache/playstate.dat \
+		--played "Chrono Drift.sfc" --played "Star Relic.sfc" \
+		--favorite "Pixel Knights.sfc" >/dev/null
 	@# cheats.db is a release artifact built by tools/mkcheatdb.py, never committed. Staged when
 	@# it happens to be there so the cheats screen has something to show under ares.
 	@if [ -f $(BUILD_DIR)/cheats.db ]; then \

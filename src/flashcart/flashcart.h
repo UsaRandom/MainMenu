@@ -128,6 +128,16 @@ flashcart_err_t flashcart_init (const char **storage_prefix);
 flashcart_err_t flashcart_deinit (void);
 
 /**
+ * @brief True when no real flashcart was found and the dummy driver is in use.
+ *
+ * Which in practice means an emulator. Worth being able to ask, because the dummy driver reports
+ * success for operations it did not perform: dummy_load_rom() returns FLASHCART_OK immediately
+ * without copying anything and without ever calling the progress callback. A caller that treats
+ * that as a real load will hand a bootloader a cart that has nothing on it.
+ */
+bool flashcart_is_dummy (void);
+
+/**
  * @brief Check if the flashcart has a specific feature.
  * 
  * @param feature The flashcart feature to check.
