@@ -86,15 +86,39 @@ def main():
     if not db:
         sys.exit("harvested no rows from %s -- did the MATCH_ macros change shape?" % args.rom_info)
 
-    by_title = {}
-    collisions = set()
+    # Group by normalised title first, so a collision can be inspected rather than only counted.
+    grouped = {}
     for code, ver, cc, title in db:
         k = normalise(title)
         if not k:
             continue
-        if k in by_title and by_title[k][:3] != (code, ver, cc):
-            collisions.add(k)                 # ambiguous: refuse rather than pick
-        by_title[k] = (code, ver, cc, title)
+        grouped.setdefault(k, []).append((code, ver, cc, title))
+
+    by_title = {}
+    collisions = set()
+    for k, rows_for in grouped.items():
+        distinct = {r[:3] for r in rows_for}
+        if len(distinct) == 1:
+            by_title[k] = rows_for[0]
+            continue
+
+        # More than one row wants this title. Some collisions are not real: rom_info carries
+        # MATCH_CHECK_CODE rows for individually-dumped oddities -- "Donkey kong 64 [USA CRACK]"
+        # and "[PAL CRACK]" sit beside the ordinary MATCH_ID("NDO") row, and the normaliser drops
+        # the bracketed suffix that told them apart. The cheat corpus is keyed by No-Intro names
+        # for clean dumps, so a cracked-dump row is never the right answer for one of them. When
+        # exactly one game-code row is in the group, it is unambiguously the one meant.
+        #
+        # This does NOT resolve two game codes differing only by region -- Ocarina of Time's CZL
+        # and NZL, Mario Party's CLB and NLB. Those are genuinely different games to the cheat
+        # engine, addresses and all, and picking either would be the "worse than no cheat" case
+        # this file exists to avoid. They stay refused.
+        id_rows = {r[:3] for r in rows_for if r[0]}
+        if len(id_rows) == 1:
+            by_title[k] = next(r for r in rows_for if r[0])
+            continue
+
+        collisions.add(k)                     # ambiguous: refuse rather than pick
 
     rows, misses = [], []
     for fn in sorted(os.listdir(args.input)):
