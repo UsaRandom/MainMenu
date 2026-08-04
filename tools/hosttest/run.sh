@@ -37,6 +37,22 @@ $CC $CFLAGS tools/hosttest/test_thumbstore.c src/library/cache.c src/library/thu
     -o "$OUT/test_thumbstore"
 TESTDIR="$OUT/thumbdir" "$OUT/test_thumbstore" 2>/dev/null
 
+echo
+echo "== JPEG variants picojpeg does and does not accept"
+if python3 tools/hosttest/mkjpegs.py "$OUT/jpegs" >"$OUT/mkjpegs.log" 2>&1; then
+    sed 's/^/  /' "$OUT/mkjpegs.log"
+    # -w for picojpeg itself: it is vendored third-party code with shift-of-negative warnings
+    # that -Werror would otherwise turn into a build failure of somebody else's file.
+    $CC $CFLAGS -Isrc/libs/picojpeg -w -o "$OUT/test_jpeg" \
+        tools/hosttest/test_jpeg.c src/libs/picojpeg/picojpeg.c
+    TESTDIR="$OUT/jpegs" "$OUT/test_jpeg"
+else
+    # Pillow is the only third-party dependency anywhere in this suite. Skipping is loud rather
+    # than silent, because a skipped section that reads as a pass is the failure mode this whole
+    # file exists to avoid.
+    echo "  SKIPPED -- $(tail -1 "$OUT/mkjpegs.log")"
+fi
+
 if [ "${1:-}" = "--mutate" ]; then
     echo
     echo "== mutation: move every slot down by one, the atlas suite must go red"
@@ -60,6 +76,26 @@ if [ "${1:-}" = "--mutate" ]; then
     fi
     grep -E 'FAIL|failures' "$OUT/thumb_mutant.log"
     echo "mutation detected, so a green atlas run above means something"
+
+    if [ -x "$OUT/test_jpeg" ]; then
+        echo
+        echo "== mutation: let picojpeg accept progressive, the JPEG suite must go red"
+        # The four progressive checks are the only ones in that suite asserting a REFUSAL, and a
+        # refusal is the easiest thing in the world to assert by accident -- any error at all
+        # would satisfy a looser test. Making the decoder stop refusing proves they are pinned to
+        # UNSUPPORTED_MODE specifically, which is the value image_decoder keys on.
+        sed 's/return PJPG_UNSUPPORTED_MODE;/return 0;/' \
+            src/libs/picojpeg/picojpeg.c > "$OUT/picojpeg_mutant.c"
+        grep -q 'return 0;' "$OUT/picojpeg_mutant.c" || { echo "mutation did not apply" >&2; exit 1; }
+        $CC $CFLAGS -Isrc/libs/picojpeg -w -o "$OUT/test_jpeg_mutant" \
+            tools/hosttest/test_jpeg.c "$OUT/picojpeg_mutant.c"
+        if TESTDIR="$OUT/jpegs" "$OUT/test_jpeg_mutant" >"$OUT/jpeg_mutant.log" 2>/dev/null; then
+            echo "MUTANT PASSED -- the JPEG suite cannot tell refused from accepted" >&2
+            exit 1
+        fi
+        grep -E 'FAIL|failures' "$OUT/jpeg_mutant.log"
+        echo "mutation detected, so a green JPEG run above means something"
+    fi
 
     echo
     echo "== mutation: break the CRC seed, the suite must go red"

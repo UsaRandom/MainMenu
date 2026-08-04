@@ -21,6 +21,12 @@ typedef enum {
     IMG_ERR_OUT_OF_MEM,   /**< Out of memory error */
     IMG_ERR_NO_FILE,      /**< No file found error */
     IMG_ERR_BAD_FILE,     /**< Bad file error */
+    /** A well-formed image in a form this decoder cannot read, as opposed to a broken one.
+     *  Today that means exactly one thing: a progressive JPEG. picojpeg has no progressive
+     *  support by design -- see PJPG_UNSUPPORTED_MODE in picojpeg.h -- so the file is rejected
+     *  at init. Kept separate from IMG_ERR_BAD_FILE because the two want different answers from
+     *  a user: one file needs converting, the other is damaged. */
+    IMG_ERR_UNSUPPORTED,
 } img_err_t;
 
 /**

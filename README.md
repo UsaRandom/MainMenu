@@ -111,6 +111,13 @@ downloaded, a file you placed is a decision, and a decision should win.
 Worth knowing about each half:
 
 - Loose files may be **`.png`, `.jpg` or `.jpeg`**; the metadata pack is read as **`.png` only**.
+- JPEGs must be **baseline, not progressive**. Grayscale is fine, and both chroma layouts are.
+  Progressive is the one thing the decoder cannot read at all — it is refused at open, and the
+  tile draws as if there were no art. If a card full of art comes up blank, that is the first
+  thing to check: `magick in.jpg -interlace none out.jpg`, or re-save with "progressive"
+  unticked. The log says `JPEG: progressive` when it happens.
+- A **truncated** image is not detected. A half-downloaded JPEG decodes without complaint and
+  draws a part-blank tile; re-download it and the cache will miss and decode again.
 - Matching ignores case and the extension, so `ngee.JPG` and `NGEE.png` are the same key. Where
   two loose files collide the shallower one wins.
 - Rules 1 and 3–5 need an N64 game code, which **NES, SNES, GB, GBC, SMS and GG titles do not

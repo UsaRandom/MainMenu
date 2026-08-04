@@ -147,18 +147,32 @@ static unsigned char jpeg_need_bytes (unsigned char *buf, unsigned char n,
  * twice: init, measure, rewind, init again asking for DC only. That second parse is a few
  * hundred bytes of markers against an image-sized saving.
  */
+/** @brief Map a picojpeg init failure, keeping "cannot" apart from "broken". */
+static img_err_t jpeg_init_err (unsigned char e) {
+    if (e == PJPG_UNSUPPORTED_MODE) {
+        /* Progressive. Measured on the vendored picojpeg: a progressive file fails here at both
+         * reduce settings and a baseline one decodes clean, colour or grayscale. Reporting it as
+         * a bad file sent the user looking for a corrupt download. */
+        debugf("JPEG: progressive, which picojpeg cannot decode -- re-save as baseline\n");
+        return IMG_ERR_UNSUPPORTED;
+    }
+    return IMG_ERR_BAD_FILE;
+}
+
 static img_err_t jpeg_open (image_decoder_t *d, int dst_w, int dst_h) {
     rewind(d->f);
-    if (pjpeg_decode_init(&d->ji, jpeg_need_bytes, d->f, 0) != 0) {
-        return IMG_ERR_BAD_FILE;
+    unsigned char perr = pjpeg_decode_init(&d->ji, jpeg_need_bytes, d->f, 0);
+    if (perr != 0) {
+        return jpeg_init_err(perr);
     }
 
     int rw = (d->ji.m_width + 7) / 8;
     int rh = (d->ji.m_height + 7) / 8;
     if (dst_w > 0 && dst_h > 0 && rw >= dst_w && rh >= dst_h) {
         rewind(d->f);
-        if (pjpeg_decode_init(&d->ji, jpeg_need_bytes, d->f, 1) != 0) {
-            return IMG_ERR_BAD_FILE;
+        perr = pjpeg_decode_init(&d->ji, jpeg_need_bytes, d->f, 1);
+        if (perr != 0) {
+            return jpeg_init_err(perr);
         }
         d->reduce = true;
     }
