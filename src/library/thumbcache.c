@@ -39,6 +39,12 @@ struct thumbcache_s {
     bool idle;
     uint16_t decoding_id;
 
+    /** Whether menu/metadata exists at all: -1 unknown, 0 absent, 1 present. Probed once.
+     *  Without this a card carrying no art pack pays three filesystem probes per title to
+     *  discover three times over that a directory it does not have is still not there --
+     *  1,500 stats on a 500-title library, all of them answerable by one. */
+    int8_t metadata_dir;
+
     int resident;
     uint32_t decoded_count;
     uint32_t decoded_us;
@@ -63,6 +69,7 @@ thumbcache_t *thumbcache_init (const char *storage_prefix) {
     }
     tc->storage = storage_prefix;
     tc->decoding_slot = -1;
+    tc->metadata_dir = -1;      /* unknown until the first record needs it */
     for (int i = 0; i < THUMB_SLOTS; i++) {
         tc->slots[i].rom_id = 0xFFFF;
     }
@@ -128,20 +135,105 @@ surface_t *thumbcache_get (thumbcache_t *tc, library_t *lib, uint16_t rom_id) {
     return NULL;
 }
 
+/** @brief The filename part of @p path, without directories. */
+static const char *basename_of (const char *path) {
+    const char *slash = strrchr(path, '/');
+    return (slash != NULL) ? slash + 1 : path;
+}
+
 /**
- * @brief Build the path the art should live at.
+ * @brief Find this record's art, and return its size in bytes, or -1 if there is none.
  *
- * Mirrors the layout upstream's boxart.c probes: four single-character directories from the
- * game code. Kept identical so a card prepared for the stock menu works here unchanged.
+ * Five places are consulted, and the order is chosen so the ones that cost nothing come first.
+ * The two index lookups are pure memory -- the scan already noticed every PNG in the tree -- so
+ * they are free, while each metadata candidate is a filesystem probe on a cold FatFs.
+ *
+ *   1. a loose PNG named for the game code, anywhere under the scanned root  (NGEE.png)
+ *   2. a loose PNG named for the ROM itself                 (Super Mario World (U) [!].png)
+ *   3. menu/metadata/N/G/E/E/boxart_front.png               upstream's layout, unchanged
+ *   4. menu/metadata/N/G/E/boxart_front.png                 upstream's region-agnostic fallback
+ *   5. menu/metadata/NGEE.png                               flat, for hand-dropped art
+ *
+ * A loose file outranks the metadata tree deliberately. The tree is a bulk pack somebody
+ * downloaded; a PNG the user put next to their ROM is a decision, and a decision should win.
+ *
+ * Rule 2 is the only one that does anything for NES, SNES, GB, GBC or SMS titles. They have no
+ * N64 game code -- nothing sets one -- so every other rule here is dead for them, and before
+ * this they could never show art at all no matter what was on the card.
+ *
+ * The winner is remembered in rec->art_file, so this walk happens once per record rather than
+ * once per pass.
  */
-static bool art_path (thumbcache_t *tc, const lib_record_t *rec, char *out, size_t cap) {
-    if (rec->game_code[0] == '\0') {
-        return false;
+static int64_t art_resolve (thumbcache_t *tc, const library_t *lib, lib_record_t *rec,
+                            char *out, size_t cap) {
+    if (rec->art_file != NULL) {
+        snprintf(out, cap, "%s", rec->art_file);
+        thumb_statcalls++;
+        return file_get_size(out);
     }
-    snprintf(out, cap, "%s%s/%c/%c/%c/%c/%s", tc->storage, METADATA_DIR,
-             rec->game_code[0], rec->game_code[1], rec->game_code[2], rec->game_code[3],
-             ART_FILE);
-    return true;
+
+    const char *hit = NULL;
+    bool has_code = (rec->game_code[0] != '\0');
+
+    if (has_code) {
+        hit = library_find_art(lib, rec->game_code);
+    }
+    if (hit == NULL && rec->path != NULL) {
+        hit = library_find_art(lib, basename_of(rec->path));
+    }
+    if (hit != NULL) {
+        snprintf(out, cap, "%s", hit);
+        thumb_statcalls++;
+        int64_t bytes = file_get_size(out);
+        if (bytes >= 0) {
+            rec->art_file = strdup(out);
+            debugf("ART %s: loose %s\n", rec->game_code[0] ? rec->game_code : "----", out);
+            return bytes;
+        }
+    }
+
+    if (!has_code) {
+        debugf("ART ----: none for %s\n", rec->path ? basename_of(rec->path) : "?");
+        return -1;
+    }
+
+    if (tc->metadata_dir < 0) {
+        char probe[512];
+        snprintf(probe, sizeof(probe), "%s%s", tc->storage, METADATA_DIR);
+        dir_t d;
+        tc->metadata_dir = (dir_findfirst(probe, &d) == 0) ? 1 : 0;
+        debugf("ART: metadata dir %s\n", tc->metadata_dir ? "present" : "absent");
+    }
+    if (tc->metadata_dir == 0) {
+        return -1;
+    }
+
+    const char *c = rec->game_code;
+    for (int candidate = 0; candidate < 3; candidate++) {
+        switch (candidate) {
+            case 0:
+                snprintf(out, cap, "%s%s/%c/%c/%c/%c/%s", tc->storage, METADATA_DIR,
+                         c[0], c[1], c[2], c[3], ART_FILE);
+                break;
+            case 1:
+                snprintf(out, cap, "%s%s/%c/%c/%c/%s", tc->storage, METADATA_DIR,
+                         c[0], c[1], c[2], ART_FILE);
+                break;
+            default:
+                snprintf(out, cap, "%s%s/%s.png", tc->storage, METADATA_DIR, c);
+                break;
+        }
+        thumb_statcalls++;
+        int64_t bytes = file_get_size(out);
+        if (bytes >= 0) {
+            rec->art_file = strdup(out);
+            debugf("ART %s: metadata rule %d, %s\n", c, candidate, out);
+            return bytes;
+        }
+    }
+
+    debugf("ART %s: none\n", c);
+    return -1;
 }
 
 /**
@@ -344,12 +436,7 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
             }
 
             char path[512];
-            thumb_statcalls++;
-            if (!art_path(tc, rec, path, sizeof(path))) {
-                rec->art_state = ART_NONE;
-                continue;
-            }
-            int64_t art_bytes = file_get_size(path);
+            int64_t art_bytes = art_resolve(tc, lib, rec, path, sizeof(path));
             if (art_bytes < 0) {
                 rec->art_state = ART_NONE;    /* no art for this game; settled, never retried */
                 continue;

@@ -46,9 +46,90 @@ void library_free (library_t *lib) {
     for (int i = 0; i < lib->count; i++) {
         free(lib->records[i].path);
         free(lib->records[i].title);
+        free(lib->records[i].art_file);
     }
+    for (int i = 0; i < lib->art_count; i++) {
+        free(lib->art[i].key);
+        free(lib->art[i].path);
+    }
+    free(lib->art);
     free(lib->records);
     free(lib);
+}
+
+/** @brief Lowercase @p name with its extension stripped, into a fresh allocation. */
+static char *art_key_from_name (const char *name) {
+    const char *dot = strrchr(name, '.');
+    size_t n = (dot != NULL) ? (size_t)(dot - name) : strlen(name);
+    if (n == 0) {
+        return NULL;
+    }
+    char *key = malloc(n + 1);
+    if (key == NULL) {
+        return NULL;
+    }
+    for (size_t i = 0; i < n; i++) {
+        key[i] = (char)tolower((unsigned char)name[i]);
+    }
+    key[n] = '\0';
+    return key;
+}
+
+/** @brief Remember a loose PNG. Duplicates keep the first seen, so the shallowest wins. */
+static void art_push (library_t *lib, const char *name, const char *full_path) {
+    char *key = art_key_from_name(name);
+    if (key == NULL) {
+        return;
+    }
+    for (int i = 0; i < lib->art_count; i++) {
+        if (strcmp(lib->art[i].key, key) == 0) {
+            free(key);
+            return;
+        }
+    }
+    if (lib->art_count == lib->art_capacity) {
+        int cap = (lib->art_capacity == 0) ? 32 : lib->art_capacity * 2;
+        art_entry_t *grown = realloc(lib->art, cap * sizeof(art_entry_t));
+        if (grown == NULL) {
+            free(key);
+            return;
+        }
+        lib->art = grown;
+        lib->art_capacity = cap;
+    }
+    char *path = strdup(full_path);
+    if (path == NULL) {
+        free(key);
+        return;
+    }
+    lib->art[lib->art_count].key = key;
+    lib->art[lib->art_count].path = path;
+    lib->art_count++;
+}
+
+const char *library_find_art (const library_t *lib, const char *name) {
+    if (lib == NULL || name == NULL || name[0] == '\0') {
+        return NULL;
+    }
+    char *key = art_key_from_name(name);
+    if (key == NULL) {
+        return NULL;
+    }
+    const char *found = NULL;
+    for (int i = 0; i < lib->art_count; i++) {
+        if (strcmp(lib->art[i].key, key) == 0) {
+            found = lib->art[i].path;
+            break;
+        }
+    }
+    free(key);
+    return found;
+}
+
+/** @brief True when @p name ends in .png, case-insensitively. */
+static bool is_png (const char *name) {
+    size_t n = strlen(name);
+    return n > 4 && strcasecmp(name + n - 4, ".png") == 0;
 }
 
 /** @brief Grow by doubling. Upstream's browser reallocs once per entry; at 500 files that is
@@ -206,6 +287,11 @@ static int scan_dir (library_t *lib, const char *dir, int depth) {
 
         if (info.d_type == DT_DIR) {
             added += scan_dir(lib, child, depth + 1);
+        } else if (is_png(info.d_name)) {
+            /* Art sitting loose in the tree, whatever it is named. Recorded here rather than
+             * searched for later: this loop is already visiting every file, so the whole
+             * feature costs one extension compare per entry. */
+            art_push(lib, info.d_name, child);
         } else {
             uint8_t system;
             if (classify(info.d_name, &system)) {

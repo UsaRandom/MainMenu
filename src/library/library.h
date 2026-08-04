@@ -81,6 +81,11 @@ typedef struct {
 
     char    *path;              /**< full path, heap */
     char    *title;             /**< display title, heap */
+    /** Where this record's art was found, resolved once and remembered. NULL until the first
+     *  resolve. Caching it is not an optimisation for its own sake: art can now be found five
+     *  ways, and re-walking that list on every pass is exactly the mistake that once cost 180
+     *  filesystem probes and 6,437 us a frame. */
+    char    *art_file;
 
     uint8_t  art_state;         /**< art_state_t */
     /** Seconds since this tile's art landed, or >= DUR_TILE_ARRIVAL once it has settled. Drives
@@ -93,12 +98,35 @@ typedef struct {
     uint32_t play_count;
 } lib_record_t;
 
+/** @brief One loose PNG noticed during the scan, keyed by its own bare name. */
+typedef struct {
+    char *key;                  /**< basename with the extension removed, lowercased */
+    char *path;                 /**< full path, heap */
+} art_entry_t;
+
 /** @brief The whole index. */
 typedef struct {
     lib_record_t *records;
     int count;
     int capacity;
+
+    /** Every PNG seen during the same directory walk that found the ROMs. Noticing them costs
+     *  one extension compare per file rather than a search per title, which is the only reason
+     *  "art can live anywhere" is affordable at all -- a probe per candidate directory per game
+     *  would be hundreds of stats on a cold FatFs. */
+    art_entry_t *art;
+    int art_count;
+    int art_capacity;
 } library_t;
+
+/**
+ * @brief Look up a loose art file by bare name, case-insensitively.
+ *
+ * @p name is matched against the PNG's own filename minus its extension, so both a game code
+ * ("NGEE.png") and a copy of the ROM's name ("Super Mario World (U) [!].png") resolve through
+ * the same table. Returns NULL when nothing matches.
+ */
+const char *library_find_art (const library_t *lib, const char *name);
 
 /** @brief Tabs, in rail order. All are always shown, empty or not. */
 typedef enum {

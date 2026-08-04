@@ -73,6 +73,71 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
+## 1o. Art can live anywhere, and emulated systems could never have had any
+
+Box art was found exactly one way: `menu/metadata/<G>/<A>/<M>/<E>/boxart_front.png`, built by
+splitting the N64 game code into four single-character directories. That is upstream's layout and
+it is kept, but it had two consequences worth naming.
+
+**Emulated-system titles could not have art at all, by construction.** `index_n64` runs only for
+`SYS_N64` (`library.c:220`), so `game_code` stays empty for every NES, SNES, GB, GBC and SMS ROM,
+and `art_path` returned false at its first line. No file placed anywhere on the card could have
+changed that. The SD card prepared for the M64 carries three SNES ROMs and no N64 ROMs, so it was
+a card on which nothing could ever display art.
+
+**Upstream's own documented fallbacks were not implemented.** `docs/19_gamepak_boxart.md`
+describes a 3-character region-agnostic path and a homebrew-by-title path; neither existed here.
+
+Art is now found five ways, ordered so the free lookups come first:
+
+| # | rule | cost |
+|---|---|---|
+| 1 | a loose PNG named for the game code, anywhere under the scanned root | memory |
+| 2 | a loose PNG named for the ROM itself | memory |
+| 3 | `menu/metadata/N/G/E/E/boxart_front.png` — upstream's layout | one stat |
+| 4 | `menu/metadata/N/G/E/boxart_front.png` — upstream's region fallback | one stat |
+| 5 | `menu/metadata/NGEE.png` — flat | one stat |
+
+Rules 1 and 2 cost nothing because the scan already visits every file: noticing PNGs is one
+extension compare per directory entry in a loop that was walking the tree anyway. A search per
+title would have been hundreds of stats on a cold FatFs, which is what made "anywhere" affordable
+at all. Rule 2 is the only one that does anything for emulated systems.
+
+A loose file outranks the metadata tree deliberately. The tree is a bulk pack somebody
+downloaded; a PNG next to a ROM is a decision.
+
+**Two things guard the cost, both of them fixing mistakes this file already records.** The
+resolved path is cached in `rec->art_file`, so the five-way walk happens once per record rather
+than once per pass — 1g records what re-probing per pass cost last time (180 filesystem probes
+and 6,437 us a frame). And `menu/metadata` is stat'd once and remembered, because without it a
+card with no art pack pays three probes per title to learn three times over that a directory it
+does not have is still absent: 1,500 stats on a 500-title library, all answerable by one.
+
+Verified under ares on a fixture built with one case per rule, plus a control whose art was
+deleted outright:
+
+```
+ART: metadata dir present
+ART N3HE: loose rom:/roms/n64/N3HE.png                                  rule 1
+ART ----: loose rom:/roms/snes/Star Relic.png                           rule 2, no game code
+ART NAGE: metadata rule 0, rom:/menu/metadata/N/A/G/E/boxart_front.png  rule 3
+ART N3HJ: metadata rule 1, rom:/menu/metadata/N/3/H/boxart_front.png    rule 4
+ART NABE: metadata rule 2, rom:/menu/metadata/NABE.png                  rule 5
+ART NADE: none                                                          control
+```
+
+The control is the point of the table: without a case that must fail, five passing lines only
+prove the resolver returns something. The guard was tested the same way — with `menu/metadata`
+moved aside the run reports `metadata dir absent`, rules 1 and 2 still resolve, and rules 3–5
+issue no probes at all.
+
+**Still not implemented:** upstream's homebrew-by-title path
+(`menu/metadata/homebrew/{title}/boxart_front.png`) for `xEDx` headers. `LIBF_HOMEBREW` is set at
+`library.c:175` but nothing consults it when resolving art, so a homebrew ROM is still looked up
+by its ID.
+
+---
+
 ## 1n. The emulator launch path had never once run, and it was hiding a bad path separator
 
 ### lithium64 is now the SNES core
