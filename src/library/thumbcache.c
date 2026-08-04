@@ -9,7 +9,7 @@
 #include <string.h>
 #include <libdragon.h>
 
-#include "menu/png_decoder.h"
+#include "menu/image_decoder.h"
 #include "thumbcache.h"
 #include "ui/theme.h"
 #include "utils/fs.h"
@@ -20,7 +20,7 @@
 /* The asset spec asks authors for 280 x 196, but the corpus people actually use ranges from
  * 112 px to 1020 px wide and a quarter of it is portrait, so the decoder scales and
  * cover-crops on the way in rather than requiring any particular source size. See
- * png_decoder_start_scaled() and docs/AUDIT.md. */
+ * image_decoder_start_scaled() and docs/AUDIT.md. */
 
 typedef struct {
     uint16_t rom_id;
@@ -57,7 +57,7 @@ struct thumbcache_s {
     int wanted_n;
 };
 
-/* Only one decode can be in flight because png_decoder is a single global instance. That is
+/* Only one decode can be in flight because image_decoder is a single global instance. That is
  * left alone deliberately: the job here is inherently serial and a decoder pool would add
  * concurrency to something bounded by CPU, not by latency. */
 static thumbcache_t *active;
@@ -82,7 +82,7 @@ void thumbcache_free (thumbcache_t *tc) {
         return;
     }
     if (tc->decoding_slot >= 0) {
-        png_decoder_abort();
+        image_decoder_abort();
     }
     for (int i = 0; i < THUMB_SLOTS; i++) {
         if (tc->slots[i].art != NULL) {
@@ -282,7 +282,7 @@ static uint16_t dominant_colour (const surface_t *s) {
     return (uint16_t)((r << 11) | (g << 6) | (b << 1) | 1);
 }
 
-static void decode_done (png_err_t err, surface_t *decoded, void *data) {
+static void decode_done (img_err_t err, surface_t *decoded, void *data) {
     thumbcache_t *tc = active;
     lib_record_t *rec = data;
 
@@ -293,7 +293,7 @@ static void decode_done (png_err_t err, surface_t *decoded, void *data) {
 
     slot_t *slot = &tc->slots[tc->decoding_slot];
 
-    if (err != PNG_OK || decoded == NULL) {
+    if (err != IMG_OK || decoded == NULL) {
         rec->art_state = ART_NONE;
         slot->used = false;
         tc->decoding_slot = -1;
@@ -377,7 +377,7 @@ uint32_t thumb_rows_us = 0, thumb_scan_us = 0, thumb_starts = 0, thumb_statcalls
 bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
     if (tc->decoding_slot >= 0) {
         uint32_t t0 = TICKS_READ();
-        png_decoder_poll_budget(budget_us);
+        image_decoder_poll_budget(budget_us);
         uint32_t took = TIMER_MICROS(TICKS_SINCE(t0));
         tc->decoded_us += took;
         thumb_rows_us += took;
@@ -407,7 +407,7 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
      * decodes no other tile can, and measured on this fixture the entire grid sat empty for 900
      * frames because the second visible tile happened to be that card.
      *
-     * Before the OOM fix in png_decoder.c this was invisible: the card asked for a 6.17 MB
+     * Before the OOM fix in image_decoder.c this was invisible: the card asked for a 6.17 MB
      * surface, failed instantly and was marked ART_NONE, so it cost nothing and showed nothing.
      * Making it decodable is what exposed that it monopolises the decoder. Doing the cheap ones
      * first turns "no art for 38 seconds" into "eleven tiles quickly and one that lands late". */
@@ -452,9 +452,9 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
                 return false;       /* pool full of tiles wanted right now; try next frame */
             }
 
-            png_err_t perr = png_decoder_start_scaled(path, TILE_W, TILE_H, decode_done, rec);
-            if (perr != PNG_OK) {
-                debugf("THUMB %d: png_decoder_start_scaled(%s) = %d\n", i, path, (int)perr);
+            img_err_t perr = image_decoder_start_scaled(path, TILE_W, TILE_H, decode_done, rec);
+            if (perr != IMG_OK) {
+                debugf("THUMB %d: image_decoder_start_scaled(%s) = %d\n", i, path, (int)perr);
                 rec->art_state = ART_NONE;
                 continue;
             }

@@ -23,7 +23,7 @@
 
 #include "app.h"
 #include "menu/fonts.h"
-#include "menu/png_decoder.h"
+#include "menu/image_decoder.h"
 #include "menu/sound.h"
 #include "screens.h"
 #include "screens/boot_plate.h"
@@ -142,7 +142,7 @@ static void draw_tile (app_t *app, const lib_record_t *rec, uint16_t rom_id,
             ui_text(x + 4, y + h / 2, w - 8, ALIGN_CENTER, STL_DEFAULT, rec->title);
         }
         if (rec->art_state == ART_DECODING) {
-            int p = (int)(png_decoder_get_progress() * (float)w);
+            int p = (int)(image_decoder_get_progress() * (float)w);
             ui_fill(x, y + h - 3, p, 3, th->text_accent);
         }
     }

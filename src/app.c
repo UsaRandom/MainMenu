@@ -10,7 +10,7 @@
 
 #include "app.h"
 #include "cheats/cheatdb.h"
-#include "menu/png_decoder.h"
+#include "menu/image_decoder.h"
 #include "dev/allocwatch.h"
 #include "dev/debug_emux.h"
 #include "dev/inputscript.h"
@@ -271,8 +271,8 @@ void app_run (boot_params_t *boot_params) {
                    (unsigned long)(app->spin_us / 60),
                    (unsigned long)(thumb_rows_us / 60), (unsigned long)(thumb_scan_us / 60),
                    (unsigned long)thumb_starts, (unsigned long)thumb_statcalls,
-                   (unsigned long)png_rows_done, (unsigned long)png_worst_row_us,
-                   (unsigned long)(png_inflate_us / 60), (unsigned long)(png_scale_us / 60),
+                   (unsigned long)img_rows_done, (unsigned long)img_worst_row_us,
+                   (unsigned long)(img_entropy_us / 60), (unsigned long)(img_scale_us / 60),
                    (unsigned long)app->starved,
                    (unsigned long)app->bg_calls);
             /* Separate line so the frame line stays greppable as one shape. The claim under test
@@ -285,7 +285,7 @@ void app_run (boot_params_t *boot_params) {
             allocwatch_reset();
             for (int i = 0; i < FRAMESTAT_BINS; i++) app->fieldbin[i] = 0;
             app->worst_us = app->update_us = app->render_us = app->bg_us = app->spin_us = 0;
-            png_rows_done = png_worst_row_us = png_inflate_us = png_scale_us = 0;
+            img_rows_done = img_worst_row_us = img_entropy_us = img_scale_us = 0;
             thumb_rows_us = thumb_scan_us = thumb_starts = thumb_statcalls = 0;
         }
         sound_poll();

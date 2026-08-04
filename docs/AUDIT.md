@@ -73,6 +73,67 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
+## 1p. JPEG, and a decoder that was quietly reading the wrong pixel
+
+The card carries 22 titles whose art is `<ROM name>.jpeg`, so two things were missing: the
+scanner only indexed `.png`, and nothing could decode a JPEG at all.
+
+**picojpeg, not libjpeg, and the corpus is why.** The case for libjpeg was its reduced-size IDCT,
+which matters when the source is many times the 140 px tile. Measured, the real art is
+**256 x 187, baseline, 4:2:0, 12-20 KB, all sixteen sampled files** -- an eighth of that is 32 px,
+far under the tile, so scaled decode would never engage. 0.8 Mpixel for the whole library against
+the PNG fixture's 21.3. The argument for the larger dependency evaporated on contact with the
+data. picojpeg is 2,454 lines and public domain, by the author of the miniz already vendored.
+
+**Where it plugs in.** `scaler_add_row` was reading `d->row_buffer` directly; it now takes a row
+pointer, and that one change is the whole integration. picojpeg emits MCUs rather than rows, so a
+band of one MCU row is assembled and fed to the scaler a row at a time -- the budget's unit of
+work stays the same size for both formats, and the crop, the box filter and the RGBA5551 pack are
+shared rather than duplicated. Format comes from the magic bytes, not the extension: the card has
+fifteen `.jpeg` and one `.jpg`, and a PNG misnamed `.jpg` still draws.
+
+`png_decoder` became `image_decoder`. A file called png_decoder.c that decodes JPEG is the kind of
+comment-shaped lie this file exists to catch.
+
+### picojpeg had undefined behaviour in its chroma path
+
+Four lines accumulate chroma as `*pDstG++ = subAndClamp(pDstG[0], cbG)`. There is no sequence
+point between reading `pDstG[0]` and incrementing `pDstG`, so **whether the correction landed on
+this pixel or the next one was the compiler's choice** -- a silent one-pixel chroma shift on every
+block, appearing or not with optimisation settings. GCC flagged it and `-Werror` turned it into a
+build failure, which is the only reason it was seen at all.
+
+Split into two statements. `-Wsequence-point` is deliberately **not** silenced for this object, so
+re-pulling the file verbatim fails the build rather than quietly decoding wrong colours. Only the
+cosmetic warnings are suppressed: progressive-scan header fields it parses but cannot use, and an
+unused helper.
+
+### Measured
+
+Steady-state window, one 256 x 187 card decoding: 60 rows in 15,244 us, 254 us/row at 256 px, so
+**about 1.0 us/pixel against PNG's 2.4** on ordinary cards, 91 % of it in the entropy and IDCT
+stage. Roughly two and a half times faster per pixel, on files an order of magnitude smaller.
+That does not retire the on-disk cache argument in 1h -- it moves it.
+
+Correctness was checked by looking, not by absence of errors: tile 0 cropped out of the frame
+dump and enlarged shows the 1080 logo, the red board, the rider and the Nintendo 64 banner,
+matching the source. Right colours also rule out the chroma shift above.
+
+**The reduce path was written before it could be tested, and that was caught.** No file in the
+corpus can trigger it, so the branch would have shipped unexercised. A 2200 x 1600 card was
+synthesised for the fixture; both branches are now observed live:
+
+```
+JPEG 2200x1600 DC-only/8 -> 140x98 (band 2)
+JPEG  256x187  full      -> 140x98 (band 16)
+```
+
+**Still untested:** progressive JPEG, which picojpeg cannot decode at all -- it will report a bad
+file and the tile falls back to its placeholder. None of the corpus is progressive. Grayscale is
+handled in code but no sample exercises it.
+
+---
+
 ## 1o. Art can live anywhere, and emulated systems could never have had any
 
 Box art was found exactly one way: `menu/metadata/<G>/<A>/<M>/<E>/boxart_front.png`, built by

@@ -126,10 +126,12 @@ const char *library_find_art (const library_t *lib, const char *name) {
     return found;
 }
 
-/** @brief True when @p name ends in .png, case-insensitively. */
-static bool is_png (const char *name) {
+/** @brief True when @p name looks like art: .png, .jpg or .jpeg, case-insensitively. */
+static bool is_image (const char *name) {
     size_t n = strlen(name);
-    return n > 4 && strcasecmp(name + n - 4, ".png") == 0;
+    return (n > 4 && strcasecmp(name + n - 4, ".png") == 0) ||
+           (n > 4 && strcasecmp(name + n - 4, ".jpg") == 0) ||
+           (n > 5 && strcasecmp(name + n - 5, ".jpeg") == 0);
 }
 
 /** @brief Grow by doubling. Upstream's browser reallocs once per entry; at 500 files that is
@@ -287,8 +289,8 @@ static int scan_dir (library_t *lib, const char *dir, int depth) {
 
         if (info.d_type == DT_DIR) {
             added += scan_dir(lib, child, depth + 1);
-        } else if (is_png(info.d_name)) {
-            /* Art sitting loose in the tree, whatever it is named. Recorded here rather than
+        } else if (is_image(info.d_name)) {
+            /* Art sitting loose in the tree, whatever it is named or formatted as. Recorded here rather than
              * searched for later: this loop is already visiting every file, so the whole
              * feature costs one extension compare per entry. */
             art_push(lib, info.d_name, child);

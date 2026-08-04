@@ -1,0 +1,12 @@
+# Sit on the grid until the first tiles have decoded. The N64 tab sorts alphabetically and the
+# JPEG-art titles begin at "1080 Snowboarding", so tile 0 is a JPEG and its neighbours are the
+# PNG corpus -- one frame shows both formats side by side, which is the whole point.
+
+wait 700
+fbdump              # 1: grid filled, mixed JPEG and PNG tiles
+
+press right x1      # move onto the second JPEG card
+wait 200
+fbdump              # 2: selection on a JPEG tile, grown and outlined
+
+exit

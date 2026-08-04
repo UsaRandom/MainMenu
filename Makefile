@@ -99,6 +99,7 @@ SRCS = \
 	flashcart/sc64/sc64_ll.c \
 	flashcart/sc64/sc64.c \
 	libs/libspng/spng/spng.c \
+	libs/picojpeg/picojpeg.c \
 	libs/miniz/miniz_tdef.c \
 	libs/miniz/miniz_tinfl.c \
 	libs/miniz/miniz_zip.c \
@@ -110,7 +111,7 @@ SRCS = \
 	menu/ini_parser.c \
 	menu/fonts.c \
 	menu/path.c \
-	menu/png_decoder.c \
+	menu/image_decoder.c \
 	menu/rom_info.c \
 	menu/settings.c \
 	menu/sound.c \
@@ -157,6 +158,7 @@ $(BUILD_DIR)/inputscript_generated.h: tools/mkinput.py $(INPUT_SCRIPT)
 $(OBJS): $(GENERATED_HEADERS)
 MINIZ_OBJS = $(filter $(BUILD_DIR)/libs/miniz/%.o,$(OBJS))
 SPNG_OBJS = $(filter $(BUILD_DIR)/libs/libspng/%.o,$(OBJS))
+PJPG_OBJS = $(filter $(BUILD_DIR)/libs/picojpeg/%.o,$(OBJS))
 DEPS = $(OBJS:.o=.d)
 
 FILESYSTEM = \
@@ -166,6 +168,13 @@ FILESYSTEM = \
 
 $(MINIZ_OBJS): N64_CFLAGS+=-Wno-unused-function -fcompare-debug-second
 $(SPNG_OBJS): N64_CFLAGS+=-DSPNG_USE_MINIZ -fcompare-debug-second
+# picojpeg is vendored with one patch, marked in the source: four lines accumulated chroma with
+# *pDst++ = f(pDst[0], x), which has no sequence point between the read and the increment, so
+# whether the colour landed on this pixel or the next one was the compiler's choice. Note that
+# -Wsequence-point is deliberately NOT silenced here -- if someone re-pulls the file verbatim the
+# build fails rather than quietly decoding wrong colours. The two that are silenced are cosmetic:
+# unused progressive-scan header fields, which it parses but cannot decode, and an unused helper.
+$(PJPG_OBJS): N64_CFLAGS+=-Wno-unused-but-set-variable -Wno-unused-function
 $(FILESYSTEM_DIR)/Firple-Bold.font64: MKFONT_FLAGS+=--compress 1 --outline 1 --size 20 --charset $(ASSETS_DIR)/fonts/charset.txt --ellipsis 2026,1
 # The boot plate is the only 32 px type in the product (docs/design/README.md 4.1), and it says
 # four fixed strings. Baking the full 7,931-character charset at that size would cost megabytes

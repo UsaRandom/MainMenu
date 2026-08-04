@@ -1,5 +1,5 @@
 /**
- * @file png_decoder.c
+ * @file image_decoder.c
  * @brief PNG Decoder component implementation
  * @ingroup ui_components
  */
@@ -7,7 +7,8 @@
 #include <stdio.h>
 #include <libdragon.h>
 #include <libspng/spng/spng.h>
-#include "png_decoder.h"
+#include <picojpeg/picojpeg.h>
+#include "image_decoder.h"
 #include "utils/fs.h"
 
 /** @brief PNG File Information Structure. */
@@ -17,34 +18,51 @@ typedef struct {
     struct spng_ihdr ihdr; /**< SPNG image header */
     surface_t *image; /**< Image surface */
     uint8_t *row_buffer; /**< Row buffer */
-    char *io_buffer; /**< stdio buffer for f; see the setvbuf call in png_decoder_start() */
+    char *io_buffer; /**< stdio buffer for f; see the setvbuf call in image_decoder_start() */
     int decoded_rows; /**< Number of decoded rows */
-    png_callback_t *callback; /**< Callback function */
+    img_callback_t *callback; /**< Callback function */
     void *callback_data; /**< Callback data */
 
     /* Streaming scaler. When dst_w is non-zero the decoder box-filters each source row
      * straight into a dst_w x dst_h surface instead of allocating one the size of the file.
-     * See png_decoder_start_scaled(). */
+     * See image_decoder_start_scaled(). */
     int dst_w, dst_h;
     int crop_x, crop_y, crop_w, crop_h;  /**< source rect that covers the destination */
     uint32_t *acc;                       /**< dst_w * 3 channel accumulator for one dest row */
     uint32_t acc_n;                      /**< source rows folded into the current dest row */
     int acc_row;                         /**< which destination row acc is building */
-} png_decoder_t;
+
+    /* JPEG. picojpeg keeps its own file-scope state, which is safe here only because exactly one
+     * decode is ever in flight -- the same reason the PNG side gets away with a single static
+     * decoder. It emits whole MCUs rather than rows, so a band of one MCU row is assembled and
+     * then fed to the scaler a row at a time, which keeps the budget's unit of work the same
+     * size for both formats. */
+    bool jpeg;
+    pjpeg_image_info_t ji;
+    uint8_t *band;        /**< band_h rows of eff_w RGB triples */
+    int band_h;           /**< rows per MCU row: MCUHeight, or an eighth of it when reduced */
+    int band_row;         /**< next band row to hand over; == band_h means refill */
+    int eff_w, eff_h;     /**< source size the scaler sees, after any reduction */
+    int src_y;            /**< source rows handed to the scaler so far */
+    bool reduce;          /**< decoding DC-only, at an eighth scale */
+} image_decoder_t;
 
 /* One decode's stdio buffer. 16 KB spans several IDAT chunks of a 1000 px scan, so spng's
  * small reads are served from RAM instead of becoming filesystem calls. Freed with the decode,
  * and there is only ever one decode in flight. */
-#define PNG_IO_BUFFER   16384
+#define IMG_IO_BUFFER   16384
 
-static png_decoder_t *decoder;
+static image_decoder_t *decoder;
+
+/* Defined below, but the JPEG path above it is the other caller. */
+static void scaler_add_row (int src_y, const uint8_t *rgb);
 
 /**
  * @brief Deinitialize the PNG decoder.
  * 
  * @param free_image Flag indicating whether to free the image.
  */
-static void png_decoder_deinit (bool free_image) {
+static void image_decoder_deinit (bool free_image) {
     if (decoder != NULL) {
         fclose(decoder->f);          /* before io_buffer: fclose still writes through it */
         if (decoder->io_buffer != NULL) {
@@ -63,6 +81,9 @@ static void png_decoder_deinit (bool free_image) {
         if (decoder->acc != NULL) {
             free(decoder->acc);
         }
+        if (decoder->band != NULL) {
+            free(decoder->band);
+        }
         free(decoder);
         decoder = NULL;
     }
@@ -76,7 +97,7 @@ static void png_decoder_deinit (bool free_image) {
  * @param max_height Maximum height of the image.
  * @param callback Callback function to be called upon completion.
  * @param callback_data Data to be passed to the callback function.
- * @return png_err_t Error code.
+ * @return img_err_t Error code.
  */
 /**
  * @brief Choose the source rect that covers a dst_w x dst_h destination, and record it.
@@ -88,7 +109,7 @@ static void png_decoder_deinit (bool free_image) {
  * Integer maths throughout: sw/sh against dst_w/dst_h by cross-multiplication, so there is no
  * float rounding to argue about at the edges.
  */
-static void scaler_plan_crop (png_decoder_t *d, int sw, int sh, int dst_w, int dst_h) {
+static void scaler_plan_crop (image_decoder_t *d, int sw, int sh, int dst_w, int dst_h) {
     if (sw * dst_h > dst_w * sh) {
         d->crop_h = sh;                       /* source is wider: crop left and right */
         d->crop_w = (sh * dst_w) / dst_h;
@@ -104,30 +125,203 @@ static void scaler_plan_crop (png_decoder_t *d, int sw, int sh, int dst_w, int d
     if (d->crop_h < 1) d->crop_h = 1;
 }
 
+/** @brief Feed picojpeg from the already-open FILE. */
+static unsigned char jpeg_need_bytes (unsigned char *buf, unsigned char n,
+                                      unsigned char *actually_read, void *data) {
+    size_t got = fread(buf, 1, n, (FILE *)data);
+    *actually_read = (unsigned char)got;
+    return 0;
+}
+
+/**
+ * @brief Open a JPEG and size everything the scaler will need.
+ *
+ * The interesting decision here is @c reduce. picojpeg can keep only each block's DC
+ * coefficient, which yields one pixel per 8x8 block and skips the AC dequantisation, the IDCT
+ * and the chroma upsampling for every pixel of the image. That is close to free, so it is taken
+ * whenever an eighth of the source is still at least the destination size -- below that the tile
+ * would be upscaled from a thumbnail, which the crop rule calls blurry and the asset spec calls
+ * a bug.
+ *
+ * Deciding needs the dimensions, and the dimensions come from the header, so the header is read
+ * twice: init, measure, rewind, init again asking for DC only. That second parse is a few
+ * hundred bytes of markers against an image-sized saving.
+ */
+static img_err_t jpeg_open (image_decoder_t *d, int dst_w, int dst_h) {
+    rewind(d->f);
+    if (pjpeg_decode_init(&d->ji, jpeg_need_bytes, d->f, 0) != 0) {
+        return IMG_ERR_BAD_FILE;
+    }
+
+    int rw = (d->ji.m_width + 7) / 8;
+    int rh = (d->ji.m_height + 7) / 8;
+    if (dst_w > 0 && dst_h > 0 && rw >= dst_w && rh >= dst_h) {
+        rewind(d->f);
+        if (pjpeg_decode_init(&d->ji, jpeg_need_bytes, d->f, 1) != 0) {
+            return IMG_ERR_BAD_FILE;
+        }
+        d->reduce = true;
+    }
+
+    d->eff_w  = d->reduce ? rw : d->ji.m_width;
+    d->eff_h  = d->reduce ? rh : d->ji.m_height;
+    d->band_h = d->reduce ? (d->ji.m_MCUHeight / 8) : d->ji.m_MCUHeight;
+    if (d->eff_w < 1 || d->eff_h < 1 || d->band_h < 1) {
+        return IMG_ERR_BAD_FILE;
+    }
+
+    /* An unscaled caller still goes through the scaler, at 1:1. Keeping one path costs a copy
+     * per row and removes a whole second set of edge cases nothing exercises. */
+    if (dst_w <= 0 || dst_h <= 0) {
+        dst_w = d->eff_w;
+        dst_h = d->eff_h;
+    }
+
+    d->image = calloc(1, sizeof(surface_t));
+    if (d->image == NULL) {
+        return IMG_ERR_OUT_OF_MEM;
+    }
+    scaler_plan_crop(d, d->eff_w, d->eff_h, dst_w, dst_h);
+    *d->image = surface_alloc(FMT_RGBA16, dst_w, dst_h);
+    if (d->image->buffer == NULL) {
+        return IMG_ERR_OUT_OF_MEM;
+    }
+
+    d->band = malloc((size_t)d->band_h * d->eff_w * 3);
+    d->acc  = calloc((size_t)dst_w * 4, sizeof(uint32_t));
+    if (d->band == NULL || d->acc == NULL) {
+        return IMG_ERR_OUT_OF_MEM;
+    }
+
+    d->dst_w    = dst_w;
+    d->dst_h    = dst_h;
+    d->acc_row  = -1;
+    d->band_row = d->band_h;     /* empty, so the first poll fills it */
+    d->jpeg     = true;
+    debugf("JPEG %dx%d %s -> %dx%d (band %d)\n", d->ji.m_width, d->ji.m_height,
+           d->reduce ? "DC-only/8" : "full", dst_w, dst_h, d->band_h);
+    return IMG_OK;
+}
+
+/**
+ * @brief Decode one MCU row into the band buffer.
+ *
+ * picojpeg hands back each MCU as one to four 8x8 blocks of separate R, G and B planes, laid out
+ * row-major within the MCU. Scattering them into a linear RGB band here is what lets the scaler
+ * stay the single shared piece of code it is.
+ */
+static bool jpeg_fill_band (image_decoder_t *d) {
+    int bx_n = d->ji.m_MCUWidth / 8;
+    int by_n = d->ji.m_MCUHeight / 8;
+    bool grey = (d->ji.m_comps == 1);
+
+    memset(d->band, 0, (size_t)d->band_h * d->eff_w * 3);
+
+    for (int mx = 0; mx < d->ji.m_MCUSPerRow; mx++) {
+        if (pjpeg_decode_mcu() != 0) {
+            return false;
+        }
+        for (int by = 0; by < by_n; by++) {
+            for (int bx = 0; bx < bx_n; bx++) {
+                int blk = (by * bx_n + bx) * 64;
+
+                if (d->reduce) {
+                    int px = mx * bx_n + bx;
+                    if (px >= d->eff_w || by >= d->band_h) {
+                        continue;
+                    }
+                    uint8_t *o = &d->band[((size_t)by * d->eff_w + px) * 3];
+                    o[0] = d->ji.m_pMCUBufR[blk];
+                    o[1] = grey ? o[0] : d->ji.m_pMCUBufG[blk];
+                    o[2] = grey ? o[0] : d->ji.m_pMCUBufB[blk];
+                    continue;
+                }
+
+                for (int y = 0; y < 8; y++) {
+                    int py = by * 8 + y;
+                    if (py >= d->band_h) {
+                        break;
+                    }
+                    for (int x = 0; x < 8; x++) {
+                        int px = mx * d->ji.m_MCUWidth + bx * 8 + x;
+                        if (px >= d->eff_w) {
+                            break;
+                        }
+                        int s = blk + y * 8 + x;
+                        uint8_t *o = &d->band[((size_t)py * d->eff_w + px) * 3];
+                        o[0] = d->ji.m_pMCUBufR[s];
+                        o[1] = grey ? o[0] : d->ji.m_pMCUBufG[s];
+                        o[2] = grey ? o[0] : d->ji.m_pMCUBufB[s];
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+/** @brief One source row per call, so the budget's unit of work matches the PNG path's. */
+static void jpeg_poll (void) {
+    image_decoder_t *d = decoder;
+
+    if (d->band_row >= d->band_h) {
+        uint32_t t0 = TICKS_READ();
+        bool ok = jpeg_fill_band(d);
+        img_entropy_us += TIMER_MICROS(TICKS_SINCE(t0));
+        if (!ok) {
+            /* Truncated or malformed past this point. Rows already scaled are real, so a partial
+             * image is delivered rather than thrown away -- a card that is three-quarters there
+             * beats a placeholder, and the alternative discards work already paid for. */
+            if (d->src_y > 0) {
+                d->callback(IMG_OK, d->image, d->callback_data);
+                image_decoder_deinit(false);
+            } else {
+                d->callback(IMG_ERR_BAD_FILE, NULL, d->callback_data);
+                image_decoder_deinit(true);
+            }
+            return;
+        }
+        d->band_row = 0;
+    }
+
+    uint32_t st = TICKS_READ();
+    scaler_add_row(d->src_y, &d->band[(size_t)d->band_row * d->eff_w * 3]);
+    img_scale_us += TIMER_MICROS(TICKS_SINCE(st));
+
+    d->band_row++;
+    d->src_y++;
+    d->decoded_rows++;
+
+    if (d->src_y >= d->eff_h) {
+        d->callback(IMG_OK, d->image, d->callback_data);
+        image_decoder_deinit(false);
+    }
+}
+
 /* dst_w/dst_h of 0 means "surface the size of the file"; non-zero means the streaming scaler
  * writes straight into a surface of that size and the file-sized one is never allocated.
  *
  * Taking the destination size HERE rather than fixing it up afterwards is the whole point. The
- * scaled path used to call png_decoder_start(), let it allocate a surface the size of the file,
+ * scaled path used to call image_decoder_start(), let it allocate a surface the size of the file,
  * then free that and allocate the small one -- so a 2118 x 1457 card in the corpus asked for
  * 6.17 MB on an 8 MB machine that already holds 1.84 MB of framebuffers, and failed with
- * PNG_ERR_OUT_OF_MEM before decoding a single row. The header comment promising 27 KB described
+ * IMG_ERR_OUT_OF_MEM before decoding a single row. The header comment promising 27 KB described
  * the intent of the code below it and not what it did. */
-static png_err_t decoder_open (char *path, int max_width, int max_height,
-                               png_callback_t *callback, void *callback_data,
+static img_err_t decoder_open (char *path, int max_width, int max_height,
+                               img_callback_t *callback, void *callback_data,
                                int dst_w, int dst_h) {
     if (decoder != NULL) {
-        return PNG_ERR_BUSY;
+        return IMG_ERR_BUSY;
     }
 
-    decoder = calloc(1, sizeof(png_decoder_t));
+    decoder = calloc(1, sizeof(image_decoder_t));
     if (decoder == NULL) {
-        return PNG_ERR_OUT_OF_MEM;
+        return IMG_ERR_OUT_OF_MEM;
     }
 
     if ((decoder->f = fopen(path, "rb")) == NULL) {
-        png_decoder_deinit(false);
-        return PNG_ERR_NO_FILE;
+        image_decoder_deinit(false);
+        return IMG_ERR_NO_FILE;
     }
 
     /* Upstream ran this file UNBUFFERED (setbuf(f, NULL)), which makes every read spng issues --
@@ -136,54 +330,75 @@ static png_err_t decoder_open (char *path, int max_width, int max_height,
      * to decode one row of one image, and it made the frame budget in thumbcache_run decorative
      * because the smallest unit of work it can stop on cost more than the entire frame.
      *
-     * See docs/AUDIT.md for the before and after. Buffer costs PNG_IO_BUFFER bytes for the life
+     * See docs/AUDIT.md for the before and after. Buffer costs IMG_IO_BUFFER bytes for the life
      * of one decode, which upstream could not spare in 4 MB and the M64 plainly can. */
-    decoder->io_buffer = malloc(PNG_IO_BUFFER);
+    decoder->io_buffer = malloc(IMG_IO_BUFFER);
     if (decoder->io_buffer != NULL) {
-        setvbuf(decoder->f, decoder->io_buffer, _IOFBF, PNG_IO_BUFFER);
+        setvbuf(decoder->f, decoder->io_buffer, _IOFBF, IMG_IO_BUFFER);
+    }
+
+    /* Sniff the magic rather than trusting the extension. Art arrives named however whoever
+     * made it felt at the time -- the card that prompted JPEG support carries fifteen .jpeg and
+     * one .jpg -- and a PNG called .jpg should still draw. */
+    unsigned char magic[2] = { 0, 0 };
+    if (fread(magic, 1, 2, decoder->f) != 2) {
+        image_decoder_deinit(false);
+        return IMG_ERR_BAD_FILE;
+    }
+    rewind(decoder->f);
+
+    if (magic[0] == 0xFF && magic[1] == 0xD8) {
+        img_err_t jerr = jpeg_open(decoder, dst_w, dst_h);
+        if (jerr != IMG_OK) {
+            image_decoder_deinit(true);
+            return jerr;
+        }
+        decoder->callback = callback;
+        decoder->callback_data = callback_data;
+        return IMG_OK;
     }
 
     if ((decoder->ctx = spng_ctx_new(SPNG_CTX_IGNORE_ADLER32)) == NULL) {
-        png_decoder_deinit(false);
-        return PNG_ERR_OUT_OF_MEM;
+        image_decoder_deinit(false);
+        return IMG_ERR_OUT_OF_MEM;
     }
 
     if (spng_set_crc_action(decoder->ctx, SPNG_CRC_USE, SPNG_CRC_USE) != SPNG_OK) {
-        png_decoder_deinit(false);
-        return PNG_ERR_INT;
+        image_decoder_deinit(false);
+        return IMG_ERR_INT;
     }
 
     if (spng_set_image_limits(decoder->ctx, max_width, max_height) != SPNG_OK) {
-        png_decoder_deinit(false);
-        return PNG_ERR_INT;
+        image_decoder_deinit(false);
+        return IMG_ERR_INT;
     }
 
     if (spng_set_png_file(decoder->ctx, decoder->f) != SPNG_OK) {
-        png_decoder_deinit(false);
-        return PNG_ERR_INT;
+        image_decoder_deinit(false);
+        return IMG_ERR_INT;
     }
 
     size_t image_size;
 
     if (spng_decoded_image_size(decoder->ctx, SPNG_FMT_RGB8, &image_size) != SPNG_OK) {
-        png_decoder_deinit(false);
-        return PNG_ERR_BAD_FILE;
+        image_decoder_deinit(false);
+        return IMG_ERR_BAD_FILE;
     }
 
     if (spng_decode_image(decoder->ctx, NULL, image_size, SPNG_FMT_RGB8, SPNG_DECODE_PROGRESSIVE) != SPNG_OK) {
-        png_decoder_deinit(false);
-        return PNG_ERR_BAD_FILE;
+        image_decoder_deinit(false);
+        return IMG_ERR_BAD_FILE;
     }
 
     if (spng_get_ihdr(decoder->ctx, &decoder->ihdr) != SPNG_OK) {
-        png_decoder_deinit(false);
-        return PNG_ERR_BAD_FILE;
+        image_decoder_deinit(false);
+        return IMG_ERR_BAD_FILE;
     }
 
     decoder->image = calloc(1, sizeof(surface_t));
     if (decoder->image == NULL) {
-        png_decoder_deinit(false);
-        return PNG_ERR_OUT_OF_MEM;
+        image_decoder_deinit(false);
+        return IMG_ERR_OUT_OF_MEM;
     }
 
     int sw = (int)decoder->ihdr.width;
@@ -191,8 +406,8 @@ static png_err_t decoder_open (char *path, int max_width, int max_height,
 
     if (dst_w > 0 && dst_h > 0) {
         if (sw <= 0 || sh <= 0) {
-            png_decoder_deinit(false);
-            return PNG_ERR_BAD_FILE;
+            image_decoder_deinit(false);
+            return IMG_ERR_BAD_FILE;
         }
         scaler_plan_crop(decoder, sw, sh, dst_w, dst_h);
         *decoder->image = surface_alloc(FMT_RGBA16, dst_w, dst_h);
@@ -205,13 +420,13 @@ static png_err_t decoder_open (char *path, int max_width, int max_height,
         *decoder->image = surface_alloc(FMT_RGBA16, sw, sh);
     }
     if (decoder->image->buffer == NULL) {
-        png_decoder_deinit(true);
-        return PNG_ERR_OUT_OF_MEM;
+        image_decoder_deinit(true);
+        return IMG_ERR_OUT_OF_MEM;
     }
 
     if ((decoder->row_buffer = malloc(decoder->ihdr.width * 3)) == NULL) {
-        png_decoder_deinit(true);
-        return PNG_ERR_OUT_OF_MEM;
+        image_decoder_deinit(true);
+        return IMG_ERR_OUT_OF_MEM;
     }
 
     decoder->decoded_rows = 0;
@@ -219,11 +434,11 @@ static png_err_t decoder_open (char *path, int max_width, int max_height,
     decoder->callback = callback;
     decoder->callback_data = callback_data;
 
-    return PNG_OK;
+    return IMG_OK;
 }
 
-png_err_t png_decoder_start (char *path, int max_width, int max_height,
-                             png_callback_t *callback, void *callback_data) {
+img_err_t image_decoder_start (char *path, int max_width, int max_height,
+                             img_callback_t *callback, void *callback_data) {
     return decoder_open(path, max_width, max_height, callback, callback_data, 0, 0);
 }
 
@@ -244,32 +459,32 @@ png_err_t png_decoder_start (char *path, int max_width, int max_height,
  * squash; horizontal crop centred; vertical crop anchored 40 % from the top, which is what
  * keeps the logo on a portrait box scan.
  */
-png_err_t png_decoder_start_scaled (char *path, int dst_w, int dst_h,
-                                    png_callback_t *callback, void *callback_data) {
+img_err_t image_decoder_start_scaled (char *path, int dst_w, int dst_h,
+                                    img_callback_t *callback, void *callback_data) {
     if (dst_w <= 0 || dst_h <= 0) {
-        return PNG_ERR_INT;
+        return IMG_ERR_INT;
     }
 
     /* Limits are generous rather than dst-sized: the point is to accept what the corpus actually
      * contains. 4096 covers every scan in it with room to spare. */
-    png_err_t err = decoder_open(path, 4096, 4096, callback, callback_data, dst_w, dst_h);
-    if (err != PNG_OK) {
+    img_err_t err = decoder_open(path, 4096, 4096, callback, callback_data, dst_w, dst_h);
+    if (err != IMG_OK) {
         return err;
     }
 
-    png_decoder_t *d = decoder;
+    image_decoder_t *d = decoder;
 
     d->acc = calloc((size_t)dst_w * 4, sizeof(uint32_t));
     if (d->acc == NULL) {
-        png_decoder_abort();
-        return PNG_ERR_OUT_OF_MEM;
+        image_decoder_abort();
+        return IMG_ERR_OUT_OF_MEM;
     }
 
     d->dst_w = dst_w;
     d->dst_h = dst_h;
     d->acc_row = -1;
 
-    return PNG_OK;
+    return IMG_OK;
 }
 
 /**
@@ -281,8 +496,8 @@ png_err_t png_decoder_start_scaled (char *path, int dst_w, int dst_h,
  * all and inferring that from "the accumulator is still zero" would corrupt genuinely black
  * pixels into a copy of their neighbour.
  */
-static void scaler_add_row (int src_y) {
-    png_decoder_t *d = decoder;
+static void scaler_add_row (int src_y, const uint8_t *rgb) {
+    image_decoder_t *d = decoder;
 
     if (src_y < d->crop_y || src_y >= d->crop_y + d->crop_h) {
         return;                                  /* cropped away vertically */
@@ -303,7 +518,7 @@ static void scaler_add_row (int src_y) {
      * VR4300's integer divide is ~37 cycles and does not pipeline. Measured at 15 % of row cost;
      * the other 85 % is inside spng_decode_row and no scheduling change touches it. */
     int dx = 0, dx_num = 0;
-    const uint8_t *px = &d->row_buffer[d->crop_x * 3];
+    const uint8_t *px = &rgb[d->crop_x * 3];
     for (int sx = 0; sx < d->crop_w; sx++, px += 3) {
         if (dx >= d->dst_w) {
             break;
@@ -364,8 +579,8 @@ static void scaler_add_row (int src_y) {
 /**
  * @brief Abort the PNG decoding process.
  */
-void png_decoder_abort (void) {
-    png_decoder_deinit(true);
+void image_decoder_abort (void) {
+    image_decoder_deinit(true);
 }
 
 /**
@@ -373,19 +588,25 @@ void png_decoder_abort (void) {
  * 
  * @return float Progress as a percentage.
  */
-float png_decoder_get_progress (void) {
+float image_decoder_get_progress (void) {
     if (!decoder) {
         return 0.0f;
     }
 
-    return (float) (decoder->decoded_rows) / (decoder->ihdr.height);
+    int total = decoder->jpeg ? decoder->eff_h : (int)decoder->ihdr.height;
+    return (total > 0) ? ((float)decoder->decoded_rows / total) : 0.0f;
 }
 
 /**
  * @brief Poll the PNG decoder to process the next row.
  */
-void png_decoder_poll (void) {
+void image_decoder_poll (void) {
     if (!decoder) {
+        return;
+    }
+
+    if (decoder->jpeg) {
+        jpeg_poll();
         return;
     }
 
@@ -393,22 +614,22 @@ void png_decoder_poll (void) {
     struct spng_row_info row_info;
 
     if ((err = spng_get_row_info(decoder->ctx, &row_info)) != SPNG_OK) {
-        decoder->callback(PNG_ERR_BAD_FILE, NULL, decoder->callback_data);
-        png_decoder_deinit(true);
+        decoder->callback(IMG_ERR_BAD_FILE, NULL, decoder->callback_data);
+        image_decoder_deinit(true);
         return;
     }
 
     uint32_t inf_t0 = TICKS_READ();
     err = spng_decode_row(decoder->ctx, decoder->row_buffer, decoder->ihdr.width * 3);
-    png_inflate_us += TIMER_MICROS(TICKS_SINCE(inf_t0));
+    img_entropy_us += TIMER_MICROS(TICKS_SINCE(inf_t0));
 
     if (err == SPNG_OK || err == SPNG_EOI) {
         decoder->decoded_rows += 1;
 
         if (decoder->dst_w) {
             uint32_t st = TICKS_READ();
-            scaler_add_row((int)row_info.row_num);
-            png_scale_us += TIMER_MICROS(TICKS_SINCE(st));
+            scaler_add_row((int)row_info.row_num, decoder->row_buffer);
+            img_scale_us += TIMER_MICROS(TICKS_SINCE(st));
             goto row_done;
         }
 
@@ -423,25 +644,25 @@ void png_decoder_poll (void) {
 
 row_done:
     if (err == SPNG_EOI) {
-        decoder->callback(PNG_OK, decoder->image, decoder->callback_data);
-        png_decoder_deinit(false);
+        decoder->callback(IMG_OK, decoder->image, decoder->callback_data);
+        image_decoder_deinit(false);
     } else if (err != SPNG_OK) {
-        decoder->callback(PNG_ERR_BAD_FILE, NULL, decoder->callback_data);
-        png_decoder_deinit(true);
+        decoder->callback(IMG_ERR_BAD_FILE, NULL, decoder->callback_data);
+        image_decoder_deinit(true);
     }
 }
 
 /* One decoded row is the smallest unit of work the budget can stop on, so if a single row costs
  * more than the whole frame budget the budget is decorative. Counted rather than assumed: the
  * corpus runs to 2118 px wide and a row of that is a different animal to a row of 112. */
-uint32_t png_rows_done = 0;
-uint32_t png_worst_row_us = 0;
-uint32_t png_inflate_us = 0, png_scale_us = 0;
+uint32_t img_rows_done = 0;
+uint32_t img_worst_row_us = 0;
+uint32_t img_entropy_us = 0, img_scale_us = 0;
 
 /**
- * @brief Decode rows until the budget is spent. See png_decoder.h.
+ * @brief Decode rows until the budget is spent. See image_decoder.h.
  */
-void png_decoder_poll_budget (uint32_t budget_us) {
+void image_decoder_poll_budget (uint32_t budget_us) {
     if (!decoder) {
         return;
     }
@@ -449,13 +670,13 @@ void png_decoder_poll_budget (uint32_t budget_us) {
     uint32_t start = TICKS_READ();
     do {
         uint32_t row_start = TICKS_READ();
-        png_decoder_poll();
+        image_decoder_poll();
         uint32_t row_us = TIMER_MICROS(TICKS_SINCE(row_start));
-        png_rows_done++;
-        if (row_us > png_worst_row_us) {
-            png_worst_row_us = row_us;
+        img_rows_done++;
+        if (row_us > img_worst_row_us) {
+            img_worst_row_us = row_us;
         }
-        // png_decoder_poll() clears `decoder` on completion or error, so this doubles as the
+        // image_decoder_poll() clears `decoder` on completion or error, so this doubles as the
         // termination check for a finished image.
         if (!decoder) {
             return;
