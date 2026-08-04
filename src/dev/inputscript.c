@@ -21,6 +21,7 @@ static size_t cursor = 0;
 static iscript_action_t pending = ISCRIPT_ACT_NONE;
 static const input_event_t *current = NULL;
 static bool first_frame_of_event = false;
+static bool recording = false;
 
 /* Not sizeof: the generated array always holds at least one element so it is a legal C array,
  * and the generator reports the real count separately. */
@@ -49,7 +50,14 @@ void inputscript_tick (void) {
         if (frame >= next->at_frame) {
             current = next;
             first_frame_of_event = true;
-            if (next->action != ISCRIPT_ACT_NONE) {
+            /* The record toggles are latched here rather than handed out through
+             * inputscript_take_action(), because they describe a state that outlives the frame
+             * they arrive on and every other action does not. */
+            if (next->action == ISCRIPT_ACT_RECORD_ON) {
+                recording = true;
+            } else if (next->action == ISCRIPT_ACT_RECORD_OFF) {
+                recording = false;
+            } else if (next->action != ISCRIPT_ACT_NONE) {
                 pending = (iscript_action_t)next->action;
             }
         }
@@ -77,6 +85,10 @@ iscript_action_t inputscript_take_action (void) {
     iscript_action_t a = pending;
     pending = ISCRIPT_ACT_NONE;
     return a;
+}
+
+bool inputscript_recording (void) {
+    return recording;
 }
 
 #endif /* DEV_HARNESS */

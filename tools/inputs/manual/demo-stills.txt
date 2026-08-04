@@ -1,0 +1,69 @@
+# Screenshots for the README, against the invented library in tools/mkdemo.py.
+#
+# It lives in manual/ rather than in tools/inputs/ so regress.sh cannot pick it up: this is
+# built with DEMO=1 and FBSCALE=1, and neither belongs in the hash gate. The demo tree misses
+# the game database on purpose, so a scan measured against it measures the miss path, and a
+# full-resolution dump is 3.5 MB of hex per frame.
+#
+#     make DEMO=1 FIXTURE=1 DEV_HARNESS=1 FBSCALE=1 \
+#          INPUT_SCRIPT=tools/inputs/manual/demo-stills.txt sc64 -j8
+#
+# The waits are longer than the regression scripts' because every one of these frames is going
+# to be looked at closely. A tile that has not finished decoding is invisible in a hash and
+# glaring in a screenshot.
+
+wait 22
+fbdump              # 1: the boot plate, part way through its rise
+
+wait 260
+fbdump              # 2: Recent, the tab the menu opens on because playstate.dat is not empty
+
+press r
+wait 90
+fbdump              # 3: Favourites
+
+press r
+wait 200            # N64 is the big tab: twelve tiles and a peek row to decode
+fbdump              # 4: the library, at the top
+
+press down x3
+press right x2
+wait 200
+fbdump              # 5: scrolled into the middle of the library
+
+press start
+wait 60
+fbdump              # 6: settings
+
+press b
+wait 60
+
+press up x3
+press left x2       # back to Aurora Drift, which is one of the six games with cheats
+wait 40
+press a
+wait 60
+fbdump              # 7: the detail sheet
+
+press z
+wait 60
+press a             # tick three groups, so the sheet behind reads "3 of 5 enabled"
+press down
+press a
+press down
+press a
+wait 40
+fbdump              # 8: the cheats screen
+
+press b
+wait 50
+fbdump              # 9: back on the sheet, whose Cheats row now reads 3 of 5 rather than 0 of 5
+
+# No still of the launch. It is a fade to black, and catching it half way is a matter of luck
+# rather than of arithmetic: DUR_LAUNCH_FADE is 0.55 s, but app.c clamps dt to 1/15 s, so a
+# stretch of slow frames covers the whole fade in nine of them and a stretch of fast ones takes
+# thirty-three. Dumping at a fixed frame offset produced pure black on one attempt and the grid
+# it had already handed back to on the next. The video shows the fade in motion, which is what
+# a fade is for.
+
+exit

@@ -15,8 +15,14 @@
 # timeout only catches a ROM that never gets there, so a normal run costs what it costs rather
 # than always costing the timeout.
 #
-# Usage: tools/regress.sh [-o DIR] [-t SECONDS] [script...]
+# Usage: tools/regress.sh [-o DIR] [-t SECONDS] [-m 'VAR=VAL ...'] [script...]
 #        with no scripts, every file in tools/inputs is run.
+#
+# -m appends make variables to every build. It exists because this script rebuilds the ROM
+# itself, so a ROM built by hand beforehand is thrown away -- which silently produced nine
+# 160x120 fixture screenshots from a run that had been set up for 640x480 demo ones:
+#
+#     tools/regress.sh -m 'DEMO=1 FBSCALE=1' -o build/shots tools/inputs/manual/demo-stills.txt
 
 set -eu
 
@@ -25,15 +31,17 @@ cd "$ROOT"
 
 OUT=build/regress/run
 TIMEOUT=120
+MAKE_EXTRA=
 ARES="${ARES:-/Volumes/Storage/tools/ares-v148/ares-v148/ares.app/Contents/MacOS/ares}"
 SETTINGS="${ARES_SETTINGS:-$HOME/Library/Application Support/ares/settings.bml}"
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -o) OUT=$2; shift 2 ;;
         -t) TIMEOUT=$2; shift 2 ;;
+        -m) MAKE_EXTRA=$2; shift 2 ;;
         -h|--help) usage 0 ;;
         --) shift; break ;;
         -*) echo "unknown option $1" >&2; usage 1 ;;
@@ -84,7 +92,7 @@ for script in $SCRIPTS; do
     # PLAIN_ART comment in the Makefile and AUDIT.md 1u.
     case "$name" in idle) EXTRA=PLAIN_ART=1 ;; *) EXTRA= ;; esac
 
-    make FIXTURE=1 DEV_HARNESS=1 INPUT_SCRIPT="$script" $EXTRA sc64 -j8 >"$OUT/$name.build.log" 2>&1 || {
+    make FIXTURE=1 DEV_HARNESS=1 INPUT_SCRIPT="$script" $EXTRA $MAKE_EXTRA sc64 -j8 >"$OUT/$name.build.log" 2>&1 || {
         echo "build failed; see $OUT/$name.build.log" >&2
         exit 1
     }

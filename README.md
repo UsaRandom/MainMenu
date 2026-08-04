@@ -12,6 +12,26 @@ nothing in advance.
 > **This has never run on real hardware.** Every measurement in the audit was taken under
 > [ares](https://ares-emu.net/). Read [Status](#status) before expecting it to work on a console.
 
+![The grid](docs/images/demo-grid.png)
+
+![Boot, browse, open](docs/images/demo.gif)
+
+<sup>Six seconds: the boot plate, the grid filling in as art decodes, moving the selection, and a
+detail sheet. Also as [MP4](docs/images/demo.mp4).</sup>
+
+| | |
+|---|---|
+| ![Scrolled](docs/images/demo-grid-scrolled.png) | ![Detail sheet](docs/images/demo-detail.png) |
+| Scrolled into the library. The bar on the right is position, the yellow corner is a favourite. | The detail sheet: header fields, save type, and how many cheats are on. |
+| ![Cheats](docs/images/demo-cheats.png) | ![Settings](docs/images/demo-settings.png) |
+| Cheats, as named groups. A conditional and the write it guards are one line here, never two. | Settings, and what the menu found on the card. |
+
+**Every game, every cover and every cheat above is invented.**
+[`tools/mkdemo.py`](tools/mkdemo.py) draws original box art for titles that do not exist, so
+nothing on this page belongs to anyone else. Nor is any of it a screen capture: the frames are
+hexdumped out of the emulator's framebuffer, so they are what the RDP drew rather than what a
+window manager made of it. See [Screenshots and the video](#screenshots-and-the-video).
+
 ---
 
 ## Status
@@ -151,6 +171,37 @@ unrelated address. See [AUDIT.md §2](docs/AUDIT.md).
 
 SNES titles run on [lithium64](https://github.com/UsaRandom/lithium64), a fork of sodium64
 targeting this console, falling back to `sodium64.z64` when it is absent.
+
+## Screenshots and the video
+
+Everything at the top of this page is reproducible from a clean tree, and none of it is a screen
+capture. `tools/mkdemo.py` builds an SD tree of invented games — 24 for the N64, nine across the
+other systems — with box art drawn procedurally from the title string, per-ROM save types, a play
+history and a small cheat database. It is seeded by the title, so the same input gives the same
+pictures. The stills and the video then come out of `dbg_fbdump`, which hexdumps the framebuffer
+through an ares debug opcode: what lands on disk is what the RDP produced.
+
+```sh
+# stills -> build/demo-shots/demo-stills/frame*.png
+tools/regress.sh -m 'DEMO=1 FBSCALE=1' -o build/demo-shots \
+    tools/inputs/manual/demo-stills.txt
+
+# video: 385 frames, and 1.4 GB of log to get them
+make DEMO=1 DEMO_NO_PLAYSTATE=1 FIXTURE=1 DEV_HARNESS=1 FBSCALE=1 \
+     INPUT_SCRIPT=tools/inputs/manual/demo-video.txt sc64 -j8
+ares --system "Nintendo 64" --no-file-prompt output/sc64menu.n64 > build/demo-video/log
+tools/mkvideo.py build/demo-video/log -o docs/images/demo.mp4 --gif
+```
+
+Both input scripts are keyed on **frame number**, never on elapsed time, so the take is the same
+length however fast ares happened to be running — which is what makes assembling it at a flat
+60 fps honest. `FBSCALE=1` is what makes the dumps full 640 × 480; the default of 4 exists
+because a regression run dumps 3.54 MB of hex per frame at full size.
+
+`DEMO=1` is not a substitute for the ordinary fixture in a measurement. Every title in the demo
+tree misses the 450-game database on purpose, so a scan measured against it measures the miss
+path. `tools/mkfixture.py` is the one built from real game codes, and it is what every number in
+AUDIT.md was taken against.
 
 ## Documentation
 

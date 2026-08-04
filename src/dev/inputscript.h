@@ -35,9 +35,11 @@ typedef enum {
 
 /** @brief Side effects a script step can trigger. */
 typedef enum {
-    ISCRIPT_ACT_NONE   = 0,
-    ISCRIPT_ACT_FBDUMP = 1, /**< dump the frame just rendered */
-    ISCRIPT_ACT_EXIT   = 2, /**< ask ares to quit, ending the run without a timeout */
+    ISCRIPT_ACT_NONE       = 0,
+    ISCRIPT_ACT_FBDUMP     = 1, /**< dump the frame just rendered */
+    ISCRIPT_ACT_EXIT       = 2, /**< ask ares to quit, ending the run without a timeout */
+    ISCRIPT_ACT_RECORD_ON  = 3, /**< start dumping every frame; see inputscript_recording() */
+    ISCRIPT_ACT_RECORD_OFF = 4, /**< stop */
 } iscript_action_t;
 
 /** @brief One scripted step, held for @c hold_frames starting at @c at_frame. */
@@ -67,6 +69,17 @@ bool inputscript_pressed (iscript_button_t button);
 /** @brief Action due after this frame is rendered, then cleared. */
 iscript_action_t inputscript_take_action (void);
 
+/**
+ * @brief True while `record on` is in force, so every frame should be dumped.
+ *
+ * Separate from the one-shot actions because recording has to survive events that carry their
+ * own direction and buttons. Modelling it as a per-frame FBDUMP action instead would mean one
+ * event per recorded frame, and an event holds a direction -- so a recorded frame could never
+ * also be a frame the script was pressing something on, and the video would stutter over every
+ * button press.
+ */
+bool inputscript_recording (void);
+
 #else
 
 #define inputscript_active()          (false)
@@ -74,6 +87,7 @@ iscript_action_t inputscript_take_action (void);
 #define inputscript_direction(c)      (JOYPAD_8WAY_NONE)
 #define inputscript_pressed(b)        (false)
 #define inputscript_take_action()     (ISCRIPT_ACT_NONE)
+#define inputscript_recording()       (false)
 
 #endif /* DEV_HARNESS */
 

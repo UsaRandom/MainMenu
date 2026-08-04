@@ -1,0 +1,38 @@
+# One continuous take for the README video: the boot plate, moving around the grid, and
+# opening a title.
+#
+#     make DEMO=1 DEMO_NO_PLAYSTATE=1 FIXTURE=1 DEV_HARNESS=1 FBSCALE=1 \
+#          INPUT_SCRIPT=tools/inputs/manual/demo-video.txt sc64 -j8
+#     ares --system "Nintendo 64" --no-file-prompt output/sc64menu.n64 > build/demo-video/log
+#     tools/mkvideo.py build/demo-video/log -o docs/images/demo.mp4 --gif
+#
+# In manual/ because regress.sh must never pick it up, and it is not run through regress.sh
+# either: `record on` dumps EVERY frame, at 3.54 MB of hex each, and regress.sh would then hand
+# all of them to fbdump2png.py, whose per-pixel Python loop is fine for nine frames and takes
+# hours for four hundred.
+#
+# DEMO_NO_PLAYSTATE is what keeps the take on one tab. With a play history the menu opens on
+# Recent, which is a single row of four and cannot be scrolled down; without one, Recent and
+# Favourites are empty, hidden, and the menu opens on N64 -- 24 titles over six rows.
+#
+# Timing is in frames and the video is assembled at 60 fps, so what is written here is what
+# plays back; ares' own speed does not enter into it. hold 3 + gap 21 is 0.4 s a move.
+
+set hold 3
+set gap 21
+
+record on
+
+# The boot plate runs 1.64 s, so 98 frames. The rest is the first twelve tiles decoding: the
+# cards are emitted at 140x98, the size the cache holds, so there is no downscale to wait for.
+wait 150
+
+press right x2      # 0.4 s apart
+press down x3       # down through the library, which scrolls after the first row
+
+wait 30             # 0.5 s on the selection
+press a             # open it
+wait 60             # 1 s on the detail sheet
+
+record off
+exit

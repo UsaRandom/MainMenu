@@ -11,10 +11,17 @@
 
 #include "debug_emux.h"
 
-/* Sized for the worst case we ever ask for: 640x480 at scale 2 is 320x240 shorts. Allocated
- * once and kept, because allocating per dump would perturb the heap between frames and make
- * a memory regression look like a rendering one. */
-#define DBG_FB_MAX_PIXELS (320 * 240)
+/* Sized for what this build's DBG_FBDUMP_SCALE will actually ask for, but never smaller than
+ * the 320x240 that scales 2 and 4 have always used. Both halves matter. Without the first, a
+ * full-resolution build (FBSCALE=1, for screenshots) is refused by the bounds check below and
+ * silently produces no frames. Without the second, a scale-4 build would shrink the scratch
+ * from 150 KB to 38 KB and move the heap under every allocation measurement in AUDIT.md, so a
+ * capture tool would look like it had changed the thing it was measuring.
+ *
+ * Allocated once and kept, because allocating per dump would perturb the heap between frames
+ * and make a memory regression look like a rendering one. */
+#define DBG_FB_WANTED ((640 / DBG_FBDUMP_SCALE) * (480 / DBG_FBDUMP_SCALE))
+#define DBG_FB_MAX_PIXELS (DBG_FB_WANTED > (320 * 240) ? DBG_FB_WANTED : (320 * 240))
 
 static uint16_t *scratch = NULL;
 

@@ -14,6 +14,8 @@ Script syntax, one directive per line, # comments to end of line:
     hold DIR N          hold a direction for N frames
     cpress DIR [xN]     same as press but on the C-pad, which sets go_fast
     fbdump              dump the frame rendered at this point
+    record on|off       dump EVERY frame until told to stop -- for the demo video, not for a
+                        regression run. A recorded second at 640x480 is about 180 MB of hex.
     exit                ask ares to quit; ends a headless run without waiting for a timeout
     set hold N          frames a press is held        (default 2)
     set gap N           idle frames after a press     (default 6)
@@ -45,7 +47,7 @@ NONE = 0xFF
 BUTTONS = {"a": 1 << 0, "b": 1 << 1, "start": 1 << 2, "l": 1 << 3, "r": 1 << 4, "z": 1 << 5,
            "cright": 1 << 6}
 
-ACT_NONE, ACT_FBDUMP, ACT_EXIT = 0, 1, 2
+ACT_NONE, ACT_FBDUMP, ACT_EXIT, ACT_RECORD_ON, ACT_RECORD_OFF = 0, 1, 2, 3, 4
 
 
 def check_joypad_enum():
@@ -132,6 +134,11 @@ def parse(lines, path):
 
         elif cmd == "fbdump":
             s.add(hold=1, action=ACT_FBDUMP)
+
+        elif cmd == "record":
+            if len(parts) != 2 or parts[1].lower() not in ("on", "off"):
+                die("expected 'record on' or 'record off'")
+            s.add(hold=1, action=ACT_RECORD_ON if parts[1].lower() == "on" else ACT_RECORD_OFF)
 
         elif cmd == "exit":
             s.add(hold=1, action=ACT_EXIT)

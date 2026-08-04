@@ -274,9 +274,18 @@ void app_run (boot_params_t *boot_params) {
         app->update_us += TIMER_MICROS(TICKS_DISTANCE(t0, t1));
         app->render_us += TIMER_MICROS(TICKS_DISTANCE(t1, t2));
 
+        /* Continuous capture for the demo video. Checked before the one-shot actions so a
+         * `fbdump` inside a recorded stretch cannot dump the same frame twice, which would show
+         * up in the finished video as a single stuttered frame and be very hard to explain. */
+        if (inputscript_recording()) {
+            dbg_fbdump(fb, DBG_FBDUMP_SCALE);
+        }
+
         switch (inputscript_take_action()) {
             case ISCRIPT_ACT_FBDUMP:
-                dbg_fbdump(fb, DBG_FBDUMP_SCALE);
+                if (!inputscript_recording()) {
+                    dbg_fbdump(fb, DBG_FBDUMP_SCALE);
+                }
                 break;
             case ISCRIPT_ACT_EXIT:
                 debugf("INPUTSCRIPT done, requesting exit\n");

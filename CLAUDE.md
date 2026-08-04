@@ -18,6 +18,12 @@ tools/mkcheatkeys.py -i build/cht          # -> tools/data/n64_keys.tsv (this on
 this history. `n64_keys.tsv` is committed because it is a table of pure facts -- a filename and
 three header fields.
 
+**`tools/mkdemo.py` is not `tools/mkfixture.py`.** mkfixture harvests real game codes and titles
+out of `rom_info.c` so a scan exercises the real database; mkdemo invents every title, code and
+cheat and draws original box art, because its output goes in the README. `make DEMO=1` packs it
+instead of the fixture — never measure against it, every title in it misses the database on
+purpose. See AUDIT.md 1w.
+
 **`build/artcache` has to be populated by hand** and nothing fetches it. Any tree of
 `<GAMECODE>/boxart_front.png` works. Without it every fixture rebuild swaps real cards for
 procedural gradients, which look fine and change every decode number in AUDIT.md -- and
@@ -87,7 +93,7 @@ src/library/      library (index + scan), thumbcache
 src/cheats/       cheatdb -- read-only, group model; see cheatdb.h on why groups not lines
 src/screens/      grid, detail, cheats, settings, launch, fault
 src/dev/          harness only; compiles to nothing without DEV_HARNESS
-tools/            fixture, input scripts, regression, art + cheat corpus fetchers
+tools/            fixture, demo tree, input scripts, regression, video, cheat corpus fetcher
 ```
 
 ## Constraints that are not negotiable

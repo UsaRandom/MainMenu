@@ -55,23 +55,35 @@ def main() -> int:
                          "earliest first so the last one given is the most recent")
     ap.add_argument("--favorite", action="append", default=[],
                     help="bare ROM filename to mark as a favourite; repeatable")
+    ap.add_argument("--played-code", action="append", default=[],
+                    help="16-digit hex check code to mark as played; repeatable, ordered like "
+                         "--played")
+    ap.add_argument("--favorite-code", action="append", default=[],
+                    help="16-digit hex check code to mark as a favourite; repeatable")
     ap.add_argument("--base-time", type=int, default=1_600_000_000,
                     help="unix time of the earliest play")
     args = ap.parse_args()
 
     entries: dict[int, list] = {}
 
-    def entry(name: str):
-        k = fnv1a64(name)
-        return entries.setdefault(k, [k, 0, 0, 0])
+    def entry(key: int):
+        return entries.setdefault(key, [key, 0, 0, 0])
 
-    for i, name in enumerate(args.played):
-        e = entry(name)
+    # Two ways in, because playstate_key() has two. An N64 ROM keys on its header check code and
+    # only falls back to the filename hash when there is none -- so naming an N64 file here
+    # produces a record that will never match, which looks exactly like the file being absent.
+    # That is not hypothetical: the demo tree's first playstate marked four N64 titles by name
+    # and the Recent tab came up with only the SNES one in it.
+    played = [fnv1a64(n) for n in args.played] + [int(c, 16) for c in args.played_code]
+    favorite = [fnv1a64(n) for n in args.favorite] + [int(c, 16) for c in args.favorite_code]
+
+    for i, key in enumerate(played):
+        e = entry(key)
         e[1] = args.base_time + i * 3600      # later in the list == more recent
         e[2] += 1
 
-    for name in args.favorite:
-        entry(name)[3] |= LIBF_FAVORITE
+    for key in favorite:
+        entry(key)[3] |= LIBF_FAVORITE
 
     if not entries:
         print("nothing to write; pass --played or --favorite")
@@ -86,10 +98,10 @@ def main() -> int:
         f.write(header + payload)
 
     print(f"{args.output}: {len(entries)} records, {len(payload) + len(header)} bytes")
-    for name in args.played:
-        print(f"  played    {name}  key={fnv1a64(name):#018x}")
-    for name in args.favorite:
-        print(f"  favourite {name}  key={fnv1a64(name):#018x}")
+    for name, key in zip(args.played + args.played_code, played):
+        print(f"  played    {name}  key={key:#018x}")
+    for name, key in zip(args.favorite + args.favorite_code, favorite):
+        print(f"  favourite {name}  key={key:#018x}")
     return 0
 
 

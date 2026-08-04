@@ -73,6 +73,73 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
+## 1w. Screenshots that can be published, and a still that could not be timed
+
+The README had no pictures, and could not have them: the fixture is built from real game titles
+harvested out of `rom_info.c`, and with `build/artcache` populated its tiles are real cover
+scans. Neither is publishable. `tools/mkdemo.py` is the answer — 24 invented N64 titles and nine
+across the other systems, with box art drawn procedurally from the title string, per-ROM save
+types, a play history and a small cheat database of invented codes. `make DEMO=1` packs it in
+place of the fixture.
+
+**It is not a fixture substitute, and the Makefile comment says so.** Every title in it misses the
+450-game database by construction — `game_code_for()` checks each invented code against the
+harvested set and refuses a collision, because a demo ROM that collided would inherit that game's
+save type and feature mask and the detail sheet would then show accessories for a game that does
+not exist. A scan measured against this tree measures the miss path.
+
+### Cards are emitted at 140 × 98, not 280 × 196
+
+The first version wrote 280 × 196, on the reasoning in DESIGN.md that this is twice the tile so
+the detail sheet can show it 1:1. That reasoning does not survive contact with the code:
+`screen_detail.c:212` blits **the cached tile** at `scale_x = 2`, so the 280 × 196 panel is a 2×
+magnification of a 140 × 98 image either way, and nothing ever reads a larger source. Emitting at
+280 × 196 bought a decode of four times the pixels followed by a runtime box-filter down to the
+size it should have been in the first place.
+
+Emitting at the target instead means the card goes through one resampler (Lanczos, from the
+840 × 588 supersampled canvas) rather than two. The tree also drops from 1,127 KB to 567 KB.
+
+### Two harness gaps this needed
+
+`DBG_FB_MAX_PIXELS` was a flat `320 * 240`, so a full-resolution dump — the only kind worth
+putting in a README — was **refused by its own bounds check** and produced no frames at all. It
+is now derived from `DBG_FBDUMP_SCALE`, floored at the old value so that scale 2 and 4 keep the
+exact heap they had and no allocation measurement in this file moves.
+
+`record on` / `record off` are new script directives that dump every frame. They are latched
+state rather than per-frame `fbdump` actions, and that distinction is load-bearing: an event in
+`inputscript.c` carries a direction and a button, so a per-frame dump action would mean a
+recorded frame could never also be a frame the script was pressing something on, and the video
+would drop two frames at every press.
+
+`tools/regress.sh` rebuilds the ROM itself, which silently threw away a hand-built one: the first
+capture attempt produced nine **160 × 120 fixture** screenshots from a run set up for 640 × 480
+demo ones, and looked entirely successful doing it. It now takes `-m 'VAR=VAL'`.
+
+### The parser had to be replaced, and was checked against the one it replaced
+
+`fbdump2png.py` holds every frame in memory and converts pixels in a Python loop. That is right
+for the nine frames a regression script dumps and impossible for 385: 118 million iterations, and
+230 MB of framebuffers resident. `tools/mkvideo.py` streams — one frame at a time, numpy for the
+RGBA5551 → RGB24 expansion, straight down a pipe to ffmpeg. **1.36 GB of log parses in 9.1 s.**
+
+Verified rather than assumed: over the nine-frame stills log the two parsers produce
+**byte-identical** output. And the check was shown capable of failing — replacing the 5 → 8 bit
+expansion `(c << 3) | (c >> 2)` with a plain `c << 3` makes it report a mismatch.
+
+### ~~A still of the launch fade~~ — dropped, it cannot be timed
+
+The launch is a fade to black over `DUR_LAUNCH_FADE` = 0.55 s. Dumping at a fixed frame offset
+after Play does not land in the middle of it, because `app.c` clamps `dt` to the range
+[1/120, 1/15] s: a stretch of slow frames covers the whole fade in **nine** of them and a stretch
+of fast ones takes **thirty-three**. Two attempts at the same offset gave pure black (mean pixel
+value 0.0) and then the grid it had already handed back to. Recorded because the same trap
+applies to any timed animation sampled by frame index — the boot plate's six-frame timeline in
+`boot.txt` is exposed to it and has simply been lucky. The video shows the fade in motion.
+
+---
+
 ## 1v. The two untested JPEG paths, and a third thing found while testing them
 
 JPEG support was measured against exactly one corpus — the SD card that prompted it, sixteen

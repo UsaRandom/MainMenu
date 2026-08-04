@@ -57,6 +57,23 @@ FIXTURE_DIR = $(BUILD_DIR)/fixture-plain
 FIXTURE_ART =
 endif
 
+# DEMO=1 swaps the fixture for tools/mkdemo.py's tree of invented games with original box art.
+# It is what the README screenshots and the demo video are made from, and it exists because the
+# ordinary fixture is built from real game titles harvested out of rom_info.c and, when
+# build/artcache is populated, real cover scans -- neither of which this repo can publish.
+# It is NOT a substitute for the fixture in a regression run: every title in it misses the
+# database on purpose, so a scan measured against it exercises only the miss path.
+#
+# DEMO_NO_PLAYSTATE=1 additionally leaves out the play history, into a tree of its own. The
+# video take never changes tab, and with a play history the menu opens on Recent -- one row of
+# four, which cannot be scrolled. Without one it opens on N64, which is 24 titles and six rows.
+FIXTURE_GEN = tools/mkfixture.py
+ifdef DEMO
+FIXTURE_DIR = $(BUILD_DIR)/demo$(if $(DEMO_NO_PLAYSTATE),-fresh)
+FIXTURE_ART = $(if $(DEMO_NO_PLAYSTATE),--no-playstate)
+FIXTURE_GEN = tools/mkdemo.py
+endif
+
 ifdef FIXTURE
 N64_MKDFS_ROOT = $(DFS_ROOT_DIR)
 else
@@ -259,7 +276,7 @@ dfsroot: $(FILESYSTEM)
 	@cp -R $(FILESYSTEM_DIR)/. $(DFS_ROOT_DIR)/
 	@if [ ! -d $(FIXTURE_DIR) ]; then \
 		echo "    [FIXTURE] generating $(FIXTURE_DIR)"; \
-		python3 tools/mkfixture.py -o $(FIXTURE_DIR) $(FIXTURE_ART) >/dev/null; \
+		python3 $(FIXTURE_GEN) -o $(FIXTURE_DIR) $(FIXTURE_ART) >/dev/null; \
 	fi
 	@cp -R $(FIXTURE_DIR)/. $(DFS_ROOT_DIR)/
 	@# A hand-built playstate.dat, which is the ONLY way to reach the cache READ path under ares:
@@ -270,12 +287,19 @@ dfsroot: $(FILESYSTEM)
 	@# by hand. Generated here so it cannot go missing again.
 	@# Names must exist in the generated tree or the records load and match nothing, which looks
 	@# identical to the file being absent. mkfixture.py's SNES titles are the three below.
-	@python3 tools/mkplaystate.py -o $(DFS_ROOT_DIR)/menu/cache/playstate.dat \
-		--played "Chrono Drift.sfc" --played "Star Relic.sfc" \
-		--favorite "Pixel Knights.sfc" >/dev/null
+	@# Not for the demo tree, which decides its own play history -- and whose --no-playstate form
+	@# needs there to be NO history at all, so that Recent and Favourites stay hidden and the menu
+	@# opens on N64. Writing the fixture's here would name titles the demo tree does not contain:
+	@# harmless in effect, since nothing matches, but it puts a file where the absence is the point.
+	@if [ -z "$(DEMO)" ] && [ ! -f $(DFS_ROOT_DIR)/menu/cache/playstate.dat ]; then \
+		python3 tools/mkplaystate.py -o $(DFS_ROOT_DIR)/menu/cache/playstate.dat \
+			--played "Chrono Drift.sfc" --played "Star Relic.sfc" \
+			--favorite "Pixel Knights.sfc" >/dev/null; \
+	fi
 	@# cheats.db is a release artifact built by tools/mkcheatdb.py, never committed. Staged when
-	@# it happens to be there so the cheats screen has something to show under ares.
-	@if [ -f $(BUILD_DIR)/cheats.db ]; then \
+	@# it happens to be there so the cheats screen has something to show under ares. Same rule as
+	@# the playstate: a tree that carries its own keeps it.
+	@if [ -f $(BUILD_DIR)/cheats.db ] && [ ! -f $(DFS_ROOT_DIR)/menu/cheats.db ]; then \
 		mkdir -p $(DFS_ROOT_DIR)/menu; \
 		cp $(BUILD_DIR)/cheats.db $(DFS_ROOT_DIR)/menu/cheats.db; \
 		echo "    [FIXTURE] staged cheats.db ($$(du -h $(BUILD_DIR)/cheats.db | cut -f1))"; \
@@ -285,7 +309,7 @@ dfsroot: $(FILESYSTEM)
 
 fixture:
 	@rm -rf $(FIXTURE_DIR)
-	@python3 tools/mkfixture.py -o $(FIXTURE_DIR) $(FIXTURE_ART)
+	@python3 $(FIXTURE_GEN) -o $(FIXTURE_DIR) $(FIXTURE_ART)
 .PHONY: fixture
 
 $(BUILD_DIR)/app.o: .FORCE
