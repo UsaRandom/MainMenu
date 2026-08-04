@@ -40,6 +40,18 @@ ARTCACHE_DIR = $(BUILD_DIR)/artcache
 FIXTURE_ART  = $(if $(wildcard $(ARTCACHE_DIR)),--art-from $(ARTCACHE_DIR),)
 DFS_ROOT_DIR = $(BUILD_DIR)/dfsroot
 
+# PLAIN_ART=1 builds the fixture from mkfixture's own procedural cards instead of the real corpus,
+# into a directory of its own so the real fixture is left alone. It exists for one script: the
+# real corpus cannot SETTLE. One card in it is 2118 x 1457 and decodes for 38 seconds, so a
+# 40-card fixture is still mid-image 1,200 frames in -- and tools/inputs/idle.txt, which asserts
+# that a settled frame allocates nothing, was reporting mallocs=0 from a run that never reached a
+# settled frame. With procedural cards the whole library is resident in about five seconds and the
+# gate can go red, which it promptly did. See AUDIT.md 1u.
+ifdef PLAIN_ART
+FIXTURE_DIR = $(BUILD_DIR)/fixture-plain
+FIXTURE_ART =
+endif
+
 ifdef FIXTURE
 N64_MKDFS_ROOT = $(DFS_ROOT_DIR)
 else

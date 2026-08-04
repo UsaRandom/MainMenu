@@ -73,6 +73,106 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
+## 1u. The thumbnail pool never stopped working, and the gate that should have said so could not
+
+Closes the item left open at the end of [1s](#1s). Two defects, found one behind the other, and a
+third finding about the test that was supposed to catch them.
+
+### Reproducing it, which took a fixture change
+
+`tools/inputs/idle.txt` waits 1,200 frames and asserts that a frame which is only drawing
+allocates nothing. Run against the default fixture it reports `mallocs=0` — and it cannot report
+anything else, because at frame 1,200 the run has not finished decoding:
+
+```
+FRAME n=1200 ... bg_us=14940 starts=0 rows=60 worstrow_us=26451
+```
+
+`starts=0` with `rows=60` is a decoder grinding through a single image, not a settled library.
+The real corpus contains the 2118 × 1457 card [1f](#1f) records at 38 seconds on its own, so 40 of
+them cannot possibly settle inside 20 seconds of frames. The gate was green because the run never
+reached the state the gate is about. That is the third instance of this pattern in the file, after
+the two in [1t](#1t), and the first one where the cause was the *corpus* rather than the script.
+
+Rebuilding the same fixture with procedural art instead — 51 records, 40 of them illustrated,
+against a 20-slot pool — settles in about five seconds and makes the gate live. It went red
+immediately:
+
+| per 60 frames, 1,200 frames after the last input | mallocs | frees | bytes | starts/s | scan µs/frame | f1 of 60 |
+|---|---|---|---|---|---|---|
+| as found | 66 | 72 | 449,028 | 6 | 1,884 | 38 |
+| prefetch stops evicting | 0 | 0 | 0 | 0 | 13,418 | 53 |
+| artless tiles stop being wanted | **0** | **0** | **0** | **0** | **0** | **60** |
+
+### Defect one: prefetch evicted, so the pool could never be full
+
+`thumbcache_run()`'s third and fourth passes prefetch over the whole library. `claim_slot()`
+always evicted the least-recently-wanted slot, and an eviction hands the evicted record back to
+the queue as `ART_PENDING` — so with more titles than slots there was always another candidate.
+The cache decoded and evicted forever and never once reached the idle state added in [1l](#1l).
+449 KB of 27 KB surfaces churned per second against a heap with no MMU behind it, on a machine
+sitting at a menu with nobody touching it.
+
+The fix is one bool. Visible tiles still evict, because the alternative is a blank tile under the
+cursor; prefetch only ever fills what is already free, so a full pool ends the walk instead of
+restarting it. `no_slot()` distinguishes the two cases — a visible pass that cannot claim must
+stay armed for next frame, when the clock has moved on, while a prefetch pass that cannot claim
+knows no later pass or frame can do better until an eviction or a new want frees something, and
+both of those clear the flag themselves.
+
+This also settles the question [1r](#1r) left open about 500 titles: the steady state of a real
+library was the thrashing state, since 500 will never fit in 20 slots either.
+
+### Defect two: a tile with no art was wanted forever
+
+With the pool fixed the allocations stopped and the scan got **seven times worse** — 1,884 µs per
+frame to 13,418, with 421 filesystem probes a second. `tc->idle` is cleared by any visible tile
+that is not resident, and `thumbcache_get()` was adding artless records to the want list every
+frame. A want that can never be met kept the four-pass walk armed permanently. The fixture's
+eleven emulated-system stubs have no art at all, so a single screenful contained several of them.
+
+The state is already known — the scan sets `ART_NONE` and caches it — so the check is three lines
+in `thumbcache_get()`, which had been ignoring its `lib` argument.
+
+With both fixed the settled grid reports `bg_us=0 scanus=0 stats=0 starts=0` and **60 of 60 frames
+single-field**, up from 38. The gate now measures what it says it measures, and the menu does no
+work at all when nothing is happening.
+
+### Found while verifying the above: the regression suite is no longer reproducible
+
+The M1 gate in [1b](#1b) is that two identical `regress.sh` runs produce byte-identical
+`hashes.txt`, on the grounds that nothing downstream is measurable without it. Run twice against
+the same ROM today, it does not: **10 of 47 frames differ**, across `boot` and `browse-roms`.
+
+The cause is that art decoding is budgeted in microseconds. `image_decoder_poll_budget(budget_us)`
+finishes however many PNG rows fit in the budget, and how many that is depends on how fast the
+host is running ares that second. A frame dumped while art is still arriving therefore catches a
+different number of completed tiles from run to run. It is not a bug in the menu — the budget has
+to be wall-clock on real hardware — but it does mean **a hash diff on any frame dumped mid-decode
+is not evidence of anything**, and the 32-line before/after diff for the fix above is partly this
+noise.
+
+So the fix was verified on invariants that are deterministic instead. Across all thirteen scripts:
+the `ART` resolution log is byte-identical before and after on twelve of them, and final
+`resident=` is 8 on all twelve. The thirteenth is `boot`, which exits mid-decode and resolved one
+extra path (`NDKJ`) in the "before" run — the same cut-off sensitivity, and its `ART` log is
+identical between two runs of the *same* build.
+
+Not fixed here, and it should be before the next measurement leans on hashes. The shape of the
+answer is a harness-only row budget instead of a time budget for scripts whose dumps are aimed at
+unsettled states, which would make the dump depend on the frame number rather than the host —
+the same reasoning that made input scripts frame-counted rather than time-based in the first
+place ([1b](#1b)).
+
+### Not done, and deliberately
+
+`THUMB_SLOTS` is still 20. [1r](#1r) argues it is six times too small and that cluster-aligned CI8
+would hold 128 slots in the measured 3.54 MB of free heap, which is a different piece of work with
+a different measurement: it changes the tile format, not the eviction policy. What this section
+fixes is that the pool never stopped working, which was true at any slot count.
+
+---
+
 ## 1t. Fav moves to C-right, and the detail sheet gets one at all
 
 The grid's Fav hint was already labelled, on Z. The **detail sheet had no favourite control of any

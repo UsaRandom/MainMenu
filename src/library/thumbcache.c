@@ -15,6 +15,15 @@
 #include "ui/theme.h"
 #include "utils/fs.h"
 
+/* Build with -DTHUMB_AB_PREFIX=1 to restore the pre-fix cache policy: prefetch evicts, and a
+ * record with no art is wanted every frame. It exists so a regression run can produce a real
+ * "before" against the same fixture -- the last full run predates an art refetch, so diffing
+ * against it would attribute the corpus change to this one. Never set in any build that ships;
+ * see AUDIT.md 1u for what the two behaviours cost. */
+#ifndef THUMB_AB_PREFIX
+#define THUMB_AB_PREFIX 0
+#endif
+
 #define METADATA_DIR    "menu/metadata"
 #define ART_FILE        "boxart_front.png"
 
@@ -124,11 +133,21 @@ static int find_slot (thumbcache_t *tc, uint16_t rom_id) {
 }
 
 surface_t *thumbcache_get (thumbcache_t *tc, library_t *lib, uint16_t rom_id) {
-    (void)lib;
     int s = find_slot(tc, rom_id);
     if (s >= 0) {
         tc->slots[s].last_wanted = tc->clock;
         return tc->slots[s].art;
+    }
+
+    /* A record with no art can never become resident, so wanting it is a request that can never
+     * be met -- and the want is what clears tc->idle. One artless tile on screen therefore kept
+     * the whole four-pass walk armed for every background() call forever: measured at 13,418 us
+     * per frame of scan and 421 filesystem probes a second on a settled grid whose every visible
+     * tile was already either resident or known to have no art. The eleven emulated-system stubs
+     * in the fixture are all artless, so a single screenful contained several. */
+    if (!THUMB_AB_PREFIX &&
+        lib != NULL && rom_id < lib->count && lib->records[rom_id].art_state == ART_NONE) {
+        return NULL;
     }
 
     /* Not resident: remember that the screen wanted it, so the decoder does this one next. */
@@ -346,8 +365,22 @@ static void decode_done (img_err_t err, surface_t *decoded, void *data) {
     }
 }
 
-/** @brief Pick a slot for @p rom_id: a free one, else the least-recently-wanted. */
-static int claim_slot (thumbcache_t *tc, library_t *lib, uint16_t rom_id) {
+/**
+ * @brief Pick a slot for @p rom_id: a free one, else the least-recently-wanted.
+ *
+ * @p may_evict is false for the prefetch passes, and that is what makes the cache ever stop
+ * working. Prefetch walks the whole library, and an eviction hands the evicted record back to
+ * the queue as ART_PENDING -- so with more titles than slots there was always another candidate
+ * and the pool decoded and evicted forever. `tools/inputs/idle.txt` measured it on the SD card's
+ * 27-title library: 28 mallocs and 28 frees per 60 frames, 1,200 frames after the last input,
+ * permanent background CPU and unbounded churn of 27 KB surfaces against a heap with no MMU
+ * behind it. Every fixture before that one fitted inside the pool, so the gate had never been
+ * able to go red. See AUDIT.md 1u.
+ *
+ * Visible tiles still evict, because the alternative is a blank tile under the cursor. Prefetch
+ * only ever fills what is already free, so a full pool ends the walk instead of restarting it.
+ */
+static int claim_slot (thumbcache_t *tc, library_t *lib, uint16_t rom_id, bool may_evict) {
     int best = -1;
     uint32_t oldest = 0xFFFFFFFF;
 
@@ -355,6 +388,9 @@ static int claim_slot (thumbcache_t *tc, library_t *lib, uint16_t rom_id) {
         if (!tc->slots[i].used && tc->slots[i].art == NULL) {
             return i;
         }
+    }
+    if (!may_evict && !THUMB_AB_PREFIX) {
+        return -1;
     }
     for (int i = 0; i < THUMB_SLOTS; i++) {
         /* Never evict what is wanted this frame, or a working set larger than the pool would
@@ -402,6 +438,24 @@ static int claim_slot (thumbcache_t *tc, library_t *lib, uint16_t rom_id) {
  * is rows of PNG or the walk that looks for the next image to start is not a detail, because
  * only one of them is real work. */
 uint32_t thumb_rows_us = 0, thumb_scan_us = 0, thumb_starts = 0, thumb_statcalls = 0;
+
+/**
+ * @brief The pool had no slot to give. Charge the scan and decide whether to go quiet.
+ *
+ * The two callers differ only in which pass they are in, and the distinction is the whole fix.
+ * A visible pass that cannot claim means every slot is wanted *this frame*; the clock moves on,
+ * so next frame it may well succeed and the walk must stay armed. A prefetch pass that cannot
+ * claim means the pool is simply full, and since prefetch never evicts, no later pass and no
+ * later frame can do better until something frees a slot -- which only an eviction or a new
+ * want does, and both clear the flag.
+ */
+static bool no_slot (thumbcache_t *tc, bool visible_only, uint32_t scan_t0) {
+    if (!visible_only) {
+        tc->idle = true;
+    }
+    thumb_scan_us += TIMER_MICROS(TICKS_SINCE(scan_t0));
+    return false;
+}
 
 bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
     if (tc->decoding_slot >= 0) {
@@ -479,10 +533,9 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
              * ordinary tile the moment it has been decoded once. Deferring a cached tile to the
              * costly pass would throw that away for no reason. */
             if (thumbstore_available()) {
-                int slot = claim_slot(tc, lib, (uint16_t)i);
+                int slot = claim_slot(tc, lib, (uint16_t)i, visible_only);
                 if (slot < 0) {
-                    thumb_scan_us += TIMER_MICROS(TICKS_SINCE(scan_t0));
-                    return false;
+                    return no_slot(tc, visible_only, scan_t0);
                 }
                 surface_t *cached = malloc(sizeof(surface_t));
                 if (cached != NULL) {
@@ -516,10 +569,9 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
                 continue;
             }
 
-            int slot = claim_slot(tc, lib, (uint16_t)i);
+            int slot = claim_slot(tc, lib, (uint16_t)i, visible_only);
             if (slot < 0) {
-                thumb_scan_us += TIMER_MICROS(TICKS_SINCE(scan_t0));
-                return false;       /* pool full of tiles wanted right now; try next frame */
+                return no_slot(tc, visible_only, scan_t0);
             }
 
             snprintf(tc->decoding_src, sizeof(tc->decoding_src), "%s", path);

@@ -77,7 +77,14 @@ for script in $SCRIPTS; do
     name=$(basename "$script" .txt)
     echo "== $name"
 
-    make FIXTURE=1 DEV_HARNESS=1 INPUT_SCRIPT="$script" sc64 -j8 >"$OUT/$name.build.log" 2>&1 || {
+    # idle.txt is the one script that needs the library to have SETTLED, and the real art corpus
+    # cannot settle inside its 1,200 frames -- one card in it decodes for 38 seconds on its own.
+    # Built against the real fixture the run is still mid-image at the dump, so the gate reported
+    # "no allocations" from a frame that was nowhere near the state it is asking about. See the
+    # PLAIN_ART comment in the Makefile and AUDIT.md 1u.
+    case "$name" in idle) EXTRA=PLAIN_ART=1 ;; *) EXTRA= ;; esac
+
+    make FIXTURE=1 DEV_HARNESS=1 INPUT_SCRIPT="$script" $EXTRA sc64 -j8 >"$OUT/$name.build.log" 2>&1 || {
         echo "build failed; see $OUT/$name.build.log" >&2
         exit 1
     }
