@@ -42,6 +42,14 @@ $CC $CFLAGS tools/hosttest/test_thumbstore.c src/library/cache.c src/library/thu
 TESTDIR="$OUT/thumbdir" "$OUT/test_thumbstore" 2>/dev/null
 
 echo
+echo "== profiles, paths and the shared lock list"
+rm -rf "$OUT/profiledir"
+$CC $CFLAGS tools/hosttest/test_profile.c src/library/cache.c src/library/locks.c src/library/playstate.c \
+    src/menu/profile.c src/menu/ini_parser.c src/menu/paths.c tools/hosttest/shim/fs_probe.c \
+    -o "$OUT/test_profile"
+TESTDIR="$OUT/profiledir" "$OUT/test_profile" 2>/dev/null
+
+echo
 echo "== JPEG variants picojpeg does and does not accept"
 if python3 tools/hosttest/mkjpegs.py "$OUT/jpegs" >"$OUT/mkjpegs.log" 2>&1; then
     sed 's/^/  /' "$OUT/mkjpegs.log"
@@ -100,6 +108,35 @@ if [ "${1:-}" = "--mutate" ]; then
         grep -E 'FAIL|failures' "$OUT/jpeg_mutant.log"
         echo "mutation detected, so a green JPEG run above means something"
     fi
+
+    echo
+    echo "== mutation: give profile 1 a suffix, the profile suite must go red"
+    # The one mistake in this feature that is silent, unrecoverable and shaped exactly like
+    # working software: profile 1 must write to `playstate.dat` and `<romdir>/saves/`, the paths
+    # every card already uses. Give it a `p1/` prefix and the menu still boots, still saves, still
+    # loads -- into a folder nothing has ever written, so every favourite and every save on every
+    # existing card is simply gone. Nothing in a frame would show it.
+    # awk rather than sed: the line to change is not unique -- profile_save_subdir() opens with
+    # the same `if (active == 0) {` -- so the mutation has to count occurrences, and sed cannot.
+    awk '{ if ($0 == "    if (active == 0) {") { seen++ } ;
+           if (seen == 2 && $0 == "        snprintf(out, cap, \"%s\", name);")
+               { print "        snprintf(out, cap, \"p1/%s\", name);" } else { print } }' \
+        src/menu/profile.c > "$OUT/profile_mutant.c"
+    grep -q 'p1/%s' "$OUT/profile_mutant.c" || { echo "profile mutation did not apply" >&2; exit 1; }
+
+    rm -rf "$OUT/mutant_profiledir"
+    $CC -std=c11 -Wall -Itools/hosttest/shim -Isrc -Isrc/library \
+        tools/hosttest/test_profile.c src/library/cache.c src/library/locks.c \
+        src/library/playstate.c "$OUT/profile_mutant.c" src/menu/ini_parser.c src/menu/paths.c tools/hosttest/shim/fs_probe.c \
+        -o "$OUT/test_profile_mutant"
+
+    if TESTDIR="$OUT/mutant_profiledir" "$OUT/test_profile_mutant" \
+            >"$OUT/profile_mutant.log" 2>/dev/null; then
+        echo "MUTANT PASSED -- the profile suite cannot tell profile 1 from profile 2" >&2
+        exit 1
+    fi
+    grep -E 'FAIL|failures' "$OUT/profile_mutant.log"
+    echo "mutation detected, so a green profile run above means something"
 
     echo
     echo "== mutation: break the CRC seed, the suite must go red"

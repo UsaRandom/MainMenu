@@ -15,7 +15,7 @@ wait 120
 press start         # settings
 wait 20
 
-press down x5       # -> Parental controls
+press down x6       # -> Parental controls
 press a             # no code yet, so straight in
 wait 20
 
@@ -39,7 +39,7 @@ fbdump              # 1: the panel, code set
 
 press b             # -> settings, whose cursor resets to Theme
 wait 20
-press down x4       # -> Clock
+press down x5       # -> Clock
 press a
 wait 25
 fbdump              # 2: the pad, not the clock

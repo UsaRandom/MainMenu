@@ -11,6 +11,7 @@
 #include "cart_load.h"
 #include "path.h"
 #include "paths.h"
+#include "profile.h"
 #include "utils/fs.h"
 #include "utils/utils.h"
 
@@ -38,8 +39,17 @@
 #define SNES_CORE_FALLBACK      "sodium64.z64"
 
 /**
- * @brief Create the saves subdirectory.
- * 
+ * @brief Create the saves subdirectory, and the profile's folder inside it.
+ *
+ * Profile 1 gets `<romdir>/saves/` and nothing else, which is exactly where every card written
+ * before profiles existed already keeps its saves. Profiles 2..10 get `<romdir>/saves/pN/`.
+ *
+ * Nested rather than a sibling `pNsaves/` for two reasons worth stating here, because this is the
+ * function that decides it. A sibling scheme has no unsuffixed case, so upgrading a card would
+ * renumber profile 1's folder and every existing save on it would stop being found. And
+ * `library.c`'s SCAN_SKIP excludes `saves` and everything beneath it, so nesting costs the
+ * scanner nothing, while `p2saves` would be walked as though it held games.
+ *
  * @param path Pointer to the path structure.
  * @return true if an error occurred, false otherwise.
  */
@@ -47,9 +57,32 @@ static bool create_saves_subdirectory (path_t *path) {
     path_t *save_folder_path = path_clone(path);
     path_pop(save_folder_path);
     path_push(save_folder_path, SAVE_DIRECTORY_NAME);
+
     bool error = directory_create(path_get(save_folder_path));
+
+    const char *sub = profile_save_subdir();
+    if (!error && sub != NULL) {
+        path_push(save_folder_path, (char *)sub);
+        error = directory_create(path_get(save_folder_path));
+    }
+
     path_free(save_folder_path);
     return error;
+}
+
+/**
+ * @brief Move @p path, which names a .sav beside its ROM, into the active profile's save folder.
+ *
+ * Paired with create_saves_subdirectory() and always called after it: one decides where the
+ * folder is, the other has to agree, and the two used to be a single line each at two call sites.
+ */
+static void push_save_subdir (path_t *path) {
+    path_push_subdir(path, SAVE_DIRECTORY_NAME);
+
+    const char *sub = profile_save_subdir();
+    if (sub != NULL) {
+        path_push_subdir(path, (char *)sub);
+    }
 }
 
 /**
@@ -129,7 +162,7 @@ cart_load_err_t cart_load_n64_rom_and_save (app_t *app, flashcart_progress_callb
         path_free(path);
         return CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL;
     }
-    path_push_subdir(path, SAVE_DIRECTORY_NAME);
+    push_save_subdir(path);
 
     app->flashcart_err = flashcart_load_save(path_get(path), save_type);
     if (app->flashcart_err != FLASHCART_OK) {
@@ -240,7 +273,7 @@ cart_load_err_t cart_load_emulator (app_t *app, cart_load_emu_type_t emu_type, f
         path_free(path);
         return CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL;
     }
-    path_push_subdir(path, SAVE_DIRECTORY_NAME);
+    push_save_subdir(path);
 
     app->flashcart_err = flashcart_load_save(path_get(path), save_type);
     if (app->flashcart_err != FLASHCART_OK) {

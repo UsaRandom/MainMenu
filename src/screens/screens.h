@@ -16,6 +16,7 @@ extern const screen_t SCREEN_CHEATEDIT_DEF;
 extern const screen_t SCREEN_SETTINGS_DEF;
 extern const screen_t SCREEN_PARENTAL_DEF;
 extern const screen_t SCREEN_LOCKS_DEF;
+extern const screen_t SCREEN_PROFILES_DEF;
 extern const screen_t SCREEN_CLOCK_DEF;
 extern const screen_t SCREEN_CODE_DEF;
 extern const screen_t SCREEN_LAUNCH_DEF;
@@ -23,6 +24,18 @@ extern const screen_t SCREEN_FAULT_DEF;
 
 /** @brief Populate @p table, indexed by screen_id_t. */
 void screens_register (const screen_t **table);
+
+/**
+ * @brief Is there more than one profile, and therefore a question to ask at boot?
+ *
+ * app.c uses this to decide the first screen. False is the shipped state and every state a card
+ * has ever been in before profiles existed, and it has to stay cheap to be true: the cost of this
+ * feature for somebody who never uses it must be exactly zero presses.
+ */
+bool screen_profiles_needed (void);
+
+/** @brief Mark the next entry to SCREEN_PROFILES as the boot question rather than the editor. */
+void screen_profiles_ask (void);
 
 /** @brief What the code pad is being asked for. */
 typedef enum {

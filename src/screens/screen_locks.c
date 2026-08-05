@@ -20,6 +20,7 @@
 #include "app.h"
 #include "library/cache.h"
 #include "library/library.h"
+#include "library/locks.h"
 #include "library/playstate.h"
 #include "menu/fonts.h"
 #include "menu/sound.h"
@@ -76,8 +77,9 @@ static void locks_update (app_t *app, float dt) {
     if (input_pressed(in, BTN_A)) {
         lib->records[cursor].flags ^= LIBF_LOCKED;
         /* Marked dirty rather than written, the same as a favourite: a parent going down a shelf
-         * ticking six games should cost one write on the way out, not six. */
-        playstate_touch();
+         * ticking six games should cost one write on the way out, not six. locks.dat and not
+         * playstate.dat, because the padlock is shared by every profile -- see locks.h. */
+        locks_touch();
         sound_play_effect(SFX_SETTING);
     }
 

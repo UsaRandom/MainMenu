@@ -41,7 +41,7 @@
  * instead -- upstream's writer, exercised for years, and the same one `config.ini` uses.
  *
  * **No code means no enforcement**, so deleting the file also releases the locked games. Their
- * `LIBF_LOCKED` flags stay in `playstate.dat` and come back into effect the moment a code is set
+ * `LIBF_LOCKED` flags stay in `locks.dat` and come back into effect the moment a code is set
  * again, which is what a parent recovering their own card would want. An unreadable or truncated
  * file is treated exactly like an absent one, for the same reason: the failure mode of this
  * feature has to be "the lock is off", never "the console is unusable".

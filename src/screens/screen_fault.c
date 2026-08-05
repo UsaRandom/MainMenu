@@ -78,6 +78,7 @@ void screens_register (const screen_t **table) {
     table[SCREEN_SETTINGS] = &SCREEN_SETTINGS_DEF;
     table[SCREEN_PARENTAL] = &SCREEN_PARENTAL_DEF;
     table[SCREEN_LOCKS]  = &SCREEN_LOCKS_DEF;
+    table[SCREEN_PROFILES] = &SCREEN_PROFILES_DEF;
     table[SCREEN_CLOCK]  = &SCREEN_CLOCK_DEF;
     table[SCREEN_CODE]   = &SCREEN_CODE_DEF;
     table[SCREEN_LAUNCH] = &SCREEN_LAUNCH_DEF;

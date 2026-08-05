@@ -1,0 +1,67 @@
+# Add a second player, name them, and switch to them.
+#
+# The whole feature end to end, and it has to be end to end for the same reason parental.txt does:
+# every part of this is a state machine that only means something in sequence. A roster with two
+# names in it and an active profile that never moved looks correct in any single frame.
+#
+# Note what this run does NOT prove. Under ares the storage prefix is the ROM's own DFS, which is
+# read only, so every profile_save() here fails and the roster exists only in RAM. That is the
+# documented behaviour of the whole cache layer (see library/cache.h) and it is what makes the
+# screens testable at all -- but "the roster survives a power cycle" is a claim only hardware can
+# settle. Same gap as every other written file in this program.
+#
+# It also cannot reach the interesting half of the feature. Switching profile changes which
+# playstate.dat is read and which saves/ folder a launch writes into, and neither is observable
+# from a frame: the fixture has no saved games and no favourites to lose.
+
+wait 120
+
+press start         # settings
+wait 20
+fbdump              # 1: Settings, with Players at the top reading "Player 1"
+
+press a             # -> the roster
+wait 20
+fbdump              # 2: two rows -- Player 1, and "Add a player"
+
+press down          # -> Add a player
+press a             # adds player 2 and opens the name editor on it
+wait 20
+fbdump              # 3: the name editor, twelve blank cells
+
+# Wind the first cell to A, the second to B. Up steps forward through
+# " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'!", so one press from a space is A.
+press up            # A
+press right
+press up x2         # B
+wait 20
+fbdump              # 4: "AB" typed, cursor on the second cell
+
+press a             # done
+wait 20
+fbdump              # 5: back on the list, row 2 now reads AB, and says saves/p2/
+
+press a             # play as AB
+wait 60
+fbdump              # 6: the grid, with the player chip and Z disc at the right of the tab rail
+
+# And back again, this time by Z from the grid rather than through Settings.
+press z
+wait 20
+fbdump              # 7: the roster, opened from the grid, cursor sitting on the active profile
+
+press up            # -> Player 1
+press cleft         # remove... no, this is Player 1, which cannot be removed
+wait 20
+fbdump              # 8: still the list; the refusal is a sound, not a screen
+
+press down          # -> AB
+press cleft         # remove, for real this time
+wait 20
+fbdump              # 9: the confirmation, naming AB and what happens to their saves
+
+press b             # keep them
+wait 20
+fbdump              # 10: back on the list, still two rows
+
+exit

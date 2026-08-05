@@ -64,7 +64,7 @@ typedef struct {
 #define TABRAIL_W           608
 #define TABRAIL_H           48
 #define TAB_PAD             20      /**< total horizontal padding around a tab's content */
-#define TAB_ICON            20      /**< icon box for a virtual tab that is not active */
+#define TAB_ICON            24      /**< icon box for Recent and Favourites, which are always icons */
 #define TAB_GLYPH_W         12      /**< body font advance, size 20 */
 
 #define GRID_X              16

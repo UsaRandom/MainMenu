@@ -150,6 +150,7 @@ SRCS = \
 	cheats/cheatstate.c \
 	library/cache.c \
 	library/libindex.c \
+	library/locks.c \
 	library/library.c \
 	library/playstate.c \
 	library/thumbcache.c \
@@ -160,6 +161,7 @@ SRCS = \
 	menu/parental.c \
 	menu/path.c \
 	menu/paths.c \
+	menu/profile.c \
 	menu/image_decoder.c \
 	menu/music.c \
 	menu/rom_info.c \
@@ -173,6 +175,7 @@ SRCS = \
 	screens/screen_grid.c \
 	screens/screen_launch.c \
 	screens/screen_locks.c \
+	screens/screen_profiles.c \
 	screens/screen_clock.c \
 	screens/screen_parental.c \
 	screens/screen_settings.c \

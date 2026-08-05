@@ -9,9 +9,15 @@
 #include <libdragon.h>
 
 #include "cache.h"
+#include "menu/profile.h"
 #include "playstate.h"
 
 #define PLAYSTATE_FILE  "playstate.dat"
+
+/** @brief The file this profile writes: `playstate.dat`, or `p3/playstate.dat`. See profile.h. */
+static void ps_file (char *out, size_t cap) {
+    profile_cache_name(out, cap, PLAYSTATE_FILE);
+}
 
 /** @brief One remembered game. 24 bytes, naturally aligned, no padding to guess at. */
 typedef struct __attribute__((packed)) {
@@ -25,10 +31,16 @@ typedef struct __attribute__((packed)) {
 
 /** Which record flags are the user's rather than the card's. LIBF_HAS_SAVE is derived from a file
  *  on disk and LIBF_NO_MATCH from the database, so persisting either would let a stale cache
- *  contradict what a rescan just found. The favourite and the parental lock are both genuinely
- *  the user's, and both must survive a rescan -- which is exactly what keying on the ROM header
- *  rather than the path buys. Moving a locked game to another folder must not unlock it. */
-#define PS_PERSIST_FLAGS  (LIBF_FAVORITE | LIBF_LOCKED)
+ *  contradict what a rescan just found. The favourite is genuinely the user's and must survive a
+ *  rescan -- which is exactly what keying on the ROM header rather than the path buys. */
+#define PS_PERSIST_FLAGS  (LIBF_FAVORITE)
+
+/** What is still *read* back, which is not the same set. LIBF_LOCKED used to live here and moved
+ *  to locks.dat when this file became per-profile: a padlock in a per-profile file is a padlock
+ *  that comes off by switching profile. Cards written before that still carry their locks in
+ *  here, so the bit is still honoured on the way in and simply never written again -- see
+ *  locks.h, which picks them up and rewrites them where they belong. */
+#define PS_ACCEPT_FLAGS   (PS_PERSIST_FLAGS | LIBF_LOCKED)
 
 /* Every on-disk struct's size is asserted, because the one bug this whole family of files
  * cannot survive is silent padding. A compiler that inserts two bytes somewhere writes a
@@ -64,7 +76,10 @@ void playstate_load (library_t *lib) {
     void *buf = NULL;
     uint32_t bytes = 0;
 
-    if (!cache_load(PLAYSTATE_FILE, PLAYSTATE_MAGIC, &buf, &bytes)) {
+    char file[64];
+    ps_file(file, sizeof(file));
+
+    if (!cache_load(file, PLAYSTATE_MAGIC, &buf, &bytes)) {
         return;
     }
 
@@ -83,7 +98,7 @@ void playstate_load (library_t *lib) {
             }
             lib->records[i].last_played = recs[j].last_played;
             lib->records[i].play_count  = recs[j].play_count;
-            lib->records[i].flags      |= (recs[j].flags & PS_PERSIST_FLAGS);
+            lib->records[i].flags      |= (recs[j].flags & PS_ACCEPT_FLAGS);
             applied++;
             break;
         }
@@ -107,10 +122,13 @@ bool playstate_save (const library_t *lib) {
         }
     }
 
+    char file[64];
+    ps_file(file, sizeof(file));
+
     if (n == 0) {
         /* Nothing worth remembering. Remove any older file rather than leave one that would be
          * loaded back on the next boot and re-favourite something the user just cleared. */
-        cache_drop(PLAYSTATE_FILE);
+        cache_drop(file);
         dirty = false;
         return true;
     }
@@ -133,7 +151,7 @@ bool playstate_save (const library_t *lib) {
         w++;
     }
 
-    bool ok = cache_store(PLAYSTATE_FILE, PLAYSTATE_MAGIC, recs, (uint32_t)(w * sizeof(ps_record_t)));
+    bool ok = cache_store(file, PLAYSTATE_MAGIC, recs, (uint32_t)(w * sizeof(ps_record_t)));
     free(recs);
 
     if (ok) {

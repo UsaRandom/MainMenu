@@ -32,6 +32,7 @@
 
 #include "app.h"
 #include "library/library.h"
+#include "library/locks.h"
 #include "library/playstate.h"
 #include "menu/fonts.h"
 #include "menu/parental.h"
@@ -164,7 +165,7 @@ static void submit (app_t *app) {
                  * through the pad is that the action outlives the screen that asked for it. */
                 if (act_rom_id >= 0 && app->lib != NULL && act_rom_id < app->lib->count) {
                     app->lib->records[act_rom_id].flags ^= LIBF_LOCKED;
-                    playstate_touch();
+                    locks_touch();
                 }
                 sound_play_effect(SFX_ENTER);
                 app_goto(app, on_ok);

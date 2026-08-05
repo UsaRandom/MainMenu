@@ -23,6 +23,7 @@
 #include "menu/music.h"
 #include "menu/parental.h"
 #include "menu/settings.h"
+#include "menu/profile.h"
 #include "menu/sound.h"
 #include "screens.h"
 #include "ui/draw.h"
@@ -53,7 +54,8 @@
 #define TRACK_SETTLE_S  0.30f
 
 typedef enum {
-    ROW_THEME = 0,
+    ROW_PROFILES = 0,
+    ROW_THEME,
     ROW_SFX,
     ROW_MUSIC,
     ROW_TRACK,
@@ -160,6 +162,17 @@ static void settings_update (app_t *app, float dt) {
      * not a value. So each row says what it sounds like. */
 
     switch ((row_t)cursor) {
+        case ROW_PROFILES:
+            if (toggle) {
+                sound_play_effect(SFX_SETTING);
+                /* Not behind the parental code, deliberately. A profile is not a permission --
+                 * the padlocks and the schedule apply to every profile at once and switching
+                 * cannot get round either -- so gating this would cost every family a code entry
+                 * to protect nothing. See profile.h. */
+                app_goto(app, SCREEN_PROFILES);
+                return;
+            }
+            break;
         case ROW_THEME:
             if (delta != 0 || toggle) {
                 sound_play_effect(SFX_SETTING);
@@ -170,6 +183,13 @@ static void settings_update (app_t *app, float dt) {
                  * registered state and do not. Without this the palette changes underneath
                  * text that stays the previous theme's colour. */
                 theme_apply(app->theme);
+                /* Written through to the profile, which is the first time this setting has ever
+                 * been persisted at all: before profiles existed the theme was assigned at boot
+                 * and a change survived exactly as long as the power did. Saved on the step
+                 * rather than on leaving, because profiles.ini is four short lines and the row
+                 * is not a repeat-until-it-lands control the way the volume meters are. */
+                profile_set_theme(profile_active(), app->theme->name);
+                profile_save();
             }
             break;
         case ROW_SFX: {
@@ -303,6 +323,10 @@ static void settings_render (app_t *app, surface_t *fb) {
     ui_fill(0, 64 - ACCENT_BAR, SCREEN_W, ACCENT_BAR, th->tab_underline);
     ui_label(SAFE_X, 36, SAFE_W, ALIGN_LEFT, STL_DEFAULT, "Settings");
 
+    /* First, above Theme, because the theme belongs to whoever this row names -- reading the two
+     * in order is what says so. The value is the active player, so the row answers "who am I"
+     * without being opened. */
+    draw_row(app, ROW_PROFILES, "Players", profile_name(profile_active()));
     draw_row(app, ROW_THEME, "Theme", th->name);
     draw_volume_row(app, ROW_SFX, "Sound effects", app->settings.sfx_volume);
     draw_volume_row(app, ROW_MUSIC, "Music", app->settings.music_volume);

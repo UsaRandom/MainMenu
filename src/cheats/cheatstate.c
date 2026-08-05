@@ -10,8 +10,19 @@
 
 #include "cheatstate.h"
 #include "library/cache.h"
+#include "menu/profile.h"
 
 #define CHEATSTATE_FILE "cheatstate.dat"
+
+/** @brief The file this profile writes: `cheatstate.dat`, or `p3/cheatstate.dat`.
+ *
+ *  Per profile because a cheat is a choice about how you want to play, not a fact about the card
+ *  -- one player leaving infinite lives on must not turn them on for everybody else. The database
+ *  the names come from, `cheats.db`, and any cheats the user has written themselves stay shared;
+ *  see profile.h for the whole split. */
+static void cs_file (char *out, size_t cap) {
+    profile_cache_name(out, cap, CHEATSTATE_FILE);
+}
 
 /** @brief One enabled group. 16 bytes. */
 typedef struct __attribute__((packed)) {
@@ -48,7 +59,10 @@ void cheatstate_load (void) {
 
     void *buf = NULL;
     uint32_t bytes = 0;
-    if (!cache_load(CHEATSTATE_FILE, CHEATSTATE_MAGIC, &buf, &bytes)) {
+    char file[64];
+    cs_file(file, sizeof(file));
+
+    if (!cache_load(file, CHEATSTATE_MAGIC, &buf, &bytes)) {
         return;
     }
 
@@ -161,12 +175,15 @@ bool cheatstate_save (void) {
     if (!cache_writable()) {
         return false;
     }
+    char file[64];
+    cs_file(file, sizeof(file));
+
     if (row_count == 0) {
-        cache_drop(CHEATSTATE_FILE);
+        cache_drop(file);
         dirty = false;
         return true;
     }
-    bool ok = cache_store(CHEATSTATE_FILE, CHEATSTATE_MAGIC, rows,
+    bool ok = cache_store(file, CHEATSTATE_MAGIC, rows,
                           (uint32_t)(row_count * sizeof(cs_record_t)));
     if (ok) {
         dirty = false;

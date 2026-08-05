@@ -19,10 +19,11 @@ fbdump              # 1: the settings screen itself
 # `press down x4` went on landing on it, so the suite reported byte-identical hashes for a screen
 # that had lost a third of its contents.
 #
-# Now x5, because folding the sound screen back into Settings added three rows -- effects, music
-# and track -- between Theme and Clock. This count is expected to move whenever that list does,
-# and a run that suddenly dumps the wrong screen is the count being wrong, not the screen.
-press down x5       # -> Parental controls
+# Now x6: folding the sound screen back into Settings added three rows -- effects, music and
+# track -- between Theme and Clock, and Players went in above Theme. This count is expected to
+# move whenever that list does, and a run that suddenly dumps the wrong screen is the count being
+# wrong, not the screen.
+press down x6       # -> Parental controls
 press a             # no code yet, so straight in
 wait 20
 fbdump              # 2: the panel, nothing set

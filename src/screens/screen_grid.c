@@ -24,6 +24,7 @@
 #include "app.h"
 #include "menu/fonts.h"
 #include "menu/image_decoder.h"
+#include "menu/profile.h"
 #include "menu/sound.h"
 #include "library/playstate.h"
 #include "screens.h"
@@ -242,17 +243,46 @@ static void grid_open (app_t *app, screen_id_t screen) {
 /* ------------------------------------------------------------------ chrome */
 
 /**
- * @brief Glyph for a virtual tab, drawn when it is not the active one.
+ * @brief A five-pointed star with rounded points and intersections, as horizontal runs.
  *
- * Favourites is a corner triangle, matching the badge used on a favourited tile so the two teach
- * each other. Recent is a clock. Both are built from fills rather than sprites -- two shapes did
- * not justify an asset pipeline.
+ * `{row, x, width}`, baked rather than computed. Rounding a star is a morphological closing --
+ * which rounds the five concave intersections -- followed by an opening, which blunts the five
+ * points. That is a supersampled distance operation and not something to do per frame for a
+ * glyph this size, so it was done once at 8x with a 0.4 px radius and an inner radius of 0.36.
+ *
+ * Fitted to its own bounding box rather than placed by radius. A star is 1.902 outer-radii wide
+ * and 1.809 tall, so centring it on the radius leaves two dead rows under the legs -- which at
+ * this size is most of a leg.
+ *
+ * 24 px and not TAB_ICON's old 20. Four pixels is the difference between legs that separate and
+ * legs that merge into the waist: at 20 the rounding consumed them and the shape read as a
+ * pentagon with a spike on top. The rail can afford it now that the two virtual tabs never spell
+ * themselves out -- worst case is about 444 px of 608, against 468 before.
+ */
+static const uint8_t STAR[][3] = {
+    { 2,11, 2}, { 3,11, 2}, { 4,11, 2}, { 5,10, 4}, { 6,10, 4}, { 7,10, 4},
+    { 8,10, 4}, { 9, 1,22}, {10, 2,20}, {11, 3,18}, {12, 4,16}, {13, 6,12},
+    {14, 7,10}, {15, 7,10}, {16, 7,10}, {17, 7,10}, {18, 6, 5}, {18,13, 5},
+    {19, 6, 4}, {19,14, 4}, {20, 6, 3}, {20,15, 3}, {21, 5, 2}, {21,17, 2},
+    {22, 5, 1}, {22,18, 1},
+};
+/**
+ * @brief Glyph for a virtual tab.
+ *
+ * Drawn whether the tab is active or not, unlike every other tab, which spells its label out.
+ * Recent and Favourites used to swap to text when selected and that is what broke the rail: the
+ * word FAVORITES is nine glyphs where the icon is one, so selecting it shoved everything right
+ * and ran the tabs into the player name. An icon that changes size when you look at it is a
+ * layout that moves under the cursor.
+ *
+ * Favourites is a star; Recent is a clock. Both are built from fills rather than sprites -- two
+ * shapes did not justify an asset pipeline.
  */
 static void draw_tab_icon (int x, int y, tab_t t, uint16_t c) {
     switch (t) {
         case TAB_FAVORITES:
-            for (int i = 0; i < TAB_ICON; i++) {
-                ui_fill(x, y + i, TAB_ICON - i, 1, c);
+            for (size_t i = 0; i < sizeof(STAR) / sizeof(STAR[0]); i++) {
+                ui_fill(x + STAR[i][1], y + STAR[i][0], STAR[i][2], 1, c);
             }
             break;
         case TAB_RECENT:
@@ -283,7 +313,9 @@ static void draw_tab_rail (app_t *app) {
     for (int t = 0; t < TAB_COUNT; t++) {
         bool active = (t == (int)tab);
         bool virt = (t < TAB_N64);
-        bool icon_only = virt && !active;
+        /* Not `virt && !active`. See draw_tab_icon(): a tab that grows from 20 px to a nine-letter
+         * word when selected moves every tab to its right, and the rail has a fixed width. */
+        bool icon_only = virt;
 
         const char *label = library_tab_label((tab_t)t);
         int w = icon_only ? TAB_ICON : (int)strlen(label) * TAB_GLYPH_W;
@@ -295,7 +327,11 @@ static void draw_tab_rail (app_t *app) {
         }
 
         if (icon_only) {
-            draw_tab_icon(x, TABRAIL_Y + (TABRAIL_H - TAB_ICON) / 2 - 2, (tab_t)t, th->text_dim);
+            /* text, not text_dim, when active. The underline says which tab is selected, but the
+             * two icon tabs no longer have a label to brighten, so without this they read as
+             * permanently dimmed next to the words beside them. */
+            draw_tab_icon(x, TABRAIL_Y + (TABRAIL_H - TAB_ICON) / 2 - 2, (tab_t)t,
+                          active ? th->text : th->text_dim);
         } else {
             rdpq_set_mode_standard();
             rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
@@ -304,6 +340,7 @@ static void draw_tab_rail (app_t *app) {
         }
         x += w + TAB_PAD;
     }
+
 }
 
 static void draw_footer (app_t *app) {
@@ -337,7 +374,20 @@ static void draw_footer (app_t *app) {
      * rather than "Favourite" because the same hint has to fit the detail sheet's footer beside
      * Play and Cheats. */
     hx = ui_hint(hx, FOOTER_Y + 32, ">", BTN_C_COLOR, UI_BTN_DISC, "Fav");
-    (void)ui_hint(hx, FOOTER_Y + 32, "S", BTN_START_COLOR, UI_BTN_DISC, "Settings");
+    hx = ui_hint(hx, FOOTER_Y + 32, "S", BTN_START_COLOR, UI_BTN_DISC, "Settings");
+
+    /* Who is playing, last, and only when there is more than one player. It sits in the footer
+     * rather than in the tab rail because the rail has a fixed width and no slack: a name there
+     * collided with the tabs the moment Favourites was selected.
+     *
+     * UI_BTN_TALL, matching the Cheats hint on the detail sheet. Z is a trigger under the
+     * controller, not a face button, and drawing it as another coloured disc says the wrong thing
+     * about where the finger goes -- the shape is the same information as the colour and survives
+     * being glanced at. Same button, same shape, both places. */
+    if (profile_count() > 1) {
+        (void)ui_hint(hx, FOOTER_Y + 32, "Z", BTN_Z_COLOR, UI_BTN_TALL,
+                      profile_name(profile_active()));
+    }
     if (buf[0]) {
         ui_text(SAFE_X, FOOTER_Y + 48, SAFE_W, ALIGN_RIGHT, STL_ORANGE, buf);
     }
@@ -506,6 +556,16 @@ static void grid_update (app_t *app, float dt) {
                 cursor = view_count > 0 ? view_count - 1 : 0;
             }
         }
+    }
+
+    /* Z, and only when there is somebody to switch to. Z is the one button this grid does not
+     * already spend -- A, C-right, L, R, Start and the d-pad are all taken -- and switching player
+     * is a per-session action for a family, so burying it in Settings would be wrong even though
+     * Settings also offers it. Silent when there is one profile: a button that does nothing is
+     * better unbound than bound to a screen with one row. */
+    if (input_pressed(in, BTN_Z) && profile_count() > 1) {
+        sound_play_effect(SFX_ENTER);
+        app_goto(app, SCREEN_PROFILES);
     }
 
     if (input_pressed(in, BTN_START)) {

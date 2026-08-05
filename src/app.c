@@ -14,6 +14,7 @@
 #include "cheats/usercheats.h"
 #include "library/cache.h"
 #include "library/libindex.h"
+#include "library/locks.h"
 #include "library/playstate.h"
 #include "library/thumbstore.h"
 #include "cheats/cheatdb.h"
@@ -24,6 +25,7 @@
 #include "flashcart/flashcart.h"
 #include "menu/fonts.h"
 #include "menu/music.h"
+#include "menu/profile.h"
 #include "menu/parental.h"
 #include "menu/paths.h"
 #include "menu/sound.h"
@@ -128,6 +130,11 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * on the card a user is ever told to delete by hand. See parental.h. */
     parental_load(app->storage);
 
+    /* Before cache_init(), which is fine -- profile_load() only reads an ini and clamps an index.
+     * It has to happen before playstate_load() below, because which file that reads is a function
+     * of which profile is active. */
+    profile_load(app->storage);
+
     /* The setting existed and the toggle drew, but nothing ever told the sound system about it --
      * turning sound effects off in settings changed a bool and nothing else. */
     sound_set_sfx_volume(app->settings.sfx_volume);
@@ -150,7 +157,10 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     music_start(inputscript_active() ? SCRIPT_MUSIC_TRACK : app->settings.music_track,
                 app->settings.music_volume);
 
-    app->theme = &THEME_MIDNIGHT;
+    /* The theme belongs to the person, not the console, so it comes off the active profile. Until
+     * profiles existed this was a bare assignment and the setting was never persisted at all --
+     * changing the theme in Settings lasted exactly as long as the power did. */
+    app->theme = theme_by_name(profile_theme(profile_active()));
 
     resolution_t resolution = { .width = SCREEN_W, .height = SCREEN_H,
                                 .interlaced = INTERLACE_OFF };
@@ -186,6 +196,9 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     /* After the library exists, never before: playstate is applied onto records and keys on the
      * check codes the index or the scan just produced. */
     playstate_load(app->lib);
+    /* After playstate, never before: locks_load() decides whether a card is carrying its padlocks
+     * in the old place by looking at what playstate just applied. See locks.h. */
+    locks_load(app->lib);
     cheatstate_load();
     usercheats_load();
 
@@ -199,6 +212,15 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
         app_fault(app, "Out of memory allocating the art cache.");
     }
     thumbstore_open();
+
+    /* The last thing app_init does, and it has to be: asking who is playing is only worth a
+     * screen once the library behind it exists, and app_fault() above may already have taken the
+     * next screen for itself. A single-profile card never gets here at all -- it boots to the
+     * grid, same first frame as before this feature existed. */
+    if (app->next_screen == SCREEN_GRID && screen_profiles_needed()) {
+        screen_profiles_ask();
+        app_goto(app, SCREEN_PROFILES);
+    }
 }
 
 static void app_deinit (app_t *app) {
@@ -220,6 +242,9 @@ static void app_deinit (app_t *app) {
      * not of this function, and the failure would be a null dereference on the way out. */
     if (app->lib != NULL && playstate_dirty()) {
         playstate_save(app->lib);
+    }
+    if (app->lib != NULL && locks_dirty()) {
+        locks_save(app->lib);
     }
     if (cheatstate_dirty()) {
         cheatstate_save();
