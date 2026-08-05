@@ -89,11 +89,18 @@ only work together, and offering half of one silently changes the wrong thing in
 also enter your own from the menu, which is the only option for the emulated systems and for
 anything newer than the collection.
 
-Once a code is set, **setting the console clock also asks for it**. The playing-hours window is
-measured against that clock and nothing else, so leaving it open would be leaving the window open.
-With no code set, the clock is not asked about at all.
+## Parental controls
 
-## If you forget the parental code
+The code is six presses of the C buttons. Once one is set, it is asked for before a locked game
+will start, before the parental panel opens, and **before the console clock can be set** — the
+playing-hours window is measured against that clock and nothing else, so leaving it open would be
+leaving the window open. With no code set none of that applies and nothing is enforced.
+
+Wrong tries make you wait: five seconds after the first, ten after the second, and so on up to ten
+minutes. Getting it right clears the count. Switching the console off does not — the number is on
+the card, not in memory — so there is nothing to be gained by resetting.
+
+### If you forget the code
 
 Put the card in a computer and delete **`/mainmenu/parental.ini`**. That is the whole recovery.
 
@@ -104,10 +111,6 @@ every one of those padlocks straight back.
 
 The code itself is not in there in a form anyone can read, and there is no master code. Deleting
 the file is the only way in, which is deliberate — a back door is a back door whoever finds it.
-
-Wrong tries make you wait: five seconds after the first, ten after the second, and so on up to ten
-minutes. Getting it right clears the count. Switching the console off does not — the number is on
-the card, not in memory — so there is nothing to be gained by resetting.
 
 ## Emulator cores
 
