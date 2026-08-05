@@ -1,6 +1,6 @@
 /**
  * @file screen_clock.c
- * @brief Setting the console's clock.
+ * @brief Setting the clock the cartridge keeps.
  * @ingroup screens
  *
  * Reached from Settings. Until this existed there was no way to set the time at all, which made
@@ -253,10 +253,14 @@ static void clock_render (app_t *app, surface_t *fb) {
     ui_label(LIST_X + FIELD_X[F_HOUR] + FIELD_W[F_HOUR], FIELDS_Y, 14, ALIGN_CENTER,
              STL_GRAY, ":");
 
+    /* The cartridge, not the console. A stock N64 has no clock at all -- the battery-backed one
+     * libdragon reports over Joybus is on the flashcart, which is what keeps the time when the
+     * power goes. Saying "the console's clock" pointed the reader at the wrong piece of hardware
+     * to go and check when the time comes back wrong. */
     ui_label(LIST_X, FIELDS_Y + 60, SAFE_W, ALIGN_LEFT, STL_GRAY,
              rtc_get_source() == RTC_SOURCE_NONE
-                 ? "No clock in this console: the time is lost at power off."
-                 : "Kept by the console's clock.");
+                 ? "No clock here: the time is lost at power off."
+                 : "Kept by the cartridge's clock.");
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
     int hx = ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Set");
