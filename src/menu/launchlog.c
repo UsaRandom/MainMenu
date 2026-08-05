@@ -25,8 +25,10 @@ void launchlog_init (const char *storage_prefix) {
     ready = true;
 }
 
-void launchlog_write (const char *fmt, ...) {
-    if (!ready || !cache_writable()) {
+static FILE *log_file;
+
+void launchlog_begin (void) {
+    if (!ready || !cache_writable() || log_file != NULL) {
         return;
     }
 
@@ -35,15 +37,25 @@ void launchlog_write (const char *fmt, ...) {
      * mistake profile_save() made and the host test caught. */
     directory_create(dir_path);
 
-    FILE *f = fopen(file_path, "wb");
-    if (f == NULL) {
+    log_file = fopen(file_path, "wb");
+}
+
+void launchlog_line (const char *fmt, ...) {
+    if (log_file == NULL) {
         return;
     }
 
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(f, fmt, ap);
+    vfprintf(log_file, fmt, ap);
     va_end(ap);
+    fputc('\n', log_file);
+}
 
-    fclose(f);
+void launchlog_end (void) {
+    if (log_file == NULL) {
+        return;
+    }
+    fclose(log_file);
+    log_file = NULL;
 }

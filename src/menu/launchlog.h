@@ -29,10 +29,19 @@
 void launchlog_init (const char *storage_prefix);
 
 /**
- * @brief Replace the log with one launch's worth of lines. Best-effort; failure is silent.
+ * @brief Start a fresh log, discarding the previous launch's. Best-effort; failure is silent.
  *
- * printf-style. Called once per launch, immediately before the point of no return.
+ * Open/append/close rather than one formatted call, because the interesting part of the report is
+ * the list of code lines actually handed to the engine and that is a variable number of them. The
+ * alternative was assembling the whole thing in a buffer first, which means choosing a buffer size
+ * and then silently truncating the evidence at it.
  */
-void launchlog_write (const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void launchlog_begin (void);
+
+/** @brief One line. Newline is added. No-op unless launchlog_begin() opened a file. */
+void launchlog_line (const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/** @brief Flush and close. Safe to call when nothing was opened. */
+void launchlog_end (void);
 
 #endif /* MENU_LAUNCHLOG_H__ */

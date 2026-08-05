@@ -15,13 +15,16 @@
 #include "flashcart/flashcart.h"
 #include "menu/cart_load.h"
 #include "menu/cheatcheck.h"
+#include "menu/enginetest.h"
 #include "menu/launchlog.h"
 #include "utils/fs.h"
 #include "library/playstate.h"
 #include "cheats/cheatstate.h"
 #include <time.h>
 #include "menu/fonts.h"
+#include "menu/music.h"
 #include "menu/rom_info.h"
+#include "menu/sound.h"
 #include "screens/screens.h"
 #include "ui/draw.h"
 #include "ui/theme.h"
@@ -96,6 +99,19 @@ static void draw_fade_into (surface_t *fb, float k) {
  * this is flashcart_progress_callback_t; drawing it was the bar, and the bar is gone. */
 static void on_progress (float progress) {
     (void)progress;
+
+    /* Feed the mixer. This is the only thing running during the load -- the main loop is several
+     * frames below us inside a blocking call -- so without it nothing touches the audio hardware
+     * from the moment the load starts until the game boots, and the DAC runs out of samples part
+     * way through.
+     *
+     * That underrun is the reported "sound plays for a fraction of a second" just before a game
+     * starts: an N64 whose AI is not given a new buffer does not fall silent, it keeps playing
+     * the one it has. What comes out is a fragment of the last thing mixed, repeating. The music
+     * has been faded to nothing by the time we get here, so what this feeds is silence -- which
+     * is the point. A DAC being fed silence cannot repeat anything. */
+    sound_poll();
+
     surface_t *fb = display_try_get();
     if (fb == NULL) {
         return;
@@ -293,6 +309,8 @@ static int enabled_group_count (const cheatset_t *set) {
  */
 static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
     const char *path = (app->launch.rom_path != NULL) ? path_get(app->launch.rom_path) : "?";
+    const lib_record_t *rec = (app->launch.rom_id >= 0 && app->launch.rom_id < app->lib->count)
+                            ? &app->lib->records[app->launch.rom_id] : NULL;
 
     size_t words = 0;
     if (cheats != NULL) {
@@ -307,17 +325,66 @@ static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
         snprintf(fit_detail, sizeof(fit_detail), "emulated system; the engine patches N64 code only");
     }
 
-    launchlog_write(
-        "rom      %s\n"
-        "groups   %d loaded, %d ticked\n"
-        "emitted  %u cheat words (%u lines)\n"
-        "engine   %s\n"
-        "detail   %s\n",
-        path,
-        app->cheats.group_count, enabled_group_count(&app->cheats),
-        (unsigned)words, (unsigned)(words / 2),
-        (fit == CHEATFIT_OK) ? "will hook" : "WILL NOT HOOK -- ticked cheats will do nothing",
-        fit_detail);
+    launchlog_begin();
+    launchlog_line("rom      %s", path);
+    if (rec != NULL) {
+        launchlog_line("header   %s v%u  check %08lx%08lx",
+                       rec->game_code[0] ? rec->game_code : "????", rec->version,
+                       (unsigned long)(rec->check_code >> 32),
+                       (unsigned long)(rec->check_code & 0xFFFFFFFFu));
+    }
+    launchlog_line("engine   %s -- %s",
+                   fit_detail,
+                   (fit == CHEATFIT_OK) ? "will hook"
+                                        : "WILL NOT HOOK, ticked cheats will do nothing");
+    /* The Expansion Pak line is here because build_cheat_list() silently returns NULL without it
+     * and the engine's address range does not exist below 4 MB. On the M64 it is built in, so a
+     * false here would be the single most surprising thing this file could ever say. */
+    launchlog_line("memory   %d bytes, expansion pak %s",
+                   get_memory_size(), is_memory_expanded() ? "present" : "ABSENT");
+    /* Recorded here as well as shown on the Settings screen, because the log is what survives a
+     * launch and the screen is not. If a run of this menu is booted with the self-test cheat
+     * ticked, this is the line that says which address it should have been aimed at. */
+    {
+        char probe[32];
+        enginetest_code(probe, sizeof(probe));
+        launchlog_line("selftest %s -- %s", probe,
+                       enginetest_seen() ? "the engine wrote the probe in THIS session"
+                                         : "probe untouched this session");
+    }
+    launchlog_line("database %d games; %d groups from the database, %d hand-entered",
+                   cheatdb_game_count(),
+                   app->cheats.user_first,
+                   app->cheats.group_count - app->cheats.user_first);
+    launchlog_line("groups   %d loaded, %d ticked",
+                   app->cheats.group_count, enabled_group_count(&app->cheats));
+    for (int i = 0; i < app->cheats.group_count; i++) {
+        if (app->cheats.groups[i].enabled) {
+            launchlog_line("  on     %s (%u lines)",
+                           app->cheats.groups[i].name, app->cheats.groups[i].count);
+        }
+    }
+
+    /* Every line, decoded the way the engine decodes it.
+     *
+     * This is the part worth having. A code that does nothing in game is either not reaching the
+     * engine, reaching it with the wrong address, or reaching it correctly and being a wrong code
+     * -- and those three have completely different fixes. The masked address is what
+     * cheats_get_next() actually stores: `raw & 0xA07FFFFF`, which clears the segment bits and
+     * keeps the uncached bit, so a code typed as 81xxxxxx and a code typed as A1xxxxxx end up at
+     * the same place. Printing the result rather than the input is the only way to see that. */
+    launchlog_line("emitted  %u words (%u lines)", (unsigned)words, (unsigned)(words / 2));
+    for (size_t i = 0; i + 1 < words; i += 2) {
+        uint32_t raw = cheats[i];
+        uint32_t type = (raw >> 24) & 0xFF;
+        launchlog_line("  %08lx %08lx  type %02lx -> addr %08lx value %04lx%s",
+                       (unsigned long)raw, (unsigned long)cheats[i + 1],
+                       (unsigned long)type,
+                       (unsigned long)(raw & 0xA07FFFFFu),
+                       (unsigned long)(cheats[i + 1] & 0xFFFF),
+                       (type & 1) ? " (16-bit)" : " (8-bit)");
+    }
+    launchlog_end();
 }
 
 /** @brief Load the ROM and hand off to the bootloader. Blocking; draws its own frames. */
@@ -407,11 +474,22 @@ static void launch_render (app_t *app, surface_t *fb) {
     float k = fade_t / DUR_LAUNCH_FADE;
     draw_fade_into(fb, k);
 
+    /* The music goes with the picture. It used to play at full level right up to the moment the
+     * load began and then be cut off mid-note by a blocking call -- which is both worse to listen
+     * to and the thing that left a loud fragment sitting in the audio buffers for the DAC to
+     * repeat. Fading it on the same clock as the fill means the last samples mixed before the
+     * load are already silent. */
+    music_fade(1.0f - clampf(k, 0.0f, 1.0f));
+
     /* The load does not start until the screen is actually black. It blocks for its whole
      * duration, so starting it a frame early would freeze the fade partway through and the cut
      * would read as a stutter rather than as a transition. */
     if (!started && k >= 1.0f) {
         started = true;
+        /* Nothing more to synthesise. Released here rather than in app_deinit() so the player is
+         * gone before the load, not after it: every microsecond it stays alive past this point is
+         * a microsecond something could be queued behind our back. */
+        music_stop();
         do_load(app);
     }
 }
