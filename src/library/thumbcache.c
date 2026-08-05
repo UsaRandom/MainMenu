@@ -455,23 +455,40 @@ uint32_t thumb_rows_us = 0, thumb_scan_us = 0, thumb_starts = 0, thumb_statcalls
  * claim means the pool is simply full, and since prefetch never evicts, no later pass and no
  * later frame can do better until something frees a slot -- which only an eviction or a new
  * want does, and both clear the flag.
+ *
+ * A cached-only pass never goes quiet either, whichever pass it is in: it declines to decode, so
+ * "nothing more I can do" is a statement about this mode and not about the queue. Letting it set
+ * the flag would silence the full run that follows the scroll and leave the grid unfilled until
+ * the next want cleared it.
  */
-static bool no_slot (thumbcache_t *tc, bool visible_only, uint32_t scan_t0) {
-    if (!visible_only) {
+static bool no_slot (thumbcache_t *tc, bool may_go_idle, uint32_t scan_t0) {
+    if (may_go_idle) {
         tc->idle = true;
     }
     thumb_scan_us += TIMER_MICROS(TICKS_SINCE(scan_t0));
     return false;
 }
 
-bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
+/**
+ * @brief One unit of work: poll a decode in flight, or start/fetch exactly one tile.
+ *
+ * @p cached_only restricts it to the atlas -- fetch what is already in thumbs.pak and never open
+ * a PNG. That is the mode the grid uses while the cursor is moving; see thumbcache_run_cached().
+ */
+static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool cached_only) {
     if (tc->decoding_slot >= 0) {
-        uint32_t t0 = TICKS_READ();
-        image_decoder_poll_budget(budget_us);
-        uint32_t took = TIMER_MICROS(TICKS_SINCE(t0));
-        tc->decoded_us += took;
-        thumb_rows_us += took;
-        return true;
+        /* A decode in flight is the one thing cached mode must not touch: advancing it is what
+         * costs the frame. Falling through instead is safe -- an atlas fetch goes nowhere near
+         * the decoder -- so a scroll that begins mid-decode still fills from thumbs.pak while the
+         * half-finished PNG waits for the cursor to settle. */
+        if (!cached_only) {
+            uint32_t t0 = TICKS_READ();
+            image_decoder_poll_budget(budget_us);
+            uint32_t took = TIMER_MICROS(TICKS_SINCE(t0));
+            tc->decoded_us += took;
+            thumb_rows_us += took;
+            return true;
+        }
     }
     /* Nothing pending anywhere: skip the walk entirely.
      *
@@ -542,7 +559,7 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
             if (thumbstore_available()) {
                 int slot = claim_slot(tc, lib, (uint16_t)i, visible_only);
                 if (slot < 0) {
-                    return no_slot(tc, visible_only, scan_t0);
+                    return no_slot(tc, !visible_only && !cached_only, scan_t0);
                 }
                 surface_t *cached = malloc(sizeof(surface_t));
                 if (cached != NULL) {
@@ -571,6 +588,13 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
                 tc->slots[slot].rom_id = 0xFFFF;
             }
 
+            /* Not in the atlas, so the only way to get it is to decode it -- which is exactly
+             * what this mode exists not to do. Left ART_PENDING so the full run picks it up the
+             * moment the cursor settles. */
+            if (cached_only) {
+                continue;
+            }
+
             if (!allow_costly && art_bytes > THUMB_CHEAP_BYTES) {
                 rec->art_state = ART_COSTLY;  /* measured once; a later pass will take it */
                 continue;
@@ -578,7 +602,7 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
 
             int slot = claim_slot(tc, lib, (uint16_t)i, visible_only);
             if (slot < 0) {
-                return no_slot(tc, visible_only, scan_t0);
+                return no_slot(tc, !visible_only, scan_t0);
             }
 
             snprintf(tc->decoding_src, sizeof(tc->decoding_src), "%s", path);
@@ -602,8 +626,35 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
         }
     }
 
-    /* Four full passes found nothing startable. Stay quiet until something changes. */
-    tc->idle = true;
+    /* Four full passes found nothing startable. Stay quiet until something changes -- unless this
+     * was a cached-only pass, which declined to decode and therefore has not established that
+     * there is nothing to do. */
+    if (!cached_only) {
+        tc->idle = true;
+    }
     thumb_scan_us += TIMER_MICROS(TICKS_SINCE(scan_t0));
     return false;
+}
+
+bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
+    return run_once(tc, lib, budget_us, false);
+}
+
+bool thumbcache_run_cached (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
+    if (!thumbstore_available()) {
+        return false;
+    }
+    /* Keep going while there is budget, because one tile per call is not enough to keep up with
+     * a scroll: a row is four tiles and the cursor crosses one about every twelve frames on a
+     * held direction. One fetch per frame fills a row in four -- by which time the row after it
+     * is on screen and the grid is permanently one row behind the eye. */
+    bool any = false;
+    uint32_t t0 = TICKS_READ();
+    while (TIMER_MICROS(TICKS_SINCE(t0)) < budget_us) {
+        if (!run_once(tc, lib, 0, true)) {
+            break;
+        }
+        any = true;
+    }
+    return any;
 }
