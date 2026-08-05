@@ -345,7 +345,6 @@ def main():
     emit(root, os.path.join("menu", "config.ini"),
          b"[menu]\n"
          b"default_directory=/roms\n"
-         b"use_saves_folder=true\n"
          b"pal60_enabled=false\n")
     emit(root, os.path.join("saves", ".gitkeep"), b"")
 

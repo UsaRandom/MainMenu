@@ -715,7 +715,7 @@ def main():
             n_emu += 1
 
     emit(root, os.path.join("menu", "config.ini"),
-         b"[menu]\ndefault_directory=/roms\nuse_saves_folder=true\npal60_enabled=false\n")
+         b"[menu]\ndefault_directory=/roms\npal60_enabled=false\n")
     emit(root, os.path.join("saves", ".gitkeep"), b"")
     for core in ("neon64bu.rom", "lithium64.z64", "gb.v64", "gbc.v64", "smsPlus64.z64"):
         emit(root, os.path.join("menu", "emulators", core),

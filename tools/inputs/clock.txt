@@ -1,0 +1,38 @@
+# Set the console clock, and check the settings row agrees afterwards.
+#
+# Under ares there is no RTC hardware, so rtc_get_source() is RTC_SOURCE_NONE and this is
+# libdragon's software clock: settable, correct until power off, gone afterwards. That is enough to
+# exercise everything this screen does except persistence, which is the one part no emulator can
+# answer -- see AUDIT.md 4.
+#
+# The screen reads the clock back after setting it rather than trusting the write, because the only
+# writability check libdragon offers is a deprecated inline `return true`.
+
+wait 140
+
+press start         # settings
+wait 25
+fbdump              # 1: the settings screen, Clock reading whatever the console booted with
+
+press down x2       # -> Clock
+press a
+wait 25
+fbdump              # 2: the fields, seeded
+
+press up x2         # year
+press right
+press up x5         # month -> Jun
+press right
+press up x9         # day
+press right
+press up x14        # hour
+press right
+press up x30        # minute
+wait 20
+fbdump              # 3: a date nobody would arrive at by accident
+
+press a             # set it, and read it back
+wait 30
+fbdump              # 4: back on settings, the Clock row showing what was just set
+
+exit

@@ -27,8 +27,6 @@ typedef enum {
     CART_LOAD_ERR_ROM_LOAD_FAIL,
     /** @brief Failed to load the save correctly. */
     CART_LOAD_ERR_SAVE_LOAD_FAIL,
-    /** @brief Failed to set the next boot mode. */
-    CART_LOAD_ERR_BOOT_MODE_FAIL,
     /** @brief The 64DD is available for use. */
     CART_LOAD_ERR_64DD_PRESENT,
     /** @brief Failed to find the 64DD IPL (BIOS) file. */
@@ -47,8 +45,6 @@ typedef enum {
     CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL,
     /** @brief There was not enough system memory available (expected an Expansion PAK). */
     CART_LOAD_ERR_EXP_PAK_NOT_FOUND,
-    /** @brief An unexpected response. */
-    CART_LOAD_ERR_FUNCTION_NOT_SUPPORTED,
 } cart_load_err_t;
 
 /** @brief Cart load type enumeration */

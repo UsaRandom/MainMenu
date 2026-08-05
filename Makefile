@@ -165,6 +165,7 @@ SRCS = \
 	screens/screen_grid.c \
 	screens/screen_launch.c \
 	screens/screen_locks.c \
+	screens/screen_clock.c \
 	screens/screen_parental.c \
 	screens/screen_settings.c \
 	screens/screen_fault.c \

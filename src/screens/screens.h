@@ -16,6 +16,7 @@ extern const screen_t SCREEN_CHEATEDIT_DEF;
 extern const screen_t SCREEN_SETTINGS_DEF;
 extern const screen_t SCREEN_PARENTAL_DEF;
 extern const screen_t SCREEN_LOCKS_DEF;
+extern const screen_t SCREEN_CLOCK_DEF;
 extern const screen_t SCREEN_CODE_DEF;
 extern const screen_t SCREEN_LAUNCH_DEF;
 extern const screen_t SCREEN_FAULT_DEF;

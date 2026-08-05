@@ -81,7 +81,6 @@ char *cart_load_convert_error_message (cart_load_err_t err) {
         case CART_LOAD_OK: return "Cart load OK";
         case CART_LOAD_ERR_ROM_LOAD_FAIL: return "Error occured during ROM loading";
         case CART_LOAD_ERR_SAVE_LOAD_FAIL: return "Error occured during save loading";
-        case CART_LOAD_ERR_BOOT_MODE_FAIL: return "Error occured during boot mode setting";
         case CART_LOAD_ERR_64DD_PRESENT: return "64DD accessory is connected to the N64";
         case CART_LOAD_ERR_64DD_IPL_NOT_FOUND: return "Required 64DD IPL file was not found";
         case CART_LOAD_ERR_64DD_IPL_LOAD_FAIL: return "Error occurred during 64DD IPL loading";
@@ -91,7 +90,6 @@ char *cart_load_convert_error_message (cart_load_err_t err) {
         case CART_LOAD_ERR_EMU_ROM_LOAD_FAIL: return "Error occurred during emulated ROM loading";
         case CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL: return "Couldn't create saves subdirectory";
         case CART_LOAD_ERR_EXP_PAK_NOT_FOUND: return "Mandatory Expansion Pak accessory was not found";
-        case CART_LOAD_ERR_FUNCTION_NOT_SUPPORTED: return "Your flashcart doesn't support required functionality";
         default: return "Unknown error [CART_LOAD]";
     }
 }
@@ -102,6 +100,11 @@ char *cart_load_convert_error_message (cart_load_err_t err) {
  * Takes app_t and reads what it needs out of app->launch, rather than reaching into a browser
  * cursor. That is the whole coupling this file had to the old UI: it wanted "the entry the file
  * list is sitting on", which does not exist in a grid of games.
+ *
+ * Nothing here calls flashcart_set_next_boot_mode(). The cart stays pointed at the menu, so the
+ * console's Reset button always comes back here. The setting that changed this claimed to be
+ * "fast reboot back to the menu" and did the exact opposite -- it set BOOT_MODE_ROM, which makes
+ * Reset re-run the game and leaves no way back to the menu short of a power cycle.
  */
 cart_load_err_t cart_load_n64_rom_and_save (app_t *app, flashcart_progress_callback_t progress) {
     path_t *path = path_clone(app->launch.rom_path);
@@ -115,36 +118,23 @@ cart_load_err_t cart_load_n64_rom_and_save (app_t *app, flashcart_progress_callb
         return CART_LOAD_ERR_ROM_LOAD_FAIL;
     }
 
+    /* Saves go in a saves/ folder beside the ROM, always -- the setting that used to switch this
+     * off is gone and this was its default, so no existing card changes behaviour. Beside the ROM
+     * rather than one folder for the whole card, because the save is named after the ROM file and
+     * a single shared folder would hand two differently-filed copies of the same game one .sav
+     * between them. */
     path_ext_replace(path, "sav");
-    if (app->settings.use_saves_folder) {
-        if ((save_type != FLASHCART_SAVE_TYPE_NONE) && create_saves_subdirectory(path)) {
-            path_free(path);
-            return CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL;
-        }
-        path_push_subdir(path, SAVE_DIRECTORY_NAME);
+    if ((save_type != FLASHCART_SAVE_TYPE_NONE) && create_saves_subdirectory(path)) {
+        path_free(path);
+        return CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL;
     }
+    path_push_subdir(path, SAVE_DIRECTORY_NAME);
 
     app->flashcart_err = flashcart_load_save(path_get(path), save_type);
     if (app->flashcart_err != FLASHCART_OK) {
         path_free(path);
         return CART_LOAD_ERR_SAVE_LOAD_FAIL;
     }
-
-#ifndef FEATURE_AUTOLOAD_ROM_ENABLED
-    if (app->settings.rom_fast_reboot_enabled) {
-        if (!flashcart_has_feature(FLASHCART_FEATURE_ROM_REBOOT_FAST)) {
-            /* Leaked `path` before this. The only return in the function that did not free it,
-             * and reachable only with fast reboot turned on against a cart that lacks it. */
-            path_free(path);
-            return CART_LOAD_ERR_FUNCTION_NOT_SUPPORTED;
-        }
-        app->flashcart_err = flashcart_set_next_boot_mode(FLASHCART_REBOOT_MODE_ROM);
-        if (app->flashcart_err != FLASHCART_OK) {
-            path_free(path);
-            return CART_LOAD_ERR_BOOT_MODE_FAIL;
-        }
-    }
-#endif
 
     path_free(path);
 
@@ -243,13 +233,11 @@ cart_load_err_t cart_load_emulator (app_t *app, cart_load_emu_type_t emu_type, f
     }
 
     path_ext_replace(path, "sav");
-    if (app->settings.use_saves_folder) {
-        if ((save_type != FLASHCART_SAVE_TYPE_NONE) && create_saves_subdirectory(path)) {
-            path_free(path);
-            return CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL;
-        }
-        path_push_subdir(path, SAVE_DIRECTORY_NAME);
+    if ((save_type != FLASHCART_SAVE_TYPE_NONE) && create_saves_subdirectory(path)) {
+        path_free(path);
+        return CART_LOAD_ERR_CREATE_SAVES_SUBDIR_FAIL;
     }
+    path_push_subdir(path, SAVE_DIRECTORY_NAME);
 
     app->flashcart_err = flashcart_load_save(path_get(path), save_type);
     if (app->flashcart_err != FLASHCART_OK) {

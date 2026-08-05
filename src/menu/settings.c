@@ -15,7 +15,6 @@ static settings_t init = {
     .force_progressive_scan = false,
     .show_protected_entries = false,
     .default_directory = "/",
-    .use_saves_folder = true,
     .show_saves_folder = false,
     .show_save_files = false,
     .show_cheat_files = false,
@@ -27,9 +26,7 @@ static settings_t init = {
     .rom_autoload_path = "",
     .rom_autoload_filename = "",
     .loading_progress_bar_enabled = true,
-#else
-    .rom_fast_reboot_enabled = false,
-#endif    
+#endif
     /* Beta feature flags (should always init to default) */
     .show_browser_file_extensions = true,
     .show_browser_rom_tags = true,
@@ -63,7 +60,6 @@ void settings_load (settings_t *settings) {
     settings->show_protected_entries = ini_get_bool(ini, "menu", "show_protected_entries", init.show_protected_entries);
     free(settings->default_directory);
     settings->default_directory = strdup(ini_get_string(ini, "menu", "default_directory", init.default_directory));
-    settings->use_saves_folder = ini_get_bool(ini, "menu", "use_saves_folder", init.use_saves_folder);
     settings->show_saves_folder = ini_get_bool(ini, "menu", "show_saves_folder", init.show_saves_folder);
     settings->show_save_files = ini_get_bool(ini, "menu", "show_save_files", init.show_save_files);
     settings->show_cheat_files = ini_get_bool(ini, "menu", "show_cheat_files", init.show_cheat_files);
@@ -78,8 +74,6 @@ void settings_load (settings_t *settings) {
     free(settings->rom_autoload_filename);
     settings->rom_autoload_filename = strdup(ini_get_string(ini, "autoload", "rom_filename", init.rom_autoload_filename));
     settings->loading_progress_bar_enabled = ini_get_bool(ini, "menu", "loading_progress_bar_enabled", init.loading_progress_bar_enabled);
-#else
-    settings->rom_fast_reboot_enabled = ini_get_bool(ini, "menu", "reboot_rom_enabled", init.rom_fast_reboot_enabled);
 #endif
     /* Beta feature flags, they might not be in the file */
     settings->show_browser_file_extensions = ini_get_bool(ini, "menu", "show_browser_file_extensions", init.show_browser_file_extensions);
@@ -113,7 +107,6 @@ void settings_save (settings_t *settings) {
     ini_set_bool(ini, "menu", "force_progressive_scan", settings->force_progressive_scan);
     ini_set_bool(ini, "menu", "show_protected_entries", settings->show_protected_entries);
     ini_set_string(ini, "menu", "default_directory", settings->default_directory);
-    ini_set_bool(ini, "menu", "use_saves_folder", settings->use_saves_folder);
     ini_set_bool(ini, "menu", "show_saves_folder", settings->show_saves_folder);
     ini_set_bool(ini, "menu", "show_save_files", settings->show_save_files);
     ini_set_bool(ini, "menu", "show_cheat_files", settings->show_cheat_files);
@@ -125,8 +118,6 @@ void settings_save (settings_t *settings) {
     ini_set_string(ini, "autoload", "rom_path", settings->rom_autoload_path);
     ini_set_string(ini, "autoload", "rom_filename", settings->rom_autoload_filename);
     ini_set_bool(ini, "menu", "loading_progress_bar_enabled", settings->loading_progress_bar_enabled);
-#else
-    ini_set_bool(ini, "menu", "reboot_rom_enabled", settings->rom_fast_reboot_enabled);
 #endif
 
     ini_set_string(ini, "parental", "code",

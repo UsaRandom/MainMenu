@@ -51,6 +51,7 @@ typedef enum {
     SCREEN_SETTINGS,
     SCREEN_PARENTAL,   /**< the parent's panel; itself behind the code once one is set */
     SCREEN_LOCKS,      /**< the library, with a padlock per title */
+    SCREEN_CLOCK,      /**< setting the date and time; see screen_clock.c */
     SCREEN_CODE,       /**< the button-code pad; see screen_code_ask() */
     SCREEN_LAUNCH,
     SCREEN_FAULT,

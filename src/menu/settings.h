@@ -28,10 +28,7 @@ typedef struct {
     /** @brief Default directory to navigate to when menu loads */
     char *default_directory;
 
-    /** @brief Put saves into separate directory */
-    bool use_saves_folder;
-
-    /** @brief Show saves folder in file browser */ 
+    /** @brief Show saves folder in file browser */
     bool show_saves_folder;
 
     /** @brief Show save files in file browser */
@@ -87,9 +84,6 @@ typedef struct {
     
     /** @brief Show progress bar when loading a ROM */
     bool loading_progress_bar_enabled;
-#else
-    /** @brief Enable the ability to bypass the menu and instantly load a ROM on reset button */
-    bool rom_fast_reboot_enabled;
 #endif
 
 } settings_t;

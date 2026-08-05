@@ -13,6 +13,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <libdragon.h>
 
 #include "app.h"
@@ -33,9 +34,8 @@
 
 typedef enum {
     ROW_THEME = 0,
-    ROW_SAVES_FOLDER,
-    ROW_FAST_REBOOT,
     ROW_SOUNDFX,
+    ROW_CLOCK,
     ROW_PARENTAL,
     ROW_COUNT,
 } row_t;
@@ -100,20 +100,16 @@ static void settings_update (app_t *app, float dt) {
                 theme_apply(app->theme);
             }
             break;
-        case ROW_SAVES_FOLDER:
-            if (toggle || delta != 0) {
-                app->settings.use_saves_folder = !app->settings.use_saves_folder;
-            }
-            break;
-        case ROW_FAST_REBOOT:
-            if (toggle || delta != 0) {
-                app->settings.rom_fast_reboot_enabled = !app->settings.rom_fast_reboot_enabled;
-            }
-            break;
         case ROW_SOUNDFX:
             if (toggle || delta != 0) {
                 app->settings.soundfx_enabled = !app->settings.soundfx_enabled;
                 sound_use_sfx(app->settings.soundfx_enabled);
+            }
+            break;
+        case ROW_CLOCK:
+            if (toggle) {
+                app_goto(app, SCREEN_CLOCK);
+                return;
             }
             break;
         case ROW_PARENTAL:
@@ -162,12 +158,21 @@ static void settings_render (app_t *app, surface_t *fb) {
     ui_label(SAFE_X, 36, SAFE_W, ALIGN_LEFT, STL_DEFAULT, "Settings");
 
     draw_row(app, ROW_THEME, "Theme", th->name);
-    draw_row(app, ROW_SAVES_FOLDER, "Keep saves in a saves/ folder",
-             app->settings.use_saves_folder ? "Yes" : "No");
-    draw_row(app, ROW_FAST_REBOOT, "Fast reboot back to the menu",
-             app->settings.rom_fast_reboot_enabled ? "Yes" : "No");
     draw_row(app, ROW_SOUNDFX, "Sound effects",
              app->settings.soundfx_enabled ? "Yes" : "No");
+
+    /* The row shows the clock rather than the word "Clock" twice, because "is it right" is the
+     * only question anyone opens this for. An unset clock reads as 1970 and saying so is more use
+     * than "Not set" -- it tells the reader the console is answering, just wrongly. */
+    time_t now = time(NULL);
+    struct tm *lt = localtime(&now);
+    if (lt != NULL && lt->tm_year + 1900 >= 2000) {
+        strftime(buf, sizeof(buf), "%d %b %Y  %H:%M", lt);
+    } else {
+        snprintf(buf, sizeof(buf), "Not set");
+    }
+    draw_row(app, ROW_CLOCK, "Clock", buf);
+
     draw_row(app, ROW_PARENTAL, "Parental controls",
              parental_code_set(&app->settings) ? "On" : "Off");
 
@@ -188,11 +193,6 @@ static void settings_render (app_t *app, surface_t *fb) {
     }
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Cheat database");
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
-    y += 24;
-
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Storage");
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY,
-             app->storage != NULL ? app->storage : "none");
     y += 24;
 
     snprintf(buf, sizeof(buf), "%s  %s", MENU_VERSION, BUILD_TIMESTAMP);
