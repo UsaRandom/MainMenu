@@ -73,6 +73,98 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
+## 2a. The write path answered by reading the firmware instead of guessing
+
+`Polprzewodnikowy/SummerCart64` @ `a1e7996` (`v2.20.2-25-ga1e7996`), cloned to
+`../SummerCart64`. The standing question — *can the menu write to the SD card* — is answerable
+from source, and the answer is **yes, and it needs nothing the read path does not already have.**
+
+### The chain, top to bottom
+
+| layer | what it does | verdict |
+|---|---|---|
+| `flashcart.c:157` | `debug_init_sdfs("sd:/", -1)` | mounts FatFs on the cart's SD |
+| `libdragon/src/fatfs/ffconf.h:14` | `FF_FS_READONLY 0`, `FF_FS_MINIMIZE 0` | writes and `f_unlink` compiled in |
+| `libdragon/src/fat.c:493` | `newlib_fs->mkdir = __fat_mkdir` → `f_mkdir` | `directory_create()` can make `menu/cache` |
+| `libdragon/src/debug.c:215` | `fat_disk_write_sd` → `cart_card_wr_dram` | FatFs's `disk_write` is real, not a stub |
+| `libcart/cart.c:1759` | `sc_card_wr_dram`: DMA to `SC_BUFFER_REG`, then `SD_SECTOR_SET` + `SD_WRITE`, 16 sectors at a time | handles unaligned buffers via `__cart_buf` |
+| `libcart/cart.c:100` | `__cart_dma_wr` does `data_cache_hit_writeback` first | **no manual cache flush needed in our code** |
+| `sw/controller/src/cfg.c:725` | `CMD_ID_SD_WRITE` — count `< 0x800000`, source in `SDRAM\|FLASH\|BRAM`, `sd_get_lock(SD_LOCK_N64)` | |
+| `sw/controller/src/sd.c:533` | `sd_write_sectors` — CMD25 multi-block, CMD12 stop | |
+
+**The decisive detail is that `CMD_ID_SD_READ` and `CMD_ID_SD_WRITE` are gated on the same
+`sd_get_lock(SD_LOCK_N64)`, translate their address the same way, and share the same count limit.**
+The lock is taken once by `SD_OP_INIT`, which `libcart`'s `sc_card_init()` issues and which
+`fat_disk_initialize_sd` calls at mount. So there is no separate permission, no config flag and no
+extra initialisation for writing. **If the menu can enumerate the card, it can write to it.** The
+only way to hold the lock away from the N64 is `SD_LOCK_USB`, i.e. the deployer talking to the
+cart at the same time.
+
+### "Every write is soft" — verified, not asserted
+
+CLAUDE.md claims every write fails softly. That was a claim about our own code, and it depended on
+an assumption about the layer underneath. `CART_ABORT()` is
+`{__cart_acs_rel(); return -1;}` (`libcart/cart.c:29`) — it releases the bus and **returns an
+error**. It does not hang, assert or reset. So a card pulled mid-write propagates
+`-1` → `RES_ERROR` → `FR_DISK_ERR` → a short `fwrite` → `cache_store()` deletes the partial file
+and returns false → the menu carries on. The discipline holds all the way down to the cart.
+
+### Two things worth knowing before hardware
+
+- **The menu refuses firmware older than 2.17.0.** `sc64.c:28-30` requires major == 2 and
+  minor >= 17, and returns `FLASHCART_ERR_OUTDATED` otherwise — which lands on the fault screen,
+  not the grid. Upstream's HEAD is 2.20.2, so any recently-shipped cart is fine, but **reading the
+  firmware version is the cheapest possible first hardware check** and it explains one whole class
+  of "it does not boot".
+- **`sc64_init` waits on `writeback_pending` with no timeout** (`sc64.c:279-285`). It does
+  terminate: `writeback_process()` clears `pending` unconditionally after an SD writeback attempt
+  and disables writeback outright if the card is gone (`writeback.c:163-184`), and the delay is
+  `WRITEBACK_DELAY_MS` = 1000. So worst case is about a second. Only the USB writeback mode can
+  spin, and the menu never enables it.
+
+### A shared buffer that is safe for a reason, not by design
+
+`SC_BUFFER_REG` in libcart is `0x1FFE0000`. `SC64_BUFFERS_BASE` in our own driver is
+`0x1FFE0000`. **They are the same 8 KB of cart BRAM**, so every FatFs transfer reuses the exact
+memory `sc64_set_save_writeback()` stages the save's sector table in.
+
+That is safe, twice over, and neither reason is obvious from our side:
+
+1. `sc64_set_save_writeback()` builds the table in a **stack** array first — `fatfs_get_file_sectors`
+   does its own SD reads through that BRAM while walking the cluster chain — and only DMAs it into
+   the buffer immediately before enabling writeback.
+2. `writeback_load_sector_table()` (`writeback.c:127`) does `fpga_mem_read` into the MCU's own
+   `p.sectors` **at once**. Once `WRITEBACK_SD_INFO` returns, the buffer is free.
+
+This matters to us specifically because of an ordering we introduced: `app_deinit()` writes
+`library.idx`, `playstate.dat`, `cheatstate.dat` and `usercheats.dat` **after** `do_load()` has
+already armed writeback and staged the ROM. Every one of those writes runs through that same
+buffer. Had the MCU read the table lazily, each launch of a game with a save would have written
+save data to sector numbers taken from whatever our last cache write left behind. It does not, so
+this is a note and not a bug — but it is a dependency on upstream firmware behaviour that nothing
+in our tree records, and it would break silently if it ever changed.
+
+The sizes agree, checked rather than assumed: `SAVE_WRITEBACK_MAX_SECTORS` 256 (`flashcart_utils.h:16`)
+× 4 bytes = 1024 = `WRITEBACK_SECTOR_TABLE_SIZE` (`writeback.h:9`) = `SAVE_MAX_SECTOR_COUNT` 256
+(`writeback.c:10`).
+
+### One asymmetry in libdragon, latent for us
+
+`fat_disk_read_sd` dispatches on where the buffer lives — RDRAM below `0x00800000` goes to
+`cart_card_rd_dram`, a PI-accessible address to `cart_card_rd_cart`. `fat_disk_write_sd` has no
+such dispatch and always calls `cart_card_wr_dram`. Writing *from* cart SDRAM through FatFs
+therefore does not work. Nothing here does that — FatFs writes from its own RDRAM buffers — so it
+is recorded rather than worked around. Note also that the RDRAM test is `< 0x00800000`, exactly
+8 MB, which is the whole of an expanded machine and therefore fine on the M64.
+
+**What this does NOT establish.** That the card can be written says nothing about throughput. The
+streaming budget in the thumbnail design is still the one number ares cannot give us, and
+`tools/hosttest/run.sh` still only proves the formats round-trip on a PC. Reading the firmware
+moved the question from *"is it possible"* to *"how fast, and does our code get it right"* — the
+second half of 1r is unchanged.
+
+---
+
 ## 1z. Parental controls, hand-entered cheats, a crash on any title containing `^`, and a hash gate that could not tell code size from drawing
 
 Four things, found in that order, each while doing the one before it.
@@ -2206,6 +2298,12 @@ Unverified. No M64 hardware or documentation has been consulted for this repo.
 4. **Does the M64's RDP match the real RDP for the scaled texture-rectangle path?** The grid leans
    on it for every tile.
 5. **Does the built-in Controller Pak present as a standard joybus mempak?**
+6. **What firmware is on the cart?** Not an M64 question, and the cheapest one to answer. The menu
+   refuses anything below 2.17.0 and lands on the fault screen — see 2a.
+
+~~**Can the menu write to the SD card at all?**~~ — answered by reading the SC64 firmware and
+libcart rather than by testing: yes, and the write path needs nothing the read path does not
+already have. See 2a. What remains open is throughput, not capability.
 
 ---
 

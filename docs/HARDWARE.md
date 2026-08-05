@@ -234,9 +234,21 @@ the interlace-versus-progressive A/B in DESIGN.md gets settled by necessity rath
 
 ## Things that will only fail on hardware
 
-- **Writes.** Nothing in this build writes to the card, because ares' DFS is read-only and a
-  write path that has never executed is not a feature. The thumbnail cache, play history and
-  cheat selections all land here. Expect the first write attempt to find something.
+- **Writes.** Nothing in this build has *executed* a write, because ares' DFS is read-only. The
+  thumbnail cache, play history, parental locks and cheat selections all land here, and the first
+  real attempt should be expected to find something.
+
+  What is no longer in doubt is whether it is *possible*. The chain was read end to end against
+  `SummerCart64` @ `a1e7996` and libdragon's own FatFs glue, and `CMD_ID_SD_READ` and
+  `CMD_ID_SD_WRITE` sit behind the same `sd_get_lock(SD_LOCK_N64)`, the same address translation
+  and the same count limit — so a menu that can list your games has everything it needs to write.
+  `CART_ABORT()` returns `-1` rather than hanging, so a failure propagates to `cache_store()` and
+  is dropped softly. Full trace in [AUDIT.md 2a](AUDIT.md).
+
+  One consequence worth carrying into the first session: `app_deinit()` writes every cache file
+  **after** `do_load()` has armed save writeback, and both use the same 8 KB of cart BRAM at
+  `0x1FFE0000`. That is safe only because the firmware copies the sector table out immediately.
+  **If saves come back corrupted after a launch, that is the first place to look.**
 - **The Controller Pak.** The M64 has one built in. Whether it presents as a standard joybus
   mempak is unverified.
 - **`is_memory_expanded()`.** Assumed true, and the cheat engine's address range depends on it.
