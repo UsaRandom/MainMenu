@@ -68,7 +68,7 @@ flashcart this fork no longer supports.
 * [libdragon](https://github.com/DragonMinded/libdragon/tree/preview) - [UNLICENSE License](https://github.com/DragonMinded/libdragon/blob/preview/LICENSE.md)
 * [libspng](https://github.com/randy408/libspng) - [BSD 2-Clause License](https://github.com/randy408/libspng/blob/master/LICENSE)
 * [miniz](https://github.com/richgel999/miniz) - [MIT License](https://github.com/richgel999/miniz/blob/master/LICENSE)
-* [minimp3](https://github.com/lieff/minimp3) - [CC0 1.0 Universal](https://github.com/lieff/minimp3/blob/master/LICENSE) — still vendored as a submodule, no longer compiled
+* [midi64](src/libs/midi64) - [MIT License](src/libs/midi64/LICENSE) — vendored, not a submodule
 
 ## Sounds
 See [License](https://pixabay.com/en/service/license-summary/) for the following sounds:
@@ -76,8 +76,10 @@ See [License](https://pixabay.com/en/service/license-summary/) for the following
 * [Actions (Enter, Back) sound](https://pixabay.com/en/sound-effects/menu-button-user-interface-pack-190041/) by Liecio (Free to use)
 * [Error sound](https://pixabay.com/en/sound-effects/error-call-to-attention-129258/) by Universfield (Free to use)
 
-See [License](https://creativecommons.org/licenses/by/4.0/) for the following sounds:
-* [Background Music](https://www.playonloop.com/2017-music-loops/flying-dreams/) POL-flying-dreams-short
+## Music
+The 28 songs in [`assets/music/`](assets/music/) are CC0. They are MIDI, not recordings: the
+menu holds the notes and synthesises them as it plays, which is why a soundtrack that long costs
+296 KB.
 
 ## Emulators
 * [neon64v2](https://github.com/hcs64/neon64v2) by *hcs64* - [ISC License](https://github.com/hcs64/neon64v2/blob/master/LICENSE.txt)
