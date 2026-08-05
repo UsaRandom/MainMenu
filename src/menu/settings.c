@@ -34,6 +34,11 @@ static settings_t init = {
     .show_browser_file_extensions = true,
     .show_browser_rom_tags = true,
     .rumble_enabled = false,
+    /* No code, and a window that would be a bedtime rule if one were ever switched on. */
+    .parental_code = "",
+    .parental_hours_enabled = false,
+    .parental_hour_from = 8,
+    .parental_hour_to = 20,
 };
 
 
@@ -81,6 +86,21 @@ void settings_load (settings_t *settings) {
     settings->show_browser_rom_tags = ini_get_bool(ini, "menu", "show_browser_rom_tags", init.show_browser_rom_tags);
     settings->rumble_enabled = ini_get_bool(ini, "menu_beta_flag", "rumble_enabled", init.rumble_enabled);
 
+    free(settings->parental_code);
+    settings->parental_code = strdup(ini_get_string(ini, "parental", "code", init.parental_code));
+    settings->parental_hours_enabled = ini_get_bool(ini, "parental", "hours_enabled", init.parental_hours_enabled);
+    settings->parental_hour_from = ini_get_int(ini, "parental", "hour_from", init.parental_hour_from);
+    settings->parental_hour_to = ini_get_int(ini, "parental", "hour_to", init.parental_hour_to);
+    /* Clamped on the way in, not only on the way out. A hand-edited config.ini is the expected
+     * way to defeat this feature and an out-of-range hour would otherwise reach localtime()
+     * comparisons that quietly allow everything. */
+    if (settings->parental_hour_from < 0 || settings->parental_hour_from > 23) {
+        settings->parental_hour_from = init.parental_hour_from;
+    }
+    if (settings->parental_hour_to < 0 || settings->parental_hour_to > 23) {
+        settings->parental_hour_to = init.parental_hour_to;
+    }
+
     ini_free(ini);
 }
 
@@ -108,6 +128,12 @@ void settings_save (settings_t *settings) {
 #else
     ini_set_bool(ini, "menu", "reboot_rom_enabled", settings->rom_fast_reboot_enabled);
 #endif
+
+    ini_set_string(ini, "parental", "code",
+                   settings->parental_code ? settings->parental_code : "");
+    ini_set_bool(ini, "parental", "hours_enabled", settings->parental_hours_enabled);
+    ini_set_int(ini, "parental", "hour_from", settings->parental_hour_from);
+    ini_set_int(ini, "parental", "hour_to", settings->parental_hour_to);
 
     /* Beta feature flags, they should not save until production ready! */
     // ini_set_bool(ini, "menu", "show_browser_file_extensions", settings->show_browser_file_extensions);

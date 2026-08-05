@@ -1,0 +1,52 @@
+# Type a two-line cheat in by hand and watch it appear in the list.
+#
+# Two lines rather than one because that is the case the group model exists for: a D0 conditional
+# and the write it guards are indivisible, and this is the path by which a user could otherwise
+# create half of one. See cheatdb.h and AUDIT.md 2.2.
+#
+# The nibble editor is one strip of cells -- name characters, then twelve per line -- so every
+# press below is either a move along that strip or a step through the alphabet at the cursor.
+
+wait 120
+
+press a             # detail sheet for the first title
+wait 40
+press z             # cheats
+wait 25
+fbdump              # 1: whatever this game shipped with
+
+press r             # the editor
+wait 25
+fbdump              # 2: one blank line, cursor on the name
+
+press right x9      # past "NEW CHEAT" to the first pad character
+press up x2         # A, B -- something visibly different from the default
+wait 10
+fbdump              # 3: the name, edited
+
+press r             # jump to line 1
+press up x8         # first nibble -> 8, the Datel write opcode
+press right
+press up x1
+press right x6
+press up x3
+wait 10
+fbdump              # 4: line 1 part way through
+
+press a             # add a second line
+wait 15
+press up x13        # D, the conditional opcode, by wrapping down through F
+press right x2
+press up x5
+wait 10
+fbdump              # 5: two lines
+
+press start         # save
+wait 30
+fbdump              # 6: the list, with the new cheat on it
+
+press a             # and it toggles like any other group
+wait 15
+fbdump              # 7: enabled
+
+exit

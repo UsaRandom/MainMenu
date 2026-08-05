@@ -58,6 +58,23 @@ typedef struct {
     /** @brief Enable rumble feedback within the menu */
     bool rumble_enabled;
 
+    /** @brief Hash of the parental code, hex; empty when no code is set. See menu/parental.h.
+     *
+     * These four live in settings rather than in a cache file on purpose. `ini_save()` is
+     * upstream's writer and has been exercised for years; `src/library/cache.c` has never run
+     * against real storage. A parental code that did not survive a reboot would be worse than
+     * no parental code, because the parent would believe it was there. */
+    char *parental_code;
+
+    /** @brief Restrict launching to a window of the day. Inert without a code and without a clock. */
+    bool parental_hours_enabled;
+
+    /** @brief The hour the window opens, 0-23. */
+    int parental_hour_from;
+
+    /** @brief The hour it closes, 0-23. Wraps midnight when it is less than the opening hour. */
+    int parental_hour_to;
+
 #ifdef FEATURE_AUTOLOAD_ROM_ENABLED
     /** @brief Enable the ability to bypass the menu and instantly load a ROM on power and reset button */
     bool rom_autoload_enabled;

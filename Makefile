@@ -140,6 +140,7 @@ SRCS = \
 	libs/miniz/miniz_zip.c \
 	libs/miniz/miniz.c \
 	cheats/cheatdb.c \
+	cheats/usercheats.c \
 	cheats/cheatstate.c \
 	library/cache.c \
 	library/libindex.c \
@@ -150,16 +151,21 @@ SRCS = \
 	menu/cart_load.c \
 	menu/ini_parser.c \
 	menu/fonts.c \
+	menu/parental.c \
 	menu/path.c \
 	menu/image_decoder.c \
 	menu/rom_info.c \
 	menu/settings.c \
 	menu/sound.c \
 	screens/boot_plate.c \
+	screens/screen_cheatedit.c \
 	screens/screen_cheats.c \
+	screens/screen_code.c \
 	screens/screen_detail.c \
 	screens/screen_grid.c \
 	screens/screen_launch.c \
+	screens/screen_locks.c \
+	screens/screen_parental.c \
 	screens/screen_settings.c \
 	screens/screen_fault.c \
 	ui/draw.c \

@@ -15,13 +15,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include <libdragon.h>
 
 #include "app.h"
 #include "cheats/cheatdb.h"
 #include "cheats/cheatstate.h"
+#include "cheats/usercheats.h"
 #include "library/playstate.h"
 #include "menu/fonts.h"
+#include "menu/parental.h"
 #include "menu/rom_info.h"
 #include "menu/sound.h"
 #include "screens.h"
@@ -65,20 +68,6 @@ static bool    closing;
  */
 static int cheats_for_rom = -1;
 
-static const char *SAVE_NAME[] = {
-    "None", "EEPROM 4K", "EEPROM 16K", "SRAM 256K", "SRAM banked",
-    "SRAM 1M", "FlashRAM 1M", "FlashRAM (PKST2)",
-};
-
-static const char *tv_name (rom_tv_type_t t) {
-    switch (t) {
-        case ROM_TV_TYPE_PAL:  return "PAL";
-        case ROM_TV_TYPE_NTSC: return "NTSC";
-        case ROM_TV_TYPE_MPAL: return "MPAL";
-        default:               return "Unknown";
-    }
-}
-
 static void detail_enter (app_t *app) {
     closing = false;
     tween_start(&rise, DUR_SHEET_OPEN);
@@ -91,6 +80,9 @@ static void detail_enter (app_t *app) {
         cheats_for_rom = app->launch.rom_id;
         const lib_record_t *r = &app->lib->records[app->launch.rom_id];
         cheatdb_load(r->check_code, r->game_code, r->version, &app->cheats);
+        /* Before cheatstate_apply(), so a remembered tick covers a hand-entered cheat too. They
+         * are keyed by name like every other group and need no special case. */
+        usercheats_apply(&app->cheats, playstate_key(r));
         /* Re-tick whatever the user had on last time. Matched by group NAME, so a refreshed
          * cheats.db that reorders its entries cannot silently enable a different cheat --
          * see cheatstate.h. */
@@ -126,7 +118,10 @@ static void detail_update (app_t *app, float dt) {
         sound_play_effect(SFX_SETTING);
     }
 
-    if (input_pressed(in, BTN_Z) && app->cheats.group_count > 0) {
+    /* Unconditional now. It was guarded on group_count, which locked the cheats screen away
+     * for exactly the games that have no cheats -- and those are the ones somebody wants to type
+     * one in for. The screen says so itself when the list is empty. */
+    if (input_pressed(in, BTN_Z)) {
         sound_play_effect(SFX_ENTER);
         app_goto(app, SCREEN_CHEATS);
         return;
@@ -150,6 +145,31 @@ static void detail_update (app_t *app, float dt) {
     }
 
     if (input_pressed(in, BTN_START) || input_pressed(in, BTN_A)) {
+        /* The only place a game starts, which is what made "locked, never hidden" cheap: one
+         * predicate at one call site, against a filter that would have had to touch every tab
+         * view, the position counter, Recent, Favourites and the opening-tab logic. */
+        uint16_t flags = (app->launch.rom_id >= 0)
+                       ? app->lib->records[app->launch.rom_id].flags : 0;
+        switch (parental_check(&app->settings, flags, time(NULL))) {
+            case PARENTAL_GAME_LOCKED:
+                sound_play_effect(SFX_ERROR);
+                screen_code_ask(CODE_ASK_UNLOCK, "This game is locked",
+                                SCREEN_LAUNCH, SCREEN_DETAIL);
+                app_goto(app, SCREEN_CODE);
+                return;
+            case PARENTAL_OUTSIDE_HOURS: {
+                char window[48];
+                static char why[80];
+                parental_window_text(&app->settings, window, sizeof(window));
+                snprintf(why, sizeof(why), "Playing is allowed %s", window);
+                sound_play_effect(SFX_ERROR);
+                screen_code_ask(CODE_ASK_UNLOCK, why, SCREEN_LAUNCH, SCREEN_DETAIL);
+                app_goto(app, SCREEN_CODE);
+                return;
+            }
+            case PARENTAL_ALLOW:
+                break;
+        }
         sound_play_effect(SFX_ENTER);
         app_goto(app, SCREEN_LAUNCH);
     }
@@ -222,17 +242,45 @@ static void detail_render (app_t *app, surface_t *fb) {
 
     char buf[64];
 
+    /* Play count leads, because it is the only row on this sheet that is about the person
+     * holding the controller rather than about the cartridge.
+     *
+     * The rows this replaced -- game code, save type, TV standard -- were three facts a player
+     * cannot act on. Save type in particular is only interesting when it is WRONG, and the sheet
+     * has a row for that case already: "Not in the ROM database", below. */
     if (rec != NULL) {
-        snprintf(buf, sizeof(buf), "%s  v1.%d", rec->game_code, rec->version);
-        y = info_row(INFO_X, y, INFO_W, "Code", buf);
+        if (rec->play_count == 0) {
+            y = info_row(INFO_X, y, INFO_W, "Played", "Never");
+        } else if (rec->play_count == 1) {
+            y = info_row(INFO_X, y, INFO_W, "Played", "Once");
+        } else {
+            snprintf(buf, sizeof(buf), "%lu times", (unsigned long)rec->play_count);
+            y = info_row(INFO_X, y, INFO_W, "Played", buf);
+        }
     }
 
-    rom_save_type_t st = rom_info_get_save_type((rom_info_t *)ri);
-    y = info_row(INFO_X, y, INFO_W, "Save",
-                 (st < (rom_save_type_t)(sizeof(SAVE_NAME) / sizeof(SAVE_NAME[0])))
-                     ? SAVE_NAME[st] : "Unknown");
+    /* Said here as well as badged on the tile, because the sheet is where someone stands before
+     * pressing A and it should not be the code prompt that first mentions it. */
+    if (rec != NULL && (rec->flags & LIBF_LOCKED)) {
+        y = info_row(INFO_X, y, INFO_W, "Locked", "Code needed");
+    }
 
-    y = info_row(INFO_X, y, INFO_W, "Video", tv_name(rom_info_get_tv_type((rom_info_t *)ri)));
+    /* Always, including when there are none. The row was conditional, which meant its absence
+     * had two meanings a player cannot tell apart: this game has no codes, or the card has no
+     * cheats.db at all. Saying "None available" answers the first and leaves the second visible
+     * as every game reading the same. */
+    int on = 0;
+    for (int i = 0; i < app->cheats.group_count; i++) {
+        if (app->cheats.groups[i].enabled) {
+            on++;
+        }
+    }
+    if (app->cheats.group_count == 0) {
+        y = info_row(INFO_X, y, INFO_W, "Cheats", "None available");
+    } else {
+        snprintf(buf, sizeof(buf), "%d of %d enabled", on, app->cheats.group_count);
+        y = info_row(INFO_X, y, INFO_W, "Cheats", buf);
+    }
 
     if (ri->features.expansion_pak == EXPANSION_PAK_REQUIRED) {
         y = info_row(INFO_X, y, INFO_W, "Expansion Pak", "Required");
@@ -252,24 +300,16 @@ static void detail_render (app_t *app, surface_t *fb) {
         y = info_row(INFO_X, y, INFO_W, "Accessories", buf);
     }
 
-    /* Cheats as a row here rather than a badge on the tile: the grid says what a game IS, and
-     * whether someone has codes for it is not part of that. */
-    if (app->cheats.group_count > 0) {
-        int on = 0;
-        for (int i = 0; i < app->cheats.group_count; i++) {
-            if (app->cheats.groups[i].enabled) {
-                on++;
-            }
-        }
-        snprintf(buf, sizeof(buf), "%d of %d enabled", on, app->cheats.group_count);
-        y = info_row(INFO_X, y, INFO_W, "Cheats", buf);
-    }
-
     if (rec != NULL && (rec->flags & LIBF_NO_MATCH)) {
         /* Said plainly rather than hidden: an unmatched ROM gets a guessed save type, and if it
-         * boots wrong this line is the explanation. */
+         * boots wrong this line is the explanation.
+         *
+         * "Not in the ROM database" was two characters too wide for INFO_W and ui_label clips
+         * rather than ellipsising, so it drew as "Not in the ROM databa" -- a warning that looks
+         * like a rendering fault, which is the last thing a warning should look like. It was
+         * invisible until the demo tree, where every title misses the database on purpose. */
         y += 8;
-        ui_label(INFO_X, y, INFO_W, ALIGN_LEFT, STL_YELLOW, "Not in the ROM database");
+        ui_label(INFO_X, y, INFO_W, ALIGN_LEFT, STL_YELLOW, "Not in the database");
         y += ROW_H;
     }
 
@@ -277,11 +317,13 @@ static void detail_render (app_t *app, surface_t *fb) {
      * through and offer actions that are not available. */
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel_alt);
     int hx = SAFE_X;
-    hx = ui_hint(hx, FOOTER_Y + 14, "S", BTN_START_COLOR, UI_BTN_DISC, "Play");
+    /* A, not Start. Both have always launched -- see the update() handler -- but the footer
+     * advertised only Start, which made the button you had just pressed to get here appear to
+     * do nothing on the screen it opened. A is the affirmative button everywhere else in the
+     * menu; Start stays bound because nothing is gained by taking it away. */
+    hx = ui_hint(hx, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Play");
     hx = ui_hint(hx, FOOTER_Y + 14, ">", BTN_C_COLOR, UI_BTN_DISC, "Fav");
-    if (app->cheats.group_count > 0) {
-        hx = ui_hint(hx, FOOTER_Y + 14, "Z", BTN_Z_COLOR, UI_BTN_TALL, "Cheats");
-    }
+    hx = ui_hint(hx, FOOTER_Y + 14, "Z", BTN_Z_COLOR, UI_BTN_TALL, "Cheats");
     (void)hx;
     ui_button(SAFE_X + SAFE_W - UI_BTN_D, FOOTER_Y + 14, "B", BTN_B_COLOR, UI_BTN_DISC);
     ui_label(SAFE_X, FOOTER_Y + 14 + UI_BTN_D - 5, SAFE_W - UI_BTN_D - 6, ALIGN_RIGHT,

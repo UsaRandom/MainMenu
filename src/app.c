@@ -10,6 +10,7 @@
 
 #include "app.h"
 #include "cheats/cheatstate.h"
+#include "cheats/usercheats.h"
 #include "library/cache.h"
 #include "library/libindex.h"
 #include "library/playstate.h"
@@ -89,6 +90,8 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     display_init(resolution, DEPTH_16_BPP, FB_COUNT, GAMMA_NONE, FILTERS_RESAMPLE);
 
     fonts_init(NULL);
+    /* After fonts_init, not before: it registers the styles this rebinds. */
+    theme_apply(app->theme);
 
     if (ferr != FLASHCART_OK) {
         /* Say which failure it was. "No supported flashcart detected" was printed for every one
@@ -117,6 +120,7 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * check codes the index or the scan just produced. */
     playstate_load(app->lib);
     cheatstate_load();
+    usercheats_load();
 
     /* Opened once and held: the index is 24 bytes a game, and the alternative is reopening the
      * file every time a detail sheet appears. Absent is normal -- a card with no cheats.db is a
@@ -153,8 +157,12 @@ static void app_deinit (app_t *app) {
     if (cheatstate_dirty()) {
         cheatstate_save();
     }
+    if (usercheats_dirty()) {
+        usercheats_save();
+    }
     thumbstore_close();
     cheatstate_free();
+    usercheats_free();
 
     cheatdb_close();
     thumbcache_free(app->thumbs);
@@ -219,6 +227,31 @@ void app_run (boot_params_t *boot_params) {
          * animation across the screen or make one frame of repeat count as half a second. */
         app->dt = clampf((float)raw_us / 1e6f, 1.0f / 120.0f, 1.0f / 15.0f);
         prev_ticks = now_ticks;
+
+        /* A scripted run gets a FIXED dt, so the whole run is a pure function of the script.
+         *
+         * Without this, every animated value is a function of how many CPU cycles the frame took,
+         * and that is a function of the binary. The selection outline pulses on `phase += 6*dt`,
+         * so the outline colour at a given frame moves by one step on the RGBA5551 ladder for any
+         * change to the code -- and the hash of every screenshot containing a selected tile moves
+         * with it. That was measured, not assumed: inserting a `volatile int[64]` that nothing
+         * reads into app_init() changed grid-edges frame 00 and changed frame 01 BACK to the value
+         * it had two builds earlier. Ten of the suite's thirteen scripts moved for a change that
+         * touched none of the code they exercise, each by exactly 104 pixels of one colour.
+         *
+         * The M1 reproducibility gate still passed throughout, because the same binary always
+         * produces the same cycle counts. What was broken is the comparison the suite exists for:
+         * `diff before/hashes.txt after/hashes.txt` could not tell "the drawing changed" from
+         * "the binary got bigger", which makes a red result something you learn to ignore.
+         *
+         * This does not weaken the "motion is specified in seconds, never frames" rule -- the
+         * animation code is unchanged and still integrates dt. It fixes the clock the harness
+         * runs it against, exactly as the input scripts are keyed on frame number rather than on
+         * elapsed time, and for the same reason. Frame-time measurement is unaffected: the bins
+         * below use the UNCLAMPED interval and frametime.c reads TICKS directly. */
+        if (inputscript_active()) {
+            app->dt = 1.0f / 60.0f;
+        }
 
         /* Bin the UNCLAMPED interval. app->dt is clamped at 1/15 s so that animation stays sane
          * across a stall, and reporting that number would cap every measurement at 66.7 ms and

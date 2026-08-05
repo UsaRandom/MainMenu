@@ -33,6 +33,14 @@ typedef enum {
      *  costs: the C-pad is otherwise the fast-scroll pad, so this one direction is no longer
      *  available for it. */
     BTN_CRIGHT = (1 << 6),
+    /** The other three C directions, as buttons. They are still fast-scroll directions on the
+     *  grid -- `joypad_get_direction()` and `joypad_get_buttons_pressed()` are separate reads, so
+     *  a C-up both steps the cursor and sets this bit, and nothing outside the code screen looks
+     *  at these. They exist because a parental code made of C directions has to be enterable by
+     *  tools/mkinput.py, or the feature ships with no scripted test at all. */
+    BTN_CUP    = (1 << 7),
+    BTN_CDOWN  = (1 << 8),
+    BTN_CLEFT  = (1 << 9),
 } button_t;
 
 typedef struct {

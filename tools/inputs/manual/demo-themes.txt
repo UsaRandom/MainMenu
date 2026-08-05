@@ -1,0 +1,55 @@
+# Every built-in theme, on the two screens that can go wrong.
+#
+#     tools/regress.sh -m 'DEMO=1 FBSCALE=1' -o build/theme-shots \
+#         tools/inputs/manual/demo-themes.txt
+#
+# In manual/ because it wants FBSCALE=1: this is a legibility check and 160x120 cannot answer it.
+#
+# The settings screen is the strict case -- it is the most text on the most panel_alt, so a text
+# colour that does not follow the theme shows there first. The grid is the second, because tile
+# titles sit on bg_alt and panel while art decodes. `cartridge` is the one that has to be right:
+# it is the only light palette, and until the font styles followed the theme it drew white text
+# on 0xF7F7EF panels on every screen.
+
+wait 260            # boot plate, then let the visible tiles decode
+
+press start
+wait 40
+fbdump              # 1: settings, midnight
+
+press a             # -> cartridge
+wait 25
+fbdump              # 2: settings, cartridge
+press b
+wait 45
+fbdump              # 3: grid, cartridge -- the case that was reported
+
+press a
+wait 30
+fbdump              # 4: detail sheet, cartridge, and the footer's Play hint
+press b
+wait 30
+
+press start
+wait 20
+press a             # -> phosphor
+wait 25
+fbdump              # 5: settings, phosphor
+
+press a             # -> purple
+wait 25
+fbdump              # 6: settings, purple
+press b
+wait 45
+fbdump              # 7: grid, purple
+
+press start
+wait 20
+press a             # -> red
+wait 25
+fbdump              # 8: settings, red
+press b
+wait 45
+fbdump              # 9: grid, red
+
+exit

@@ -18,7 +18,20 @@
 
 #include <string.h>
 
+#include "menu/fonts.h"
 #include "theme.h"
+
+void theme_apply (const theme_t *th) {
+    if (th == NULL) {
+        return;
+    }
+    /* The font styles are the half of a theme that is not drawn by this module. They were
+     * registered once at load in fixed colours, so every label stayed white however dark or
+     * light the surfaces under it became -- which made `cartridge`, the one light theme,
+     * unreadable from the moment it was added. Anything that changes app->theme must come
+     * through here. */
+    fonts_set_palette(th->text, th->text_dim, th->text_accent);
+}
 
 const theme_t THEME_MIDNIGHT = {
     .name          = "midnight",
@@ -80,10 +93,59 @@ const theme_t THEME_PHOSPHOR = {
     .tile_dim_a    = 102,                                              /* 40% */
 };
 
+/* Violet surfaces with a pink accent. Every channel value below is a rung of the 5-bit ladder --
+ * round(i * 255/31) -- so the hex here and the packed word agree exactly, as in the three above.
+ * The accent is pink rather than the amber midnight uses, because amber on violet is the same
+ * warm-on-cool pairing midnight already has and the two themes would read as one recoloured. */
+const theme_t THEME_PURPLE = {
+    .name          = "purple",
+    .bg            = RGBA5551(0x19, 0x08, 0x29),
+    .bg_alt        = RGBA5551(0x29, 0x19, 0x42),
+    .panel         = RGBA5551(0x3A, 0x21, 0x5A),
+    .panel_alt     = RGBA5551(0x52, 0x31, 0x7B),
+    .text          = RGBA5551(0xF7, 0xEF, 0xFF),
+    .text_dim      = RGBA5551(0xA5, 0x8C, 0xBD),
+    .text_accent   = RGBA5551(0xFF, 0x7B, 0xD6),
+    .tab_active    = RGBA5551(0xF7, 0xEF, 0xFF),
+    .tab_inactive  = RGBA5551(0x73, 0x5A, 0x8C),
+    .tab_underline = RGBA5551(0xFF, 0x7B, 0xD6),
+    .sel_outline   = RGBA5551(0xFF, 0xFF, 0xFF),
+    .sel_shadow    = RGBA5551(0x00, 0x00, 0x00), .sel_shadow_a = 143,  /* 56% */
+    .badge_fav     = RGBA5551(0xFF, 0x7B, 0xD6),
+    .badge_save    = RGBA5551(0x42, 0xD6, 0x7B),
+    .overlay       = RGBA5551(0x10, 0x00, 0x21), .overlay_a = 199,     /* 78% */
+    .tile_dim_a    = 87,                                               /* 34% */
+};
+
+/* Deep maroon with a gold accent. The accent cannot be red: on these surfaces a red underline
+ * and a red favourite badge would be the one thing on screen the eye cannot separate from the
+ * panel behind them, which is the failure rule 2 at the top of this file is about. */
+const theme_t THEME_RED = {
+    .name          = "red",
+    .bg            = RGBA5551(0x19, 0x08, 0x08),
+    .bg_alt        = RGBA5551(0x31, 0x10, 0x10),
+    .panel         = RGBA5551(0x4A, 0x19, 0x19),
+    .panel_alt     = RGBA5551(0x6B, 0x29, 0x29),
+    .text          = RGBA5551(0xFF, 0xEF, 0xEF),
+    .text_dim      = RGBA5551(0xBD, 0x8C, 0x8C),
+    .text_accent   = RGBA5551(0xFF, 0xD6, 0x52),
+    .tab_active    = RGBA5551(0xFF, 0xEF, 0xEF),
+    .tab_inactive  = RGBA5551(0x8C, 0x5A, 0x5A),
+    .tab_underline = RGBA5551(0xFF, 0xD6, 0x52),
+    .sel_outline   = RGBA5551(0xFF, 0xFF, 0xFF),
+    .sel_shadow    = RGBA5551(0x00, 0x00, 0x00), .sel_shadow_a = 143,
+    .badge_fav     = RGBA5551(0xFF, 0xD6, 0x52),
+    .badge_save    = RGBA5551(0x42, 0xD6, 0x6B),
+    .overlay       = RGBA5551(0x10, 0x00, 0x00), .overlay_a = 199,
+    .tile_dim_a    = 87,
+};
+
 static const theme_t *const THEMES[] = {
     &THEME_MIDNIGHT,
     &THEME_CARTRIDGE,
     &THEME_PHOSPHOR,
+    &THEME_PURPLE,
+    &THEME_RED,
 };
 
 #define THEME_N ((int)(sizeof(THEMES) / sizeof(THEMES[0])))

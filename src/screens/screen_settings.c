@@ -19,6 +19,7 @@
 #include "cheats/cheatdb.h"
 #include "menu/fonts.h"
 #include "library/cache.h"
+#include "menu/parental.h"
 #include "menu/settings.h"
 #include "menu/sound.h"
 #include "screens.h"
@@ -35,17 +36,18 @@ typedef enum {
     ROW_SAVES_FOLDER,
     ROW_FAST_REBOOT,
     ROW_SOUNDFX,
+    ROW_PARENTAL,
     ROW_COUNT,
 } row_t;
 
 static int cursor;
 
-static const theme_t *const THEMES[] = { &THEME_MIDNIGHT, &THEME_CARTRIDGE, &THEME_PHOSPHOR };
-#define THEME_COUNT ((int)(sizeof(THEMES) / sizeof(THEMES[0])))
-
+/* theme.c owns the list. This screen used to keep a second copy of it, which meant adding a
+ * theme in one place left the other short and the new one simply unreachable from the only UI
+ * that can select it. */
 static int theme_index (const theme_t *th) {
-    for (int i = 0; i < THEME_COUNT; i++) {
-        if (THEMES[i] == th) {
+    for (int i = 0; i < theme_count(); i++) {
+        if (theme_at(i) == th) {
             return i;
         }
     }
@@ -89,8 +91,13 @@ static void settings_update (app_t *app, float dt) {
     switch ((row_t)cursor) {
         case ROW_THEME:
             if (delta != 0 || toggle) {
+                int n = theme_count();
                 int i = theme_index(app->theme) + (delta != 0 ? delta : 1);
-                app->theme = THEMES[((i % THEME_COUNT) + THEME_COUNT) % THEME_COUNT];
+                app->theme = theme_at(((i % n) + n) % n);
+                /* Surfaces follow app->theme on the next draw, but the font styles are
+                 * registered state and do not. Without this the palette changes underneath
+                 * text that stays the previous theme's colour. */
+                theme_apply(app->theme);
             }
             break;
         case ROW_SAVES_FOLDER:
@@ -107,6 +114,22 @@ static void settings_update (app_t *app, float dt) {
             if (toggle || delta != 0) {
                 app->settings.soundfx_enabled = !app->settings.soundfx_enabled;
                 sound_use_sfx(app->settings.soundfx_enabled);
+            }
+            break;
+        case ROW_PARENTAL:
+            if (toggle) {
+                /* The code guards its own panel. Without this the lock list and the schedule are
+                 * one press from any child who found Settings, and the feature is decoration --
+                 * see the note at the top of screen_parental.c. */
+                settings_save(&app->settings);
+                if (parental_code_set(&app->settings)) {
+                    screen_code_ask(CODE_ASK_UNLOCK, "Enter the parental code",
+                                    SCREEN_PARENTAL, SCREEN_SETTINGS);
+                    app_goto(app, SCREEN_CODE);
+                } else {
+                    app_goto(app, SCREEN_PARENTAL);
+                }
+                return;
             }
             break;
         default:
@@ -145,6 +168,8 @@ static void settings_render (app_t *app, surface_t *fb) {
              app->settings.rom_fast_reboot_enabled ? "Yes" : "No");
     draw_row(app, ROW_SOUNDFX, "Sound effects",
              app->settings.soundfx_enabled ? "Yes" : "No");
+    draw_row(app, ROW_PARENTAL, "Parental controls",
+             parental_code_set(&app->settings) ? "On" : "Off");
 
     /* Status: the answers to the first three support questions, in one place. */
     int y = LIST_Y + ROW_COUNT * ROW_H + 24;

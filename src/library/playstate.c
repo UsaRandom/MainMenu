@@ -25,8 +25,10 @@ typedef struct __attribute__((packed)) {
 
 /** Which record flags are the user's rather than the card's. LIBF_HAS_SAVE is derived from a file
  *  on disk and LIBF_NO_MATCH from the database, so persisting either would let a stale cache
- *  contradict what a rescan just found. Only the favourite bit is genuinely the user's. */
-#define PS_PERSIST_FLAGS  (LIBF_FAVORITE)
+ *  contradict what a rescan just found. The favourite and the parental lock are both genuinely
+ *  the user's, and both must survive a rescan -- which is exactly what keying on the ROM header
+ *  rather than the path buys. Moving a locked game to another folder must not unlock it. */
+#define PS_PERSIST_FLAGS  (LIBF_FAVORITE | LIBF_LOCKED)
 
 /* Every on-disk struct's size is asserted, because the one bug this whole family of files
  * cannot survive is silent padding. A compiler that inserts two bytes somewhere writes a

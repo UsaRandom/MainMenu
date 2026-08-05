@@ -177,6 +177,7 @@ void cheatdb_free (cheatset_t *set) {
     free(set->groups);
     free(set->codes);
     free(set->strtab);
+    free(set->user_strtab);
     memset(set, 0, sizeof(*set));
 }
 
@@ -262,6 +263,10 @@ bool cheatdb_load (uint64_t check_code, const char *game_code, uint8_t version, 
     out->codes       = codes;
     out->code_count  = (int)total_codes;
     out->strtab      = strtab;
+    /* Everything loaded here came from the database, so anything appended after this point is a
+     * user cheat. usercheats.c needs the boundary to repoint its own names across a realloc; on
+     * the failure paths above the struct is left zeroed, where 0 == group_count says the same. */
+    out->user_first  = (int)n;
     return true;
 }
 

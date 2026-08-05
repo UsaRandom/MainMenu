@@ -47,7 +47,11 @@ typedef enum {
     SCREEN_GRID = 0,
     SCREEN_DETAIL,
     SCREEN_CHEATS,
+    SCREEN_CHEATEDIT,  /**< typing a cheat in by hand; see screen_cheatedit.c */
     SCREEN_SETTINGS,
+    SCREEN_PARENTAL,   /**< the parent's panel; itself behind the code once one is set */
+    SCREEN_LOCKS,      /**< the library, with a padlock per title */
+    SCREEN_CODE,       /**< the button-code pad; see screen_code_ask() */
     SCREEN_LAUNCH,
     SCREEN_FAULT,
     SCREEN_COUNT,

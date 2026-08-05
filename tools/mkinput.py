@@ -44,8 +44,11 @@ NONE = 0xFF
 
 # Must match ISCRIPT_BTN_* in src/dev/inputscript.h. "cright" is the Fav button: it is a button
 # and not a C-pad direction, so it is spelled `press cright`, never `cpress right`.
+#
+# cup/cdown/cleft are the same distinction for the parental code, which is keyed from the C
+# directions. `press cup` sets a button bit and moves nothing; `cpress up` is fast scroll.
 BUTTONS = {"a": 1 << 0, "b": 1 << 1, "start": 1 << 2, "l": 1 << 3, "r": 1 << 4, "z": 1 << 5,
-           "cright": 1 << 6}
+           "cright": 1 << 6, "cup": 1 << 7, "cdown": 1 << 8, "cleft": 1 << 9}
 
 ACT_NONE, ACT_FBDUMP, ACT_EXIT, ACT_RECORD_ON, ACT_RECORD_OFF = 0, 1, 2, 3, 4
 
@@ -187,9 +190,12 @@ def main():
         s = Script()
         name, source = "", "(none)"
 
-    body = "".join("    { %5d, %5d, 0x%02X, 0x%02X, 0x%02X, %d },\n" % e for e in s.events)
+    # 0x%04X for the buttons: the field is a uint16_t because the C-direction buttons live above
+    # bit 7, and %02X here would have printed 0x00 for `press cleft` with no warning from either
+    # this script or the compiler.
+    body = "".join("    { %5d, %5d, 0x%02X, 0x%02X, 0x%04X, %d },\n" % e for e in s.events)
     if not s.events:
-        body = "    { 0, 0, 0xFF, 0xFF, 0x00, 0 },  /* placeholder; count is 0 */\n"
+        body = "    { 0, 0, 0xFF, 0xFF, 0x0000, 0 },  /* placeholder; count is 0 */\n"
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as f:

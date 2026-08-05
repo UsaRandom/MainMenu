@@ -31,6 +31,12 @@ typedef enum {
     ISCRIPT_BTN_Z        = (1 << 5),
     ISCRIPT_BTN_CRIGHT   = (1 << 6),   /**< the Fav button; see input.c on why C-right is not a
                                         *   direction */
+    /** The remaining C directions, pressable as buttons so a parental code made of them can be
+     *  keyed by a script. `press cup` and `cpress up` are different things: this one sets a
+     *  button bit and does not move the cursor, that one is fast scroll. */
+    ISCRIPT_BTN_CUP      = (1 << 7),
+    ISCRIPT_BTN_CDOWN    = (1 << 8),
+    ISCRIPT_BTN_CLEFT    = (1 << 9),
 } iscript_button_t;
 
 /** @brief Side effects a script step can trigger. */
@@ -48,7 +54,10 @@ typedef struct {
     uint16_t hold_frames;
     uint8_t  dir;      /**< joypad_8way_t for D-pad/stick, or 0xFF for none */
     uint8_t  cdir;     /**< joypad_8way_t for the C-pad (drives go_fast), or 0xFF */
-    uint8_t  buttons;  /**< iscript_button_t bitmask */
+    /** iscript_button_t bitmask. Sixteen bits, not eight: adding C-up, C-down and C-left took
+     *  the set past bit 7, and a uint8_t would have silently truncated the two highest so
+     *  `press cleft` compiled to no button at all. */
+    uint16_t buttons;
     uint8_t  action;   /**< iscript_action_t */
 } input_event_t;
 

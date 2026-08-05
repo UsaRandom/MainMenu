@@ -31,6 +31,16 @@ void ui_text (int x, int y, int w, rdpq_align_t align, int style, const char *s)
 /** @brief ui_text() that also sets the standard text render mode. For one-off labels. */
 void ui_label (int x, int y, int w, rdpq_align_t align, int style, const char *s);
 
+/**
+ * @brief A padlock: a hollow shackle over a solid body.
+ *
+ * Drawn from primitives rather than carried as a sprite so it scales to both places it appears --
+ * a row marker in the lock list and a corner badge on a grid tile. The silhouette is the whole
+ * point: theme.c rule 2 forbids a badge that is only distinguishable by colour, and under
+ * Phosphor the save square, the favourite triangle and this are near-identical greens.
+ */
+void ui_padlock (int x, int y, int w, int h, uint16_t c);
+
 /** @brief Height, and disc diameter, of a controller-button glyph. */
 #define UI_BTN_D        20
 

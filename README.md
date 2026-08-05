@@ -12,17 +12,10 @@ nothing in advance.
 > **This has never run on real hardware.** Every measurement in the audit was taken under
 > [ares](https://ares-emu.net/). Read [Status](#status) before expecting it to work on a console.
 
-![The grid](docs/images/demo-grid.png)
-
-![Boot, browse, open](docs/images/demo.gif)
-
-<sup>Six seconds: the boot plate, the grid filling in as art decodes, moving the selection, and a
-detail sheet. Also as [MP4](docs/images/demo.mp4).</sup>
-
 | | |
 |---|---|
 | ![Scrolled](docs/images/demo-grid-scrolled.png) | ![Detail sheet](docs/images/demo-detail.png) |
-| Scrolled into the library. The bar on the right is position, the yellow corner is a favourite. | The detail sheet: header fields, save type, and how many cheats are on. |
+| The grid, scrolled into the library. The bar on the right is position, the yellow corner is a favourite. | The detail sheet: what you have played, and how many cheats are on. |
 | ![Cheats](docs/images/demo-cheats.png) | ![Settings](docs/images/demo-settings.png) |
 | Cheats, as named groups. A conditional and the write it guards are one line here, never two. | Settings, and what the menu found on the card. |
 
@@ -30,7 +23,7 @@ detail sheet. Also as [MP4](docs/images/demo.mp4).</sup>
 [`tools/mkdemo.py`](tools/mkdemo.py) draws original box art for titles that do not exist, so
 nothing on this page belongs to anyone else. Nor is any of it a screen capture: the frames are
 hexdumped out of the emulator's framebuffer, so they are what the RDP drew rather than what a
-window manager made of it. See [Screenshots and the video](#screenshots-and-the-video).
+window manager made of it. See [Screenshots](#screenshots).
 
 ---
 
@@ -42,7 +35,14 @@ Working under ares, against both a synthetic SD tree and real box art:
 - Resident library index built from upstream's 450-game database, with save-type and feature detection
 - Thumbnail cache with on-cart generation and palette quantisation
 - Detail sheet, cheats screen, settings, launch transition, boot plate, fault screen
+- Parental controls — a four-button code, a padlock on any games a parent picks, and an optional
+  window of the day. Locked games stay in the grid and ask for the code at launch; they are never
+  hidden. It is a lock on a menu and not security, and the screen says so
+- Hand-entered cheats, for the games the shipped corpus does not cover — which is every emulated
+  system, every homebrew title, and anything published since it was built
 - Launching N64 titles, and NES / SNES / GB / GBC / SMS / GG through emulator cores
+- Five themes — midnight, cartridge, phosphor, purple, red — chosen in settings, but **not
+  persisted**: `settings_t` has no theme field, so the choice lasts until power-off
 
 `cart_load.c` can also boot a Fairchild Channel F ROM, but nothing can reach that path: the
 scanner has no `SYS_` for it and no extension maps to one, so such a title never enters the
@@ -50,10 +50,11 @@ library. `Press-F.z64` is listed below for when that is wired up, not because it
 
 Not done, and stated plainly:
 
-- **The write half has never executed.** Favourites, play history, the library index, the
-  thumbnail atlas and cheat selections all persist through one layer that decides at boot whether
-  storage is writable, and under ares it never is — the DFS is read-only. The code is there and
-  host-tested against real files; it has not run against a real card.
+- **The write half has never executed.** Favourites, play history, parental locks, the library
+  index, the thumbnail atlas and cheat selections all persist through one layer that decides at
+  boot whether storage is writable, and under ares it never is — the DFS is read-only. The code is
+  there and host-tested against real files; it has not run against a real card. The parental
+  *code* is the exception: it is a setting, written by upstream's own `ini_save()`.
 - **No hardware validation of any kind.** Five open questions are listed in
   [AUDIT.md §4](docs/AUDIT.md), starting with whether libdragon's custom IPL3 boots on an M64 at
   all — which blocks everything else if it fails.
@@ -172,31 +173,24 @@ unrelated address. See [AUDIT.md §2](docs/AUDIT.md).
 SNES titles run on [lithium64](https://github.com/UsaRandom/lithium64), a fork of sodium64
 targeting this console, falling back to `sodium64.z64` when it is absent.
 
-## Screenshots and the video
+## Screenshots
 
-Everything at the top of this page is reproducible from a clean tree, and none of it is a screen
-capture. `tools/mkdemo.py` builds an SD tree of invented games — 24 for the N64, nine across the
-other systems — with box art drawn procedurally from the title string, per-ROM save types, a play
+The shots above are reproducible from a clean tree, and none of them is a screen capture.
+`tools/mkdemo.py` builds an SD tree of invented games — 24 for the N64, nine across the other
+systems — with box art drawn procedurally from the title string, per-ROM save types, a play
 history and a small cheat database. It is seeded by the title, so the same input gives the same
-pictures. The stills and the video then come out of `dbg_fbdump`, which hexdumps the framebuffer
-through an ares debug opcode: what lands on disk is what the RDP produced.
+pictures. The frames then come out of `dbg_fbdump`, which hexdumps the framebuffer through an
+ares debug opcode: what lands on disk is what the RDP produced.
 
 ```sh
-# stills -> build/demo-shots/demo-stills/frame*.png
 tools/regress.sh -m 'DEMO=1 FBSCALE=1' -o build/demo-shots \
     tools/inputs/manual/demo-stills.txt
-
-# video: 385 frames, and 1.4 GB of log to get them
-make DEMO=1 DEMO_NO_PLAYSTATE=1 FIXTURE=1 DEV_HARNESS=1 FBSCALE=1 \
-     INPUT_SCRIPT=tools/inputs/manual/demo-video.txt sc64 -j8
-ares --system "Nintendo 64" --no-file-prompt output/sc64menu.n64 > build/demo-video/log
-tools/mkvideo.py build/demo-video/log -o docs/images/demo.mp4 --gif
+# -> build/demo-shots/demo-stills/frame*.png
 ```
 
-Both input scripts are keyed on **frame number**, never on elapsed time, so the take is the same
-length however fast ares happened to be running — which is what makes assembling it at a flat
-60 fps honest. `FBSCALE=1` is what makes the dumps full 640 × 480; the default of 4 exists
-because a regression run dumps 3.54 MB of hex per frame at full size.
+The input script is keyed on **frame number**, never on elapsed time, so the same run visits the
+same states however fast ares happened to be going. `FBSCALE=1` is what makes the dumps a full
+640 × 480; the default of 4 exists because at full size a frame is 3.54 MB of hex.
 
 `DEMO=1` is not a substitute for the ordinary fixture in a measurement. Every title in the demo
 tree misses the 450-game database on purpose, so a scan measured against it measures the miss

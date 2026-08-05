@@ -59,7 +59,13 @@ typedef struct {
     int            group_count;
     cheat_code_t  *codes;
     int            code_count;
-    char          *strtab;      /**< one allocation backing every group name */
+    char          *strtab;      /**< one allocation backing every group name from the database */
+    /** Names of hand-entered groups, which cannot point into the database's table. Owned here and
+     *  freed by cheatdb_free() so callers have one release function, not two. */
+    char          *user_strtab;
+    /** Index of the first hand-entered group, so usercheats.c can find its own names again after
+     *  a realloc. Equal to group_count when there are none. */
+    int            user_first;
 } cheatset_t;
 
 /** @brief Open the database. Returns false when there is no usable file, which is not an error. */

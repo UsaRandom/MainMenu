@@ -43,6 +43,10 @@ typedef enum {
      *  the answer for every title on a card with no art pack. Without this the warm path pays the
      *  full search again on every boot for exactly the records that gain nothing from it. */
     LIBF_ART_MISSING = (1 << 4),
+    /** A parent locked this game. It stays in the grid and keeps its art -- see menu/parental.h
+     *  for why locked rather than hidden. Persisted, because a lock that forgot itself on the
+     *  next boot is worse than no lock at all: the parent would believe it was still there. */
+    LIBF_LOCKED = (1 << 5),
 } lib_flags_t;
 
 /**

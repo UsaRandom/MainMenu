@@ -74,7 +74,11 @@ void screens_register (const screen_t **table) {
     table[SCREEN_GRID]   = &SCREEN_GRID_DEF;
     table[SCREEN_DETAIL] = &SCREEN_DETAIL_DEF;
     table[SCREEN_CHEATS] = &SCREEN_CHEATS_DEF;
+    table[SCREEN_CHEATEDIT] = &SCREEN_CHEATEDIT_DEF;
     table[SCREEN_SETTINGS] = &SCREEN_SETTINGS_DEF;
+    table[SCREEN_PARENTAL] = &SCREEN_PARENTAL_DEF;
+    table[SCREEN_LOCKS]  = &SCREEN_LOCKS_DEF;
+    table[SCREEN_CODE]   = &SCREEN_CODE_DEF;
     table[SCREEN_LAUNCH] = &SCREEN_LAUNCH_DEF;
     table[SCREEN_FAULT]  = &SCREEN_FAULT_DEF;
 }

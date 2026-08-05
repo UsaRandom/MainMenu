@@ -53,6 +53,14 @@ static void cheats_update (app_t *app, float dt) {
         return;
     }
 
+    /* Above the empty-list guard on purpose: a game with no cheats at all is exactly the game
+     * somebody wants to add one to, and it is the only screen that reaches the editor. */
+    if (input_pressed(in, BTN_R)) {
+        sound_play_effect(SFX_ENTER);
+        app_goto(app, SCREEN_CHEATEDIT);
+        return;
+    }
+
     if (set->group_count == 0) {
         return;
     }
@@ -61,10 +69,10 @@ static void cheats_update (app_t *app, float dt) {
     if (in->up   && cursor > 0)                    cursor--;
     if (in->down && cursor < set->group_count - 1) cursor++;
 
-    /* L and R page, because a four-figure list is not navigable one row at a time. They mean
-     * "sideways through the list" here as they mean "sideways through the tabs" on the grid. */
+    /* L pages, because a four-figure list is not navigable one row at a time. R used to page the
+     * other way and is now Add: paging in one direction only is a small loss against having no
+     * button left for the editor, and Z is taken on the sheet this screen is reached from. */
     if (input_pressed(in, BTN_L)) cursor -= VISIBLE;
-    if (input_pressed(in, BTN_R)) cursor += VISIBLE;
     if (cursor < 0)                 cursor = 0;
     if (cursor >= set->group_count) cursor = set->group_count - 1;
 
@@ -118,6 +126,8 @@ static void cheats_render (app_t *app, surface_t *fb) {
     if (set->group_count == 0) {
         ui_label(LIST_X, LIST_Y + 40, LIST_W, ALIGN_CENTER, STL_GRAY,
                  "No cheats for this game.");
+        ui_label(LIST_X, LIST_Y + 72, LIST_W, ALIGN_CENTER, STL_GRAY,
+                 "Press R to type one in.");
     }
 
     for (int i = 0; i < VISIBLE; i++) {
@@ -161,7 +171,8 @@ static void cheats_render (app_t *app, surface_t *fb) {
     }
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
-    (void)ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Toggle");
+    int hx = ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Toggle");
+    (void)ui_hint(hx, FOOTER_Y + 14, "R", BTN_Z_COLOR, UI_BTN_TALL, "Add");
     ui_button(SAFE_X + SAFE_W - UI_BTN_D, FOOTER_Y + 14, "B", BTN_B_COLOR, UI_BTN_DISC);
     ui_label(SAFE_X, FOOTER_Y + 14 + UI_BTN_D - 5, SAFE_W - UI_BTN_D - 6, ALIGN_RIGHT,
              STL_GRAY, "Back");

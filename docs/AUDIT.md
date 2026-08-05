@@ -73,6 +73,261 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
+## 1z. Parental controls, hand-entered cheats, a crash on any title containing `^`, and a hash gate that could not tell code size from drawing
+
+Four things, found in that order, each while doing the one before it.
+
+### The feature
+
+A four-button code, a per-game lock, and an optional window of the day. `src/menu/parental.c`
+holds the policy; `screen_code.c`, `screen_parental.c` and `screen_locks.c` are the UI.
+
+**Locked, never hidden**, which is what made it cheap. Hiding is a filter and a filter touches
+every tab view, the position counter, Recent, Favourites and the opening-tab logic. Locking is one
+predicate at one call site — `screen_detail.c`'s A/Start handler is the only place in the menu
+where a game starts. The tile keeps its art and gains a padlock, so pressing A is an informed
+choice rather than a surprise.
+
+Four decisions worth not relitigating:
+
+- **The code lives in settings, the locks live in playstate.** `settings.c` writes through
+  `ini_save()`, upstream's own writer; the locks ride `src/library/cache.c`, which has never run
+  against real storage (1r). So on a card the menu cannot write, the code survives a reboot and the
+  locks do not. That is worse than the same exposure on favourites — a lost favourite is an
+  annoyance, a lost lock is the feature silently not working — so the panel says
+  *"Locked games are not saved to this card"* when `cache_writable()` is false rather than
+  accepting a lock it knows it will drop.
+- **The panel is itself behind the code.** The schedule is enforced against a clock this menu can
+  set, and the lock list is edited here. A parental panel reachable without the code is one a child
+  switches off, and that is the entire feature in one sentence.
+- **The window wraps midnight, and the wrapping case is the normal one.** 20:00 to 07:00 is what a
+  parent actually sets, and `h >= from && h < to` is false for every hour of the day when
+  `from > to`. `from == to` means no restriction rather than a locked-out console.
+- **No clock fails open, and says so.** Same discipline as `play_timestamp()`: `rtc_init()` returns
+  false when there is no RTC source, and a schedule that failed closed on a dead clock would lock a
+  family out of a menu they never asked to be locked out of.
+
+The code is stored as a hash. 4,096 combinations fall to a four-line script, so this is not a
+defence — the realistic attacker is a child who opens `config.ini` in Notepad, and
+`code = 3F2A91C4` tells them nothing where `code = AZLR` tells them everything. **Nothing here
+should be described to a user as security**, and the panel says as much on screen.
+
+The alphabet is A, Z, L, R and the four C directions. B is excluded so it can always mean "delete
+that press" without a mode; Start is excluded because it is the button that opens Settings and a
+code beginning with it would be entered by accident; the D-pad is excluded because a D-pad arrow
+and a C arrow are the same picture. `input_t` gained `BTN_CUP`/`BTN_CDOWN`/`BTN_CLEFT` and
+`mkinput.py` gained `press cup` and friends — **not for the console, for the harness**. Without
+them `tools/inputs/parental.txt` could not key a code and the feature would have shipped with no
+scripted test. `input_event_t.buttons` went from `uint8_t` to `uint16_t` at the same time; the new
+bits are 7, 8 and 9, and the old width would have truncated two of them into nothing with no
+warning from either the generator or the compiler.
+
+### Cheats typed in by hand
+
+`src/cheats/usercheats.c` and `screen_cheatedit.c`, reached with R from the cheats list. The
+shipped corpus covers a few hundred N64 titles and nothing else — no NES, no SNES, no homebrew, and
+nothing published after it was built — so for most of a card this was the only missing half of the
+cheats feature.
+
+**They are groups, with the same indivisibility rule as everything else.** A user cheat is a named
+group of up to eight lines and the list can only toggle the group. This is the one place a person
+could otherwise have built half a `D0`/`80` pair by hand, which is the failure 2.2 records; the
+editor adds and removes whole lines within one group and never offers a line as a thing to enable.
+
+**One edit mode, not two.** The obvious design is a hex keypad plus a separate keyboard for the
+name — two grids, two modes, a lot of travel per character. Instead the name's characters and each
+line's twelve nibbles are **one strip of cells**: left/right moves a cell and wraps across rows,
+up/down changes the value under it, L/R jump a whole row. It is the arcade high-score idiom, which
+is the one text-entry pattern a console player already knows, and there is no mode to be in the
+wrong one of.
+
+Two things the editor refuses rather than accepts quietly. A blank line is not a cheat —
+`00000000 0000` is a write to address zero and `boot/cheats.c` would assemble it — and a name that
+is empty or all spaces would draw as a blank row and hash as a different cheat every time a
+trailing space came and went, so both are rejected with the reason on screen.
+
+Records are fixed at 108 bytes with the name and lines inline, and `line_count` is clamped on the
+way in as well as on the way out: the file sits on a card the user can edit, and a stored count of
+60,000 would walk a loop off the end of a fixed array. `cheatstate` needed no changes at all —
+it keys on the group name, so a hand-entered cheat's tick is remembered by the same mechanism.
+
+The one real trap was in the append. `cheat_group_t::name` is a pointer, and growing the set
+reallocs the string table under every name already in it. Repointing them needs to know where the
+user groups begin, and telling them apart by comparing pointers into two unrelated allocations is
+not something C promises to answer — hence `cheatset_t::user_first`.
+
+`tools/inputs/cheat-entry.txt` types a two-line cheat in, saves it, and toggles it. Two lines
+rather than one deliberately: the group model exists for the multi-line case.
+
+### `^` and `$` in a drawn string take the menu down
+
+`ui_button(..., "^", ...)` on the code pad asserted immediately:
+
+```
+ASSERTION FAILED: !error
+file "src/rdpq/rdpq_paragraph.c", line 537, function: __rdpq_paragraph_build
+invalid style id:    at position 0 (font id must be two hex digits)
+```
+
+`$XX` selects a font in rdpq_text and `^XX` selects a style, and a malformed pair is not ignored —
+`__rdpq_paragraph_build` calls `assertf`, which on this target is a hard drop into the inspector.
+**Every string this menu draws goes through that parser, and they include ROM filenames, ROM header
+titles and cheat names from a corpus nobody here wrote.** A game called `Foo^Bar.z64` would have
+taken the grid down the moment its tile scrolled into view, and a cheat named `Infinite $$$` would
+have taken down the cheats screen.
+
+Nothing in this tree uses the markup deliberately — checked before choosing the fix — so `ui_text()`
+now doubles both characters unconditionally, which is rdpq's own escape. One place, no source to
+sanitise, and nothing to preserve. The caret also needed four pixels of baseline in `ui_button`:
+it is the only glyph on a button whose ink sits entirely at the top of the cap box, and the
+baseline that centres a capital pushed it out through the top of the disc.
+
+This is a **latent crash that predates the feature** and was found by accident. There is no test
+for it yet; the fixture harvests real game codes and none of them contain either character.
+
+### The hash gate moved on changes that drew nothing
+
+Ten of the suite's thirteen scripts changed hashes after the sheet cleanup — including `idle`,
+`grid-edges` and `tabs`, which exercise none of the code that changed. Each moved by **exactly 104
+pixels of exactly one colour pair**, one step apart on the RGBA5551 ladder, in the rectangle around
+the selected tile.
+
+That is the selection outline, which pulses on `phase += 6.0f * dt`. `dt` comes from `TICKS_READ()`,
+so the phase at a given frame is a function of how many CPU cycles the frames before it took — which
+is a function of the binary. Measured rather than assumed: inserting a `volatile int[64]` that
+nothing reads into `app_init()` moved `grid-edges` frame 00 and moved frame 01 **back** to the value
+it had two builds earlier.
+
+The M1 reproducibility gate passed throughout, because the same binary always produces the same
+cycle counts under ares. What was broken is the comparison the suite exists for —
+`diff before/hashes.txt after/hashes.txt` could not tell *the drawing changed* from *the binary got
+bigger*, and a red result you learn to ignore is worse than no result.
+
+**Fixed by giving a scripted run a fixed `dt` of 1/60 s** (`app.c`, guarded on
+`inputscript_active()`, which compiles to `false` without `DEV_HARNESS`). The whole run is now a
+pure function of the input script, which is the same principle that already keys input events on
+frame number rather than elapsed time. It does not weaken "motion is specified in seconds, never
+frames": the animation code is untouched and still integrates `dt`; only the clock the harness runs
+it against is fixed. Frame-time measurement is unaffected — the field bins use the *unclamped*
+interval and `frametime.c` reads `TICKS` directly.
+
+Verified the way round that matters: with the fix in, the same no-op probe produces
+**byte-identical** hashes. Two full suite runs after it are byte-identical to each other, 15 scripts
+and 62 frames, and `idle.txt` still reports `mallocs=0 reallocs=0` with a flat heap at frame 1200.
+
+**All hashes move once as a result of this change and should.** Every frame containing a tween was
+previously recording a number that depended on the compiler.
+
+The gate then earned itself back on the next change. Making the detail sheet's Z hint unconditional
+moved exactly eleven frames — the three detail-sheet stills, both `cheat-leak` sheet frames,
+`parental`'s sheet frame, and all five `launch` frames, which fade *from* the sheet image because
+`draw_fade_into()` composites onto whatever the buffer already held. Nothing on the grid, the tabs,
+the settings screen, `idle` or either art script moved. Before the fix that same change would have
+moved ten scripts and told nobody anything.
+
+---
+
+## 1y. The detail sheet stops describing the cartridge, and a shipped metadata table is ruled out
+
+The sheet led with three rows a player cannot act on: game code, save type and TV standard. Save
+type in particular is only interesting when it is *wrong*, and the sheet already has a row for
+that case. They are replaced by a play count and by a cheats row that now draws unconditionally.
+
+**"Cheats" was conditional, and its absence meant two different things.** No row appeared when
+`group_count == 0`, which is true both when this game has no codes and when the card has no
+`cheats.db` at all. Those want opposite responses from the user and looked identical. It now
+reads `None available`, so the second case shows up as *every* game saying the same thing.
+
+**A warning was being clipped into looking like a rendering fault.** `Not in the ROM database`
+is 23 characters against an `INFO_W` of 256 px at ~12.2 px/character, and `ui_label` hard-clips
+rather than ellipsising, so it drew as `Not in the ROM databa`. It had been wrong since the row
+was added and no screenshot had ever contained it: the fixture harvests real game codes out of
+`rom_info.c`, so nothing in it can miss the database. The demo tree, where every title misses on
+purpose, put it on screen the first time it was used. Shortened to `Not in the database`, which
+fits with margin. **`ui_label` still clips silently** — that is a trap, not a fixed bug, and the
+next string to outgrow its column will fail the same way.
+
+### The extras table: built, measured, and deliberately not shipped
+
+A shipped database of release dates and ESRB ratings was built and then removed. Recording it so
+it is not proposed again, and because the numbers were real:
+
+`tools/mkextras.py` queried **Wikidata** (`P400` = Nintendo 64, `P577` publication date, `P852`
+ESRB rating) and joined it to the 432 `MATCH_*` rows in `rom_info.c` on normalised titles, the
+same bridge `mkcheatkeys.py` uses. Result: **327 of 432 matched, 323 with a date, 189 with a
+rating, 6,572 bytes packed.** Two harness facts worth keeping:
+
+- **`FILTER(lang(?title) = "en")` silently dropped 22 of 474 items**, including Yoshi's Story,
+  Mega Man 64, Ridge Racer 64 and StarCraft 64. Wikidata migrated titles spelled the same in
+  every language to the `mul` language code. The join reported 288 hits and looked healthy; the
+  losses were indistinguishable from the Japan-only titles that genuinely do not match. Accepting
+  `mul` and `en-gb` took it to 324. This is the same failure shape as the harness traps in 1u and
+  1c — a green result from a setup that was measuring less than it claimed.
+- **Ocarina of Time came back rated E10+**, a category ESRB did not introduce until March 2005.
+  Wikidata was reporting a re-release's rating for a 1998 cartridge. Detectable only because the
+  anachronism is on its face; a game quietly re-rated T to M would have been invisible.
+
+Not shipped, for a reason that is about this repo rather than about the data. The rule here has
+been **ship code, never ship corpora**: `build/artcache` is fetched and gitignored, `cheats.db` is
+fetched and gitignored, and `n64_keys.tsv` is committed only because it is a bridge that makes a
+user-fetched corpus usable. Baking 327 commercial titles into the ROM would have been the first
+content corpus that arrives whether the user asked for it or not, and the exception was not worth
+carving. The parental-control design that would have consumed the ratings does not need them
+either: locking chosen titles behind a code is a per-record flag over the user's own library, with
+no external table involved.
+
+`rom_info.c` stays as it is. It is a commercial-title database too, but it is inherited and it is
+load-bearing — without the right save type the user's own cartridge dump does not save.
+
+---
+
+## 1x. The themes only ever changed half the screen
+
+Reported as "the cartridge theme is too hard to read the white text". It is not a palette
+preference. `fonts.c` registered the rdpq text styles **once, at font load, in fixed colours** --
+`STL_DEFAULT` pure white and `STL_GRAY` `0xA0A0A0` -- and nothing ever rebound them. A theme
+therefore changed every surface and no text.
+
+That is invisible on the three dark palettes and fatal on the one light one. Under `cartridge`,
+`panel_alt` is `0xF7F7EF` and `text` is `0x191919`; the theme was asking for near-black text and
+getting white, on every screen, from the day it was added. The settings screen is the worst of
+them because it is the most text on the largest panel.
+
+`theme_apply()` now rebinds `STL_DEFAULT` → `text`, `STL_GRAY` → `text_dim`, and both accent
+tokens → `text_accent`, and every path that assigns `app->theme` goes through it. Two details
+that are not obvious:
+
+- **`STL_YELLOW` and `STL_ORANGE` collapse to one colour.** They were used for the position
+  counter and for the "not in the ROM database" note, which are the same role. Keeping two names
+  costs nothing; keeping two hardcoded colours meant one of them was wrong under some theme.
+- **Button glyphs needed a style of their own** (`STL_ONBTN`, always white). They are drawn on
+  controller-colour discs, which `theme.h` deliberately excludes from the theme because they
+  describe physical hardware. Binding them to `text` with everything else turned the letters
+  black on the blue A button under `cartridge` — caught by looking at `ui_button` before
+  changing it, not by the screenshots.
+
+**Every framebuffer hash in the suite moves as a result, and should.** Midnight's `text` is
+`0xF7F7FF` and its `text_dim` is `0x9C9CAD`; the hardcoded styles were `0xFFFFFF` and
+`0xA0A0A0`. The values the design specified are now the values that get drawn.
+
+`screen_settings.c` also kept **a second copy of the theme list**, so a theme added to `theme.c`
+was unreachable from the only UI that can select one. It now calls `theme_count()`/`theme_at()`,
+which `theme.h` had exported all along.
+
+Two palettes added, `purple` and `red`, both on the same `round(i * 255/31)` ladder as the
+originals so the hex and the packed word agree exactly. Neither accent is a tint of its own
+theme -- purple takes pink, red takes gold -- because an accent inside the surface hue is the
+failure rule 2 at the top of `theme.c` exists to prevent.
+
+Verified by looking: `tools/inputs/manual/demo-themes.txt` walks all five and dumps the settings
+screen and the grid under each at 640 × 480, plus the detail sheet under `cartridge`.
+
+**Still open: the theme does not persist.** `settings_t` has no theme field, so `app.c` assigns
+`THEME_MIDNIGHT` at every boot and a choice made in settings survives until power-off. Adding
+two more palettes makes that more annoying, not less. Not fixed here.
+
+---
+
 ## 1w. Screenshots that can be published, and a still that could not be timed
 
 The README had no pictures, and could not have them: the fixture is built from real game titles

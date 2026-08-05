@@ -188,6 +188,19 @@ static void draw_badges (app_t *app, const lib_record_t *rec, int x, int y, int 
         ui_fill(bx + 5, by + 4, BADGE_SLOT - 10, BADGE_SLOT - 8, th->text);
     }
 
+    /* Bottom-left, the one corner the other two badges do not use, so there is still no
+     * precedence to resolve. A locked game keeps its tile and its art on purpose -- the padlock
+     * is there so pressing A is an informed choice rather than a surprise. */
+    if (rec->flags & LIBF_LOCKED) {
+        /* Drawn twice, black then text, because unlike the other two badges this one sits
+         * directly on the art with no slot behind it -- and box art is as often pale as dark. A
+         * white padlock on a bright card was legible only if you knew it was there. */
+        int lx = x + BADGE_INSET;
+        int ly = y + TILE_H - BADGE_INSET - BADGE_SLOT;
+        ui_padlock(lx + 1, ly + 1, BADGE_SLOT - 4, BADGE_SLOT, RGBA5551(0, 0, 0));
+        ui_padlock(lx, ly, BADGE_SLOT - 4, BADGE_SLOT, th->text);
+    }
+
     if ((rec->flags & LIBF_FAVORITE) && tab != TAB_FAVORITES) {
         /* Right triangle, hypotenuse from top-right to bottom-left. Distinguished from the
          * save badge by silhouette, not by colour -- under the Phosphor theme the two are

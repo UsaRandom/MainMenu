@@ -71,6 +71,9 @@ void input_poll (input_t *in, float dt) {
         pressed.r     = inputscript_pressed(ISCRIPT_BTN_R);
         pressed.z     = inputscript_pressed(ISCRIPT_BTN_Z);
         pressed.c_right = inputscript_pressed(ISCRIPT_BTN_CRIGHT);
+        pressed.c_up    = inputscript_pressed(ISCRIPT_BTN_CUP);
+        pressed.c_down  = inputscript_pressed(ISCRIPT_BTN_CDOWN);
+        pressed.c_left  = inputscript_pressed(ISCRIPT_BTN_CLEFT);
     } else {
         JOYPAD_PORT_FOREACH (i) {
             dir = joypad_get_direction(i, JOYPAD_2D_DPAD | JOYPAD_2D_STICK);
@@ -145,4 +148,7 @@ void input_poll (input_t *in, float dt) {
     if (pressed.r)     in->pressed |= BTN_R;
     if (pressed.z)     in->pressed |= BTN_Z;
     if (pressed.c_right) in->pressed |= BTN_CRIGHT;
+    if (pressed.c_up)    in->pressed |= BTN_CUP;
+    if (pressed.c_down)  in->pressed |= BTN_CDOWN;
+    if (pressed.c_left)  in->pressed |= BTN_CLEFT;
 }

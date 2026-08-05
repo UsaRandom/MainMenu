@@ -136,6 +136,17 @@ typedef struct {
 extern const theme_t THEME_MIDNIGHT;
 extern const theme_t THEME_CARTRIDGE;
 extern const theme_t THEME_PHOSPHOR;
+extern const theme_t THEME_PURPLE;
+extern const theme_t THEME_RED;
+
+/**
+ * @brief Make @p th the live theme's font colours. Call after every change to app->theme.
+ *
+ * Surfaces are read from the struct as each screen draws, so they need nothing. Text does: the
+ * rdpq font styles are registered state, and until this exists they were registered once in
+ * fixed white and stayed white under a light palette.
+ */
+void theme_apply (const theme_t *th);
 
 /** @brief Look a theme up by name, falling back to Midnight. */
 const theme_t *theme_by_name (const char *name);

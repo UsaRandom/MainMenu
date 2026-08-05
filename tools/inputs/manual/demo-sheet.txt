@@ -1,0 +1,27 @@
+# The detail sheet at full resolution, on a game with cheats and on a game without.
+#
+#     tools/regress.sh -m 'DEMO=1 FBSCALE=1' -o build/sheet-shots \
+#         tools/inputs/manual/demo-sheet.txt
+#
+# In manual/ because it wants FBSCALE=1 and the demo tree: the rows this checks are two words
+# long and 160x120 cannot answer whether they read correctly.
+#
+# The sheet lost its game code, save type and TV standard rows and gained a play count, and the
+# cheats row now draws even when there are none. Both cases have to be seen: a game the demo
+# tree gives cheats to, and one it does not, because "None available" is a new string that no
+# previous shot could contain.
+
+wait 260            # boot plate, then let the visible tiles decode
+
+press a
+wait 40
+fbdump              # 1: first title -- Recent, so it has a play count
+
+press b
+wait 30
+press right x3
+press a
+wait 40
+fbdump              # 2: a title with no cheats, and the unmatched-ROM warning at full width
+
+exit

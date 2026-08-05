@@ -1,0 +1,77 @@
+# Set a parental code, lock a game, then try to launch it.
+#
+# The whole feature end to end, because every part of it is a state machine that only means
+# anything in sequence: a code that is set but guards nothing, or a lock on a menu with no code,
+# both look fine in a single frame.
+#
+# The code is A Z L R -- four buttons the script can press. The C directions are in the alphabet
+# too and `press cup` reaches them (see mkinput.py), but a code made of them would test the
+# alphabet rather than the flow.
+
+wait 120
+
+press start         # settings
+wait 20
+press down x4       # -> Parental controls
+press a             # no code yet, so straight in
+wait 20
+fbdump              # 1: the panel, nothing set
+
+press a             # Code -> the pad, asking for a new one
+wait 20
+press a
+press z
+press l
+press r
+wait 20
+fbdump              # 2: entered once, now asking again
+
+press a
+press z
+press l
+press r
+wait 20
+fbdump              # 3: back on the panel, code set
+
+press down          # -> Locked games
+press a
+wait 20
+press a             # lock the first title
+press down
+press a             # and the second
+wait 15
+fbdump              # 4: the lock list, two padlocks
+
+press b             # panel
+wait 15
+press b             # settings
+wait 15
+press b             # grid
+wait 20
+press r x2          # Recent -> Favourites -> N64, where the two locked titles sort first
+wait 200            # the tiles have to decode before a badge on one means anything
+fbdump              # 5: the grid, padlocks on the two locked tiles
+
+press a             # the detail sheet for a locked game
+wait 40
+fbdump              # 6: the sheet, with its Locked row
+
+press a             # try to launch it
+wait 25
+fbdump              # 7: the code pad, refusing
+
+press a
+press z
+press l
+press cup           # deliberately wrong on the fourth press
+wait 25
+fbdump              # 8: rejected
+
+wait 60             # let the rejection clear
+press a
+press z
+press l
+press r             # the real code
+wait 40
+
+exit
