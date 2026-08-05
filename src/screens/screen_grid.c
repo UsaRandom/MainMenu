@@ -449,9 +449,20 @@ static void grid_enter (app_t *app) {
         debugf("GRID opening on %s\n", library_tab_label(tab));
     }
 
+    /* The cursor is NOT reset here, and that is the whole point of it being a file-scope static.
+     * It used to be, so backing out of a game sheet dropped you at the top of the tab -- open the
+     * fortieth title, read it, press B, and you are looking at the first four again with forty
+     * presses between you and where you were. Every list in every console menu keeps its place;
+     * this one lost it on the one journey people make most.
+     *
+     * rebuild_view() has already clamped it, which covers the two ways the view can shrink
+     * underneath a held position: un-favouriting from the sheet while the Favorites tab is up,
+     * and switching to a player whose Recent list is shorter.
+     *
+     * The scroll is snapped rather than animated, because the sheet has been covering the grid --
+     * a scroll that animates from wherever it left off would play under a screen nobody can see
+     * and arrive looking like a jump. */
     rebuild_view(app);
-    cursor = 0;
-    scroll_y = scroll_target = 0.0f;
     retarget_scroll();
     scroll_y = scroll_target;
     tween_start(&grow, DUR_TILE_GROW);
@@ -638,6 +649,32 @@ static void grid_render (app_t *app, surface_t *fb) {
         (void)thumbcache_get(app->thumbs, app->lib, view[cursor]);
     }
 
+    /* Then the rows just off screen, so the art for the row a scroll is about to reveal is
+     * already in a slot rather than being looked up once it arrives.
+     *
+     * Asked for here, from the screen, rather than left to thumbcache_run's own prefetch passes.
+     * Those walk the library from index 0, so on a 500-title card they fill the pool with
+     * whatever sits at the front of the alphabet and the tiles either side of the cursor never
+     * get a slot. Proximity is a fact only the grid knows -- it owns the scroll position and the
+     * tab view -- so the grid is where it has to be expressed.
+     *
+     * These are ordinary wants, so they claim free slots but come after everything visible: the
+     * visible passes inside thumbcache_run are tried first and a want made this frame can never
+     * be evicted. */
+    {
+        int sy0 = (int)roundf(scroll_y);
+        int lo = sy0 / ROW_PITCH - THUMB_PREFETCH_ROWS;
+        int hi = (sy0 + GRID_H) / ROW_PITCH + THUMB_PREFETCH_ROWS;
+        for (int row = lo; row <= hi; row++) {
+            for (int col = 0; col < GRID_COLS; col++) {
+                int idx = row * GRID_COLS + col;
+                if (idx >= 0 && idx < view_count) {
+                    (void)thumbcache_get(app->thumbs, app->lib, view[idx]);
+                }
+            }
+        }
+    }
+
     rdpq_attach(fb, NULL);
     rdpq_set_mode_fill(color_from_packed16(th->bg));
     rdpq_fill_rectangle(0, 0, SCREEN_W, SCREEN_H);
@@ -763,6 +800,20 @@ static void grid_render (app_t *app, surface_t *fb) {
 #define DECODE_BUDGET_BOOT_US   14000
 #endif
 
+/* Atlas fetches are budgeted separately from decodes, because they are a different size of thing:
+ * a slot is 27,440 bytes read in one go, where a decode is measured in whole fields per row.
+ *
+ * The moving budget is deliberately the larger of the two. While the cursor is travelling the
+ * decoder is switched off entirely, so this is all the background phase has left to do, and a
+ * scroll is precisely the moment new tiles are needed fastest. 4,000 us is a quarter of a field
+ * and covers several slots at any plausible SD rate. */
+#ifndef FETCH_BUDGET_MOVING_US
+#define FETCH_BUDGET_MOVING_US  4000
+#endif
+#ifndef FETCH_BUDGET_IDLE_US
+#define FETCH_BUDGET_IDLE_US    2000
+#endif
+
 /**
  * @brief Decode art in the window where the CPU would otherwise wait on the RDP.
  */
@@ -782,7 +833,13 @@ static void grid_background (app_t *app, uint32_t budget_ticks) {
      * boot_plate_working() excludes the rise and the curtain, so the two animated stretches keep
      * the whole field and only the static hold is spent working. */
     if (boot_plate_working(&boot_anim)) {
-        thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
+        /* Cached tiles first, and on a warm card that is all of them: the plate's release gate is
+         * "is the first row settled", so filling that row from the atlas rather than decoding it
+         * is the difference between a plate that holds for its measured 1,998 ms and one that
+         * lifts almost at once. */
+        if (!thumbcache_run_cached(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US)) {
+            thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
+        }
         return;
     }
     if (!boot_anim.done) {
@@ -800,8 +857,20 @@ static void grid_background (app_t *app, uint32_t budget_ticks) {
      * Nothing here makes decoding cheaper. It moves it to where dropped frames do not read as
      * judder: art appears a quarter-second after you stop, which is when you can actually look
      * at it, and the scroll itself stays smooth. The permanent answer is to not decode twice --
-     * see docs/AUDIT.md on the on-disk cache. */
+     * see docs/AUDIT.md on the on-disk cache.
+     *
+     * The atlas is exempt, and always should have been. Everything above is an argument about
+     * PNG decoding; a tile that has already been decoded on some previous boot is one seek and a
+     * 27 KB read, which is nowhere near a field. Gating that too is what made a warm card behave
+     * like a cold one -- the reported symptom was tiles refusing to appear until the scrolling
+     * stopped, on a library whose art was entirely in thumbs.pak. */
     if (frames_since_move < DECODE_SETTLE_FRAMES) {
+        thumbcache_run_cached(app->thumbs, app->lib, FETCH_BUDGET_MOVING_US);
+        return;
+    }
+    /* Cached tiles first when settled as well, so the cheap answers all land before the decoder
+     * takes the frame for a single expensive one. */
+    if (thumbcache_run_cached(app->thumbs, app->lib, FETCH_BUDGET_IDLE_US)) {
         return;
     }
     thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_IDLE_US);

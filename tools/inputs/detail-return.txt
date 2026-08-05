@@ -1,0 +1,33 @@
+# Back out of a game sheet and land where you left, not at the top of the tab.
+#
+# The grid used to reset the cursor and the scroll in grid_enter(), which runs on every entry and
+# not only the first. So opening the fortieth title and pressing B put you back among the first
+# four with forty presses between you and where you had been -- on the single journey people make
+# most often in a launcher.
+#
+# The frames either side of the sheet are the whole test: 1 and 3 must show the same selected
+# tile at the same scroll offset, and 3 must not be the top of the library. A hash comparison
+# alone would not say that, because the two frames legitimately differ -- the sheet leaves the
+# arrival tween restarted -- so this one is read, not just diffed.
+
+wait 120
+
+# Onto N64, because the fixture opens on Recent and Recent holds two titles -- a tab that does
+# not scroll cannot show a scroll being lost.
+press r x2
+wait 20
+
+press down x3       # three rows down, well past anything visible at rest
+press right x2
+wait 30
+fbdump              # 1: somewhere in the middle of the library
+
+press a
+wait 40
+fbdump              # 2: the sheet for that title
+
+press b
+wait 40
+fbdump              # 3: MUST match frame 1's selection and scroll, not the top of the tab
+
+exit
