@@ -20,6 +20,7 @@
 
 #include "app.h"
 #include "cheats/cheatdb.h"
+#include "menu/cheatcheck.h"
 #include "cheats/cheatstate.h"
 #include "cheats/usercheats.h"
 #include "library/playstate.h"
@@ -68,29 +69,68 @@ static bool    closing;
  */
 static int cheats_for_rom = -1;
 
+/** Whether a cheat load is owed for the current game. See detail_enter(). */
+static bool cheats_pending;
+
+/** Whether the cheat engine can hook this game at all, decided alongside the load. */
+static cheatfit_t cheats_fit = CHEATFIT_OK;
+
 static void detail_enter (app_t *app) {
     closing = false;
     tween_start(&rise, DUR_SHEET_OPEN);
 
     /* Load once per game rather than once per visit: coming back from the cheats screen must not
      * throw away what the user just ticked. Keyed on WHICH game, not on whether anything is
-     * loaded -- see cheats_for_rom. */
-    if (app->launch.rom_id >= 0 && cheats_for_rom != app->launch.rom_id) {
-        cheatdb_free(&app->cheats);
-        cheats_for_rom = app->launch.rom_id;
-        const lib_record_t *r = &app->lib->records[app->launch.rom_id];
-        cheatdb_load(r->check_code, r->game_code, r->version, &app->cheats);
-        /* Before cheatstate_apply(), so a remembered tick covers a hand-entered cheat too. They
-         * are keyed by name like every other group and need no special case. */
-        usercheats_apply(&app->cheats, playstate_key(r));
-        /* Re-tick whatever the user had on last time. Matched by group NAME, so a refreshed
-         * cheats.db that reorders its entries cannot silently enable a different cheat --
-         * see cheatstate.h. */
-        int on = cheatstate_apply(&app->cheats, playstate_key(r));
-        if (on > 0) {
-            debugf("CHEATSTATE restored %d cheats for %s\n", on, r->game_code);
-        }
+     * loaded -- see cheats_for_rom.
+     *
+     * Owed here, done in background(). The load is an fseek and an fread of this game's blob out
+     * of cheats.db, which is nothing under ares -- the DFS is in the ROM -- and about a second on
+     * FatFs over a real SC64. Doing it inside enter() put that second inside a screen transition,
+     * where nothing feeds the mixer, and the music audibly stopped every time a sheet opened. */
+    cheats_pending = (app->launch.rom_id >= 0 && cheats_for_rom != app->launch.rom_id);
+}
+
+/**
+ * @brief Do the owed cheat load, if there is one.
+ *
+ * Called from background(), which runs while the RDP drains, and from the Z handler for the case
+ * where the user opens the cheats screen before background() has had a turn. Idempotent.
+ */
+static void load_cheats_now (app_t *app) {
+    if (!cheats_pending || app->launch.rom_id < 0) {
+        return;
     }
+    cheats_pending = false;
+
+    cheatdb_free(&app->cheats);
+    cheats_for_rom = app->launch.rom_id;
+    const lib_record_t *r = &app->lib->records[app->launch.rom_id];
+    cheatdb_load(r->check_code, r->game_code, r->version, &app->cheats);
+    /* Before cheatstate_apply(), so a remembered tick covers a hand-entered cheat too. They
+     * are keyed by name like every other group and need no special case. */
+    usercheats_apply(&app->cheats, playstate_key(r));
+    /* Re-tick whatever the user had on last time. Matched by group NAME, so a refreshed
+     * cheats.db that reorders its entries cannot silently enable a different cheat --
+     * see cheatstate.h. */
+    int on = cheatstate_apply(&app->cheats, playstate_key(r));
+    if (on > 0) {
+        debugf("CHEATSTATE restored %d cheats for %s\n", on, r->game_code);
+    }
+
+    /* Whether the engine can hook this ROM, asked here rather than at launch because the answer
+     * belongs next to the cheats row -- somebody should learn that cheats will not run before
+     * they spend a minute ticking them, not after the game boots without them. It reads 4 KB off
+     * the card, so it rides in background() with the load rather than blocking a transition. */
+    char why[96];
+    cheats_fit = (r->path != NULL) ? cheatcheck_rom(r->path, why, sizeof(why)) : CHEATFIT_OK;
+    if (cheats_fit != CHEATFIT_OK) {
+        debugf("CHEATCHECK %s: %s\n", r->game_code, why);
+    }
+}
+
+static void detail_background (app_t *app, uint32_t budget_ticks) {
+    (void)budget_ticks;
+    load_cheats_now(app);
 }
 
 static void detail_update (app_t *app, float dt) {
@@ -138,6 +178,11 @@ static void detail_update (app_t *app, float dt) {
      * one in for. The screen says so itself when the list is empty. */
     if (input_pressed(in, BTN_Z)) {
         sound_play_effect(SFX_ENTER);
+        /* Forced, in case background() has not had a turn yet -- the cheats screen with an empty
+         * set is indistinguishable from a game that has no cheats. Blocking here is fine: the
+         * user has asked for the list and is waiting for it, which is the one moment the wait
+         * is honest. */
+        load_cheats_now(app);
         app_goto(app, SCREEN_CHEATS);
         return;
     }
@@ -304,7 +349,17 @@ static void detail_render (app_t *app, surface_t *fb) {
             on++;
         }
     }
-    if (app->cheats.group_count == 0) {
+    if (cheats_pending) {
+        /* Not "None available" -- that is an answer, and we do not have one yet. Saying so for
+         * the frame or two before background() runs stops the row flicking from a wrong answer
+         * to a right one. */
+        y = info_row(INFO_X, y, INFO_W, "Cheats", "Checking...");
+    } else if (cheats_fit != CHEATFIT_OK && cheats_fit != CHEATFIT_UNREADABLE) {
+        /* The engine cannot hook this ROM, so whatever is in the database for it would be ticked
+         * and then silently ignored. Saying so where the count would go is the only place a
+         * player looks before deciding to bother. */
+        y = info_row(INFO_X, y, INFO_W, "Cheats", "Not supported for this game");
+    } else if (app->cheats.group_count == 0) {
         y = info_row(INFO_X, y, INFO_W, "Cheats", "None available");
     } else {
         snprintf(buf, sizeof(buf), "%d of %d enabled", on, app->cheats.group_count);
@@ -373,4 +428,5 @@ const screen_t SCREEN_DETAIL_DEF = {
     .enter  = detail_enter,
     .update = detail_update,
     .render = detail_render,
+    .background = detail_background,
 };
