@@ -20,6 +20,7 @@
 #include "cheats/cheatdb.h"
 #include "menu/fonts.h"
 #include "library/cache.h"
+#include "menu/music.h"
 #include "menu/parental.h"
 #include "menu/settings.h"
 #include "menu/sound.h"
@@ -32,15 +33,37 @@
 #define LIST_W      SAFE_W
 #define ROW_H       34
 
+/** The level meter drawn in place of a number. A number tells you 6; a meter tells you 6 of 10. */
+#define METER_W     14
+#define METER_GAP   4
+#define METER_H     18
+
+/** How long the track row must sit still before the chosen track is actually started.
+ *
+ * Choosing and playing have to be separate, and this is why. A held direction repeats at up to
+ * 20 steps a second (ui/input.h), and starting a track tears down the player, frees the old song,
+ * reads a new one and builds a new sequencer. Twenty of those a second, against an audio pipeline
+ * that already has eight buffers of the previous song handed to the DMA and no way to recall
+ * them, plays fragments of half a dozen songs on top of each other and lands on audio that has
+ * nothing to do with the row you stopped on. That is exactly what it did.
+ *
+ * 0.30 s is longer than the 0.05 s gap between repeats and shorter than a deliberate second
+ * press, so scrolling the list costs one load at the end rather than one per step, and a single
+ * press still feels immediate. */
+#define TRACK_SETTLE_S  0.30f
+
 typedef enum {
     ROW_THEME = 0,
-    ROW_SOUNDFX,
+    ROW_SFX,
+    ROW_MUSIC,
+    ROW_TRACK,
     ROW_CLOCK,
     ROW_PARENTAL,
     ROW_COUNT,
 } row_t;
 
 static int cursor;
+static float track_settle;      /**< seconds left before the chosen track starts; 0 = none pending */
 
 /* theme.c owns the list. This screen used to keep a second copy of it, which meant adding a
  * theme in one place left the other short and the new one simply unreachable from the only UI
@@ -54,14 +77,59 @@ static int theme_index (const theme_t *th) {
     return 0;
 }
 
+/** Start the chosen track now, if one is waiting. */
+static void flush_track (app_t *app) {
+    if (track_settle <= 0.0f) return;
+    track_settle = 0.0f;
+    music_set_track(app->settings.music_track);
+}
+
 static void settings_enter (app_t *app) {
     (void)app;
     cursor = 0;
+    track_settle = 0.0f;
+}
+
+/** Leaving must not swallow a pending choice.
+ *
+ * Without this, picking a track and pressing B inside 0.30 s selects it in the settings file and
+ * never plays it -- so the one case where the debounce is invisible would be the one case where
+ * it looks broken. It also has to run when the code pad or the clock takes over the screen, which
+ * is why it hangs off leave() rather than off the B handler. */
+static void settings_leave (app_t *app) {
+    flush_track(app);
+}
+
+/** Step a volume, clamped rather than wrapped.
+ *
+ * Wrapping is wrong for a level: holding left to silence something and having it jump to maximum
+ * is the one outcome a volume control must never produce. */
+static int step_volume (int value, int delta) {
+    value += delta;
+    if (value < 0) return 0;
+    if (value > SOUND_SFX_VOLUME_MAX) return SOUND_SFX_VOLUME_MAX;
+    return value;
+}
+
+/** Step the track, wrapping, with Shuffle sitting at the top of the list where a default belongs. */
+static int step_track (int track, int delta) {
+    int n = music_track_count();
+    /* Map [SHUFFLE, 0 .. n-1] onto [0 .. n] so the wrap is one modulo rather than three branches. */
+    int slot = (track == MUSIC_TRACK_SHUFFLE) ? 0 : track + 1;
+    slot = ((slot + delta) % (n + 1) + (n + 1)) % (n + 1);
+    return (slot == 0) ? MUSIC_TRACK_SHUFFLE : slot - 1;
 }
 
 static void settings_update (app_t *app, float dt) {
-    (void)dt;
     const input_t *in = &app->input;
+
+    if (track_settle > 0.0f) {
+        track_settle -= dt;
+        if (track_settle <= 0.0f) {
+            track_settle = 0.0f;
+            music_set_track(app->settings.music_track);
+        }
+    }
 
     if (input_pressed(in, BTN_B) || input_pressed(in, BTN_START)) {
         sound_play_effect(SFX_EXIT);
@@ -84,13 +152,17 @@ static void settings_update (app_t *app, float dt) {
 
     int delta = (in->right ? 1 : 0) - (in->left ? 1 : 0);
     bool toggle = input_pressed(in, BTN_A);
-    if (delta != 0 || toggle) {
-        sound_play_effect(SFX_SETTING);
-    }
+
+    /* The click used to be played here for every row at once. It cannot be, now that three of the
+     * rows are audio: the effects row has to play its click AFTER the new level is applied,
+     * because that click is the thing being set rather than feedback for the press; the music row
+     * must stay quiet so the level being adjusted is what you hear; and the track row is a list,
+     * not a value. So each row says what it sounds like. */
 
     switch ((row_t)cursor) {
         case ROW_THEME:
             if (delta != 0 || toggle) {
+                sound_play_effect(SFX_SETTING);
                 int n = theme_count();
                 int i = theme_index(app->theme) + (delta != 0 ? delta : 1);
                 app->theme = theme_at(((i % n) + n) % n);
@@ -100,14 +172,41 @@ static void settings_update (app_t *app, float dt) {
                 theme_apply(app->theme);
             }
             break;
-        case ROW_SOUNDFX:
-            if (toggle || delta != 0) {
-                app->settings.soundfx_enabled = !app->settings.soundfx_enabled;
-                sound_use_sfx(app->settings.soundfx_enabled);
-            }
+        case ROW_SFX: {
+            /* A gets the same meaning it has everywhere else on this list -- step forward one --
+             * so someone who never tries left and right still gets somewhere. */
+            int step = (delta != 0) ? delta : (toggle ? 1 : 0);
+            if (step == 0) break;
+            int next = step_volume(app->settings.sfx_volume, step);
+            if (next == app->settings.sfx_volume) break;
+            app->settings.sfx_volume = next;
+            sound_set_sfx_volume(next);
+            /* After the level is applied, not before: the point is to hear the new one. Silent at
+             * zero, which is itself the correct answer to "what does off sound like". */
+            sound_play_effect(SFX_SETTING);
             break;
+        }
+        case ROW_MUSIC: {
+            int step = (delta != 0) ? delta : (toggle ? 1 : 0);
+            if (step == 0) break;
+            int next = step_volume(app->settings.music_volume, step);
+            if (next == app->settings.music_volume) break;
+            app->settings.music_volume = next;
+            music_set_volume(next);
+            break;
+        }
+        case ROW_TRACK: {
+            int step = (delta != 0) ? delta : (toggle ? 1 : 0);
+            if (step == 0) break;
+            /* The row moves now; the music starts when the row stops. See TRACK_SETTLE_S. */
+            app->settings.music_track = step_track(app->settings.music_track, step);
+            track_settle = TRACK_SETTLE_S;
+            sound_play_effect(SFX_CURSOR);
+            break;
+        }
         case ROW_CLOCK:
             if (toggle) {
+                sound_play_effect(SFX_SETTING);
                 /* Behind the code, but only once there is one. The schedule is enforced against
                  * this clock and nothing else, so a child who can set the time can move bedtime
                  * -- which would make the whole "Playing allowed 8 am to 8 pm" row decoration.
@@ -129,6 +228,7 @@ static void settings_update (app_t *app, float dt) {
             break;
         case ROW_PARENTAL:
             if (toggle) {
+                sound_play_effect(SFX_SETTING);
                 /* The code guards its own panel. Without this the lock list and the schedule are
                  * one press from any child who found Settings, and the feature is decoration --
                  * see the note at the top of screen_parental.c. */
@@ -161,6 +261,37 @@ static void draw_row (app_t *app, int idx, const char *label, const char *value)
     ui_label(LIST_X + 16, y + 23, LIST_W - 32, ALIGN_RIGHT, STL_DEFAULT, value);
 }
 
+/** A volume row: same left half as every other row, a run of blocks where the value would be.
+ *
+ * Blocks rather than a number because the two audio rows sit in a list of things that read as
+ * words, and "6" in that column invites the question "out of what". Ten blocks answer it without
+ * a second label. */
+static void draw_volume_row (app_t *app, int idx, const char *label, int value) {
+    const theme_t *th = app->theme;
+    int y = LIST_Y + idx * ROW_H;
+
+    if (idx == cursor) {
+        ui_fill(LIST_X, y, LIST_W, ROW_H, th->panel_alt);
+        ui_fill(LIST_X, y, ACCENT_BAR, ROW_H, th->tab_underline);
+    }
+    ui_label(LIST_X + 16, y + 23, LIST_W - 32, ALIGN_LEFT,
+             idx == cursor ? STL_DEFAULT : STL_GRAY, label);
+
+    /* The unfilled blocks take whichever of the two row backgrounds this row is NOT drawn on.
+     * panel_alt alone would have been invisible on the selected row, because that is exactly what
+     * the selection fills with -- so the empty half of the meter would disappear on the one row
+     * where the reader is adjusting it and needs to see how much is left. */
+    uint16_t empty = (idx == cursor) ? th->bg : th->panel_alt;
+
+    int span = SOUND_SFX_VOLUME_MAX * (METER_W + METER_GAP) - METER_GAP;
+    int mx = LIST_X + LIST_W - 16 - span;
+    int my = y + (ROW_H - METER_H) / 2;
+    for (int i = 0; i < SOUND_SFX_VOLUME_MAX; i++) {
+        ui_fill(mx + i * (METER_W + METER_GAP), my, METER_W, METER_H,
+                i < value ? th->tab_underline : empty);
+    }
+}
+
 static void settings_render (app_t *app, surface_t *fb) {
     const theme_t *th = app->theme;
     char buf[96];
@@ -173,8 +304,9 @@ static void settings_render (app_t *app, surface_t *fb) {
     ui_label(SAFE_X, 36, SAFE_W, ALIGN_LEFT, STL_DEFAULT, "Settings");
 
     draw_row(app, ROW_THEME, "Theme", th->name);
-    draw_row(app, ROW_SOUNDFX, "Sound effects",
-             app->settings.soundfx_enabled ? "Yes" : "No");
+    draw_volume_row(app, ROW_SFX, "Sound effects", app->settings.sfx_volume);
+    draw_volume_row(app, ROW_MUSIC, "Music", app->settings.music_volume);
+    draw_row(app, ROW_TRACK, "Track", music_track_name(app->settings.music_track));
 
     /* The row shows the clock rather than the word "Clock" twice, because "is it right" is the
      * only question anyone opens this for. An unset clock reads as 1970 and saying so is more use
@@ -226,6 +358,7 @@ static void settings_render (app_t *app, surface_t *fb) {
 const screen_t SCREEN_SETTINGS_DEF = {
     .id     = SCREEN_SETTINGS,
     .enter  = settings_enter,
+    .leave  = settings_leave,
     .update = settings_update,
     .render = settings_render,
 };

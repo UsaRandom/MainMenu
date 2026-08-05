@@ -90,7 +90,7 @@ struct app_s {
     /** Summed CPU microseconds per window, divided by 60 when reported. render_us is display-list
      *  construction only: rdpq_detach_show() returns before the RDP has drawn anything, so the
      *  drain lands in the gap between these and the frame interval, not in render_us. */
-    uint32_t  update_us, render_us, bg_us, spin_us;
+    uint32_t  update_us, render_us, bg_us, spin_us, snd_us;
     time_t    now;
 
     library_t *lib;

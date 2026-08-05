@@ -46,11 +46,19 @@ typedef struct {
     /** @brief Show rom tags in browser */  
     bool show_browser_rom_tags;
 
-    /** @brief Enable Background music */
-    bool bgm_enabled;
+    /* Two booleans became two levels. `soundfx_enabled` and `bgm_enabled` are still read on load
+     * so that an existing config.ini keeps its owner's answer, but nothing writes them again --
+     * see settings.c. bgm_enabled had never done anything at all: it was saved, loaded, and read
+     * by no other line in the program. */
 
-    /** @brief Enable Sound effects within the menu */
-    bool soundfx_enabled;
+    /** @brief Background music volume, 0 (off) to MUSIC_VOLUME_MAX */
+    int music_volume;
+
+    /** @brief Which track to play, or MUSIC_TRACK_ALL for the whole set in order */
+    int music_track;
+
+    /** @brief Sound effect volume, 0 (off) to SOUND_SFX_VOLUME_MAX */
+    int sfx_volume;
 
     /** @brief Enable rumble feedback within the menu */
     bool rumble_enabled;

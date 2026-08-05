@@ -14,7 +14,7 @@ press start         # settings
 wait 25
 fbdump              # 1: the settings screen, Clock reading whatever the console booted with
 
-press down x2       # -> Clock
+press down x4       # -> Clock
 press a
 wait 25
 fbdump              # 2: the fields, seeded

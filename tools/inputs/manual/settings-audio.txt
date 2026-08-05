@@ -1,0 +1,28 @@
+# The two volume rows, selected, so the meter can be looked at on the row it is being set from.
+#
+# In tools/inputs/manual/ rather than beside the suite: it exists to be eyeballed at full
+# resolution, and its frames would only ever be compared against a screenshot of a decision
+# somebody made by looking at it. The empty half of the meter used to be drawn in panel_alt,
+# which is what the selection fills the row with, so it vanished on exactly the row being
+# adjusted -- and no hash would have said so, because the run still produced a frame.
+
+wait 120
+
+press start         # settings
+wait 20
+
+press down          # -> Sound effects
+press left x4       # down to 2 of 10, so filled and empty are both clearly visible
+wait 20
+fbdump              # 1: effects selected, meter part full
+
+press down          # -> Music
+press right x4      # up to 10 of 10
+wait 20
+fbdump              # 2: music selected, meter full, effects row unselected below cursor
+
+press down x2       # -> Clock, so both audio rows are unselected
+wait 20
+fbdump              # 3: neither selected
+
+exit

@@ -19,8 +19,14 @@ static settings_t init = {
     .show_save_files = false,
     .show_cheat_files = false,
     .show_rom_configuration_files = false,
-    .soundfx_enabled = false,
-    .bgm_enabled = false,
+    /* On by default, both of them. The old defaults were false, which meant a menu that shipped
+     * silent and stayed silent for anyone who never opened Settings -- and with music that is the
+     * difference between a product that has a soundtrack and one that merely contains one.
+     * 6 of 10 rather than 10: loud enough to hear over a room, quiet enough not to be the first
+     * thing anyone reaches to turn down. */
+    .sfx_volume = 6,
+    .music_volume = 6,
+    .music_track = -1,          /* MUSIC_TRACK_SHUFFLE */
 #ifdef FEATURE_AUTOLOAD_ROM_ENABLED
     .rom_autoload_enabled = false,
     .rom_autoload_path = "",
@@ -59,8 +65,21 @@ void settings_load (settings_t *settings) {
     settings->show_save_files = ini_get_bool(ini, "menu", "show_save_files", init.show_save_files);
     settings->show_cheat_files = ini_get_bool(ini, "menu", "show_cheat_files", init.show_cheat_files);
     settings->show_rom_configuration_files = ini_get_bool(ini, "menu", "show_rom_configuration_files", init.show_rom_configuration_files);
-    settings->soundfx_enabled = ini_get_bool(ini, "menu", "soundfx_enabled", init.soundfx_enabled);
-    settings->bgm_enabled = ini_get_bool(ini, "menu", "bgm_enabled", init.bgm_enabled);
+    /* Read the retired booleans first and let them pick the default for the level that replaced
+     * them, so someone who had turned effects off does not get them back at volume 6 on the first
+     * boot after an update. The new keys win when present, which they are from the first save. */
+    bool had_sfx = ini_get_bool(ini, "menu", "soundfx_enabled", init.sfx_volume > 0);
+    settings->sfx_volume = ini_get_int(ini, "menu", "sfx_volume",
+                                       had_sfx ? init.sfx_volume : 0);
+    settings->music_volume = ini_get_int(ini, "menu", "music_volume", init.music_volume);
+    settings->music_track = ini_get_int(ini, "menu", "music_track", init.music_track);
+
+    /* Clamped on the way in, not on the way out. A hand-edited config.ini is a normal thing to
+     * find on a card, and a volume of 400 must not reach the mixer. */
+    if (settings->sfx_volume < 0) settings->sfx_volume = 0;
+    if (settings->sfx_volume > 10) settings->sfx_volume = 10;
+    if (settings->music_volume < 0) settings->music_volume = 0;
+    if (settings->music_volume > 10) settings->music_volume = 10;
 
 #ifdef FEATURE_AUTOLOAD_ROM_ENABLED
     settings->rom_autoload_enabled = ini_get_bool(ini, "menu", "autoload_rom_enabled", init.rom_autoload_enabled);
@@ -91,8 +110,9 @@ void settings_save (settings_t *settings) {
     ini_set_bool(ini, "menu", "show_save_files", settings->show_save_files);
     ini_set_bool(ini, "menu", "show_cheat_files", settings->show_cheat_files);
     ini_set_bool(ini, "menu", "show_rom_configuration_files", settings->show_rom_configuration_files);
-    ini_set_bool(ini, "menu", "soundfx_enabled", settings->soundfx_enabled);
-    ini_set_bool(ini, "menu", "bgm_enabled", settings->bgm_enabled);
+    ini_set_int(ini, "menu", "sfx_volume", settings->sfx_volume);
+    ini_set_int(ini, "menu", "music_volume", settings->music_volume);
+    ini_set_int(ini, "menu", "music_track", settings->music_track);
 #ifdef FEATURE_AUTOLOAD_ROM_ENABLED
     ini_set_bool(ini, "menu", "autoload_rom_enabled", settings->rom_autoload_enabled);
     ini_set_string(ini, "autoload", "rom_path", settings->rom_autoload_path);

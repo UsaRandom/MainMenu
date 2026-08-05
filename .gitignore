@@ -39,3 +39,4 @@
 # Real title-card art fetched from n64-tools/n64-flashcart-menu-metadata for testing.
 # 1.77 GB upstream, Unlicense, and not ours to vendor. tools/getart.py refetches it.
 /build/artcache/
+/filesystem/music/

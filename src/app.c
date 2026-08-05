@@ -23,6 +23,7 @@
 #include "dev/inputscript.h"
 #include "flashcart/flashcart.h"
 #include "menu/fonts.h"
+#include "menu/music.h"
 #include "menu/parental.h"
 #include "menu/paths.h"
 #include "menu/sound.h"
@@ -44,6 +45,11 @@
  *  the schedule on is testing the allowed case unless it deliberately moves the hours. */
 #define SCRIPT_CLOCK_EPOCH  1785853800L
 
+/** The one track a scripted run plays. -1 restores the shuffle; see where this is used. */
+#ifndef SCRIPT_MUSIC_TRACK
+#define SCRIPT_MUSIC_TRACK  0
+#endif
+
 /* Video. Three buffers, not upstream's two: with two, display_try_get() returns NULL whenever
  * the RDP has not drained, and the CPU spins instead of doing useful work -- which is exactly
  * the window the background() phase exists to use. The third buffer costs 614,400 bytes, which
@@ -61,6 +67,20 @@ static const screen_t *SCREENS[SCREEN_COUNT];
 
 void app_goto (app_t *app, screen_id_t screen) {
     app->next_screen = screen;
+}
+
+/** Feed the mixer, and charge the time to snd_us.
+ *
+ * Called several times across a frame rather than once at the bottom. mixer_try_play() fills
+ * every buffer that has drained and then returns, so calling it more often does not do more work
+ * -- it does the same work sooner, which is the whole difference between smooth audio and
+ * choppy audio when the frame either side of it is long. Rendering and background() together can
+ * hold the loop for tens of milliseconds, and until this existed nothing touched the mixer for
+ * that entire stretch. */
+static void pump_audio (app_t *app) {
+    uint32_t t = TICKS_READ();
+    sound_poll();
+    app->snd_us += TIMER_MICROS(TICKS_SINCE(t));
 }
 
 void app_fault (app_t *app, const char *message) {
@@ -110,7 +130,25 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
 
     /* The setting existed and the toggle drew, but nothing ever told the sound system about it --
      * turning sound effects off in settings changed a bool and nothing else. */
-    sound_use_sfx(app->settings.soundfx_enabled);
+    sound_set_sfx_volume(app->settings.sfx_volume);
+
+    /* Music starts here, before the library scan, and deliberately: building the oscillator
+     * tables is the one unchunkable cost in the whole boot, so it goes next to the other fixed
+     * boot costs rather than landing on a keypress later.
+     *
+     * A scripted run plays too, rather than being silenced, because the cost of music is a frame
+     * cost and silencing it would make the one harness that can measure that cost the one place
+     * it never appears. What a script does NOT get is "All tracks": advancing to the next song
+     * happens when the mixer has pulled a song's worth of samples, which is a function of how
+     * fast ares happens to run rather than of the frame counter -- and each advance allocates, so
+     * tools/inputs/idle.txt's "a settled frame allocates nothing" gate would go red or green
+     * depending on the host's mood. One track, looping, allocates nothing after boot.
+     *
+     * Overridable so the shuffle itself can be exercised, which is otherwise unreachable from any
+     * harness -- `make TUNE='-DSCRIPT_MUSIC_TRACK=-1'` restores it for a run whose frames are not
+     * being compared. Without that knob "does the seed actually vary" has no way of being asked. */
+    music_start(inputscript_active() ? SCRIPT_MUSIC_TRACK : app->settings.music_track,
+                app->settings.music_volume);
 
     app->theme = &THEME_MIDNIGHT;
 
@@ -200,6 +238,8 @@ static void app_deinit (app_t *app) {
     app->lib = NULL;
 
     display_close();
+    /* Before sound_deinit(), which closes the mixer the player is attached to. */
+    music_shutdown();
     sound_deinit();
     rdpq_close();
     rspq_close();
@@ -245,6 +285,7 @@ void app_run (boot_params_t *boot_params) {
              * frame short and sent me looking for the missing time in the decoder. A spin
              * iteration is not free: it runs a whole background() pass, and one decoded row in
              * there can cost more than the frame it is trying to stay out of the way of. */
+            music_poll();
             app->spin_us += TIMER_MICROS(TICKS_SINCE(spin_start));
             continue;
         }
@@ -336,6 +377,9 @@ void app_run (boot_params_t *boot_params) {
         app->update_us += TIMER_MICROS(TICKS_DISTANCE(t0, t1));
         app->render_us += TIMER_MICROS(TICKS_DISTANCE(t1, t2));
 
+        /* Between render and background, which is the longest unfed stretch in the frame. */
+        pump_audio(app);
+
         /* Continuous capture for the demo video. Checked before the one-shot actions so a
          * `fbdump` inside a recorded stretch cannot dump the same frame twice, which would show
          * up in the finished video as a single stuttered frame and be very hard to explain. */
@@ -377,13 +421,14 @@ void app_run (boot_params_t *boot_params) {
              * above 25 ms, and offered no way to tell whether that tail was three bad frames or
              * three hundred. */
             debugf("FRAME n=%lu f1=%lu f2=%lu f3=%lu f4+=%lu worst_us=%lu "
-                   "upd_us=%lu rnd_us=%lu bg_us=%lu spin_us=%lu rowus=%lu scanus=%lu starts=%lu stats=%lu rows=%lu worstrow_us=%lu inf_us=%lu scl_us=%lu spin=%lu bg=%lu\n",
+                   "upd_us=%lu rnd_us=%lu bg_us=%lu snd_us=%lu spin_us=%lu rowus=%lu scanus=%lu starts=%lu stats=%lu rows=%lu worstrow_us=%lu inf_us=%lu scl_us=%lu spin=%lu bg=%lu\n",
                    (unsigned long)app->frame,
                    (unsigned long)app->fieldbin[0], (unsigned long)app->fieldbin[1],
                    (unsigned long)app->fieldbin[2], (unsigned long)app->fieldbin[3],
                    (unsigned long)app->worst_us,
                    (unsigned long)(app->update_us / 60), (unsigned long)(app->render_us / 60),
                    (unsigned long)(app->bg_us / 60),
+                   (unsigned long)(app->snd_us / 60),
                    (unsigned long)(app->spin_us / 60),
                    (unsigned long)(thumb_rows_us / 60), (unsigned long)(thumb_scan_us / 60),
                    (unsigned long)thumb_starts, (unsigned long)thumb_statcalls,
@@ -405,10 +450,19 @@ void app_run (boot_params_t *boot_params) {
             allocwatch_reset();
             for (int i = 0; i < FRAMESTAT_BINS; i++) app->fieldbin[i] = 0;
             app->worst_us = app->update_us = app->render_us = app->bg_us = app->spin_us = 0;
+            app->snd_us = 0;
             img_rows_done = img_worst_row_us = img_entropy_us = img_scale_us = 0;
             thumb_rows_us = thumb_scan_us = thumb_starts = thumb_statcalls = 0;
         }
-        sound_poll();
+        /* snd_us is timed because the first music measurement had to be taken by subtraction:
+         * update and render barely moved when music was switched on, and the whole cost -- 17 of
+         * 60 frames losing a field on an otherwise idle screen -- sat in the unattributed
+         * remainder. A cost that large must not be something you infer. It reports about 1 ms a
+         * frame, which is a floor and not the answer; see AUDIT.md. */
+        pump_audio(app);
+        /* After the pump, so a track that just ended is replaced on the same frame the mixer
+         * noticed rather than one later. */
+        music_poll();
     }
 
     app_deinit(app);

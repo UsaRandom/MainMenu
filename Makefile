@@ -115,7 +115,7 @@ N64_ROM_RTC = 1
 N64_ROM_REGIONFREE = 1
 N64_ROM_REGION = E
 
-N64_CFLAGS += -iquote $(SOURCE_DIR) -iquote $(ASSETS_DIR) -I $(SOURCE_DIR)/libs -isystem $(SOURCE_DIR)/libs/miniz -flto=auto $(FLAGS)
+N64_CFLAGS += -iquote $(SOURCE_DIR) -iquote $(ASSETS_DIR) -I $(SOURCE_DIR)/libs -isystem $(SOURCE_DIR)/libs/miniz -I $(SOURCE_DIR)/libs/midi64/include -flto=auto $(FLAGS)
 # The input script is generated, so it lives in the build tree rather than in src/.
 N64_CFLAGS += -iquote $(BUILD_DIR)
 
@@ -134,6 +134,12 @@ SRCS = \
 	flashcart/sc64/sc64_ll.c \
 	flashcart/sc64/sc64.c \
 	libs/libspng/spng/spng.c \
+	libs/midi64/midi64.c \
+	libs/midi64/mixer_glue.c \
+	libs/midi64/patches.c \
+	libs/midi64/seq.c \
+	libs/midi64/smf.c \
+	libs/midi64/synth.c \
 	libs/picojpeg/picojpeg.c \
 	libs/miniz/miniz_tdef.c \
 	libs/miniz/miniz_tinfl.c \
@@ -155,6 +161,7 @@ SRCS = \
 	menu/path.c \
 	menu/paths.c \
 	menu/image_decoder.c \
+	menu/music.c \
 	menu/rom_info.c \
 	menu/settings.c \
 	menu/sound.c \
@@ -208,10 +215,21 @@ IMAGES = \
 SOUNDS = \
 	cursorsound.wav \
 	back.wav \
-	bgm.wav \
 	enter.wav \
 	error.wav \
 	settings.wav
+
+# Background music, as Standard MIDI Files synthesised at runtime by src/libs/midi64.
+#
+# Wildcarded rather than listed, because the list is 28 long and the only thing a listing would
+# add is a second place to forget. src/menu/music.c carries the display names and is the file
+# that decides what appears in the menu -- dropping a .mid in here without adding it there packs
+# a track nothing can select.
+#
+# For scale: all 28 come to 295,760 bytes. The single bgm.wav64 this replaced was 536,219 for one
+# song that no line of code ever opened.
+MUSIC = $(wildcard $(ASSETS_DIR)/music/*.mid)
+MUSIC_FS = $(patsubst $(ASSETS_DIR)/music/%,$(FILESYSTEM_DIR)/music/%,$(MUSIC))
 
 OBJS = $(addprefix $(BUILD_DIR)/, $(addsuffix .o,$(basename $(SRCS) $(DEV_SRCS))))
 
@@ -231,7 +249,8 @@ DEPS = $(OBJS:.o=.d)
 FILESYSTEM = \
 	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(FONTS:%.ttf=%.font64))) \
 	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(SOUNDS:%.wav=%.wav64))) \
-	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(IMAGES:%.png=%.sprite)))
+	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(IMAGES:%.png=%.sprite))) \
+	$(MUSIC_FS)
 
 $(MINIZ_OBJS): N64_CFLAGS+=-Wno-unused-function -fcompare-debug-second
 $(SPNG_OBJS): N64_CFLAGS+=-DSPNG_USE_MINIZ -fcompare-debug-second
@@ -271,6 +290,12 @@ $(FILESYSTEM_DIR)/FirpleBoot.font64: $(ASSETS_DIR)/fonts/Firple-Bold.ttf
 $(FILESYSTEM_DIR)/%.wav64: $(ASSETS_DIR)/sounds/%.wav
 	@echo "    [AUDIO] $@"
 	@$(N64_AUDIOCONV) $(AUDIOCONV_FLAGS) -o $(FILESYSTEM_DIR) "$<"
+
+# Copied, not converted. midi64 parses the Standard MIDI File itself, so there is no .mid64 and
+# no build tool in the way -- which is also what makes replacing a track a one-file operation.
+$(FILESYSTEM_DIR)/music/%.mid: $(ASSETS_DIR)/music/%.mid
+	@mkdir -p $(dir $@)
+	@cp "$<" "$@"
 
 $(FILESYSTEM_DIR)/%.sprite: $(ASSETS_DIR)/images/%.png
 	@echo "    [SPRITE] $@"

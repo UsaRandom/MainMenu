@@ -2501,6 +2501,121 @@ or a real N64**, so it ranks builds against each other rather than predicting ha
 
 ---
 
+### Music is affordable in bytes and expensive in frames
+
+Background music is 28 Standard MIDI Files synthesised at runtime by `src/libs/midi64`
+(vendored at `1c79dc8`, MIT). The size case is settled and lopsided:
+
+| | bytes |
+|---|---|
+| midi64 `.text`, six objects, before LTO | 17,938 |
+| all 28 songs, as `.mid` | 295,760 |
+| **engine plus the whole soundtrack** | **313,698** |
+| two of the same songs rendered to Opus wav64 | 591,854 |
+| `bgm.wav64`, shipped since the fork, opened by no line of code | 536,219 |
+
+The ROM went **1,835,008 → 1,622,016 bytes**, 212,992 smaller, while going from no music at all
+to twenty-eight tracks. `settings.bgm_enabled` was saved and loaded and read by nothing; it is
+gone, along with `src/libs/minimp3`, which nothing had compiled since the fork.
+
+There is a second, larger reason to prefer synthesis that has nothing to do with size: **wav64
+streams off storage for the whole duration of playback.** That would have put a permanent second
+reader on the FatFs-over-SC64 pipe the thumbnail streamer already competes for during a scroll —
+the one budget §5 says ares cannot validate. midi64 reads the file once into RAM and then never
+touches storage: verified by grep, there is no `fread`, `fseek`, `fopen` or `dfs_` anywhere in
+`seq.c`, `synth.c` or `mixer_glue.c`.
+
+**The frame cost is the problem.** `tools/inputs/idle.txt`, `PLAIN_ART=1`, settled, the last
+60-frame window of a 1,200-frame run — the same binary and the same script throughout, with
+`music_volume=0` in the fixture's `config.ini` as the only difference for the first row:
+
+| | frames making their field, of 60 | worst frame | `snd_us` |
+|---|---|---|---|
+| music off | **60** | 16,759 µs | — |
+| 22050 Hz | 38 | 38,671 µs | 1,042 |
+| **16000 Hz (shipped)** | 45 | 31,559 µs | 1,046 |
+| 11025 Hz | 50 | 25,453 µs | 485 |
+| 22050, `M64_CTRL_BLOCK=64` | 40 | 36,128 µs | 1,259 |
+| 22050, `MIDI64_MAX_VOICES=16` | 40 | 32,836 µs | 977 |
+| 22050, 8 audio buffers + mid-frame pumping | 39 | 36,094 µs | 1,442 |
+| 22050, `NUM_CHANNELS=4` (was 16) | 39 | 35,516 µs | 1,428 |
+| 22050, `NUM_CHANNELS=16` | 38 | 35,725 µs | 1,227 |
+
+Music off is a clean sweep — 60 of 60, nothing missed, worst frame inside a field. Switching it
+on costs a third of all frames their field on a screen that is doing nothing else. **The gate in
+§1 goes from green to red on this change alone.**
+
+**Six levers, one of them works.** Sample rate, midi64's control block, its voice cap, audio
+buffer depth, mid-frame mixer pumping and the mixer channel count — five land within noise of
+each other and only the rate moves anything. Default dropped to 16000, which recovers about a
+quarter of the misses; midi64's `docs/PERF.md` puts that above what its patch set's low-pass
+corners need, so it is the last step down that costs nothing audible. No rate reaches zero:
+11025 Hz still misses one frame in six.
+
+The buffer and pumping changes were made against reported *choppiness* rather than against this
+table, and they are kept on their own merits even though they move no bin: `snd_us` says
+synthesis costs ~1 ms of a 16.7 ms frame, so the CPU has headroom and audible dropouts are
+starvation, not shortfall. Before them, nothing fed the mixer between `render()` and the end of
+`background()` — the longest stretch in the frame.
+
+**Negative result worth keeping: the timer added for this does not explain it.** `snd_us` brackets
+`sound_poll()`, where `mixer_try_play()` synthesises, and reports about 1 ms per frame — 6% of
+wall clock. But average frame time goes 16.7 → 23.3 ms, and `upd_us`, `rnd_us` and `bg_us` barely
+move. Roughly 4.5 ms per frame lands outside every counter in the loop. The likeliest homes for it
+are the AI interrupt handler and RSP time shared between the mixer ucode and rdpq, neither of
+which any counter here can see. **Do not quote `snd_us` as the cost of music; it is a floor.**
+
+Two caveats before anyone plans against the table. It is an ares number, and midi64's own
+`docs/PERF.md` argues this workload is dominated on hardware by misses against a 92 KB table that
+does not fit the VR4300's 8 KB data cache — an effect ares does not model, so hardware could land
+either side. And the relative comparison is the trustworthy part: same emulator, same script,
+one variable.
+
+Frame hashes are **identical** with music on and off, at every sample rate tested, so none of this
+moves a pixel and the existing suite is unaffected.
+
+### A track selector must not start a track on every step
+
+First playable build: switching tracks "didn't always change music, sometimes seemed like it was
+playing two songs at once".
+
+Not a midi64 fault. A held direction repeats at up to **20 steps a second** (`ui/input.h`), and
+the track row called `music_set_track()` on every one of them — each a full teardown, file read,
+parse and player rebuild. Meanwhile the audio DMA holds four buffers of the previous song and
+there is no way to recall them. Twenty swaps a second against that pipeline plays fragments of
+several songs over each other and lands on audio unrelated to the row you stopped on.
+
+Fixed by separating choosing from playing: the row moves immediately, the track starts 0.30 s
+after the row stops (`TRACK_SETTLE_S`), and `leave()` flushes a pending choice so backing out
+inside the window still plays what was picked. Scrolling the list now costs one load at the end
+instead of one per step.
+
+### The shuffle seed cannot be tested here, and the obvious seed did not work
+
+Track selection is random, seeded per boot. The first attempt mixed `time(NULL)` with
+`TICKS_READ()`, reasoning that the boot path's cycle count varies even when the clock does not —
+which matters because a cart with no RTC returns the same epoch on every switch-on, and that is
+the case on this hardware and under ares.
+
+**Measured: four scripted boots picked the same song every time.** A scripted run pins the clock
+to `SCRIPT_CLOCK_EPOCH` and ares' cycle counts are reproducible, so both inputs were constant.
+The fallback did nothing. Replaced with `getentropy32()`, which libdragon collects during IPL3
+and documents as differing on every boot on hardware; the clock is still mixed in, so a console
+with a working RTC contributes it.
+
+Two limits worth stating rather than discovering later:
+
+1. **`entropy.h` says the numbers are consistent on an emulator.** Two ares boots after the change
+   both picked *Unknown Island* — a different song from the pre-change runs, which shows the new
+   path is live, but shuffle cannot be observed working short of a console.
+2. **The harness reaches this at all only through `SCRIPT_MUSIC_TRACK`.** A scripted run pins one
+   looping track, because shuffle advances on mixer progress rather than frame count and each
+   advance allocates, which would make `idle.txt`'s no-allocation gate a coin toss.
+   `make TUNE='-DSCRIPT_MUSIC_TRACK=-1'` restores it for a run whose frames are not compared.
+   Without that knob the question has no way of being asked.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
