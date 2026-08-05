@@ -17,7 +17,6 @@
 #include <libdragon.h>
 
 #include "app.h"
-#include "cheats/cheatdb.h"
 #include "menu/fonts.h"
 #include "library/cache.h"
 #include "menu/music.h"
@@ -347,24 +346,15 @@ static void settings_render (app_t *app, surface_t *fb) {
     draw_row(app, ROW_PARENTAL, "Parental controls",
              parental_code_set() ? "On" : "Off");
 
-    /* Status: the answers to the first three support questions, in one place. */
+    /* Just the build. There were two more lines here -- a library count and a cheat database
+     * count -- on the theory that they answered the first support questions anyone would ask.
+     * They do not: the grid already shows how many games there are, one tab at a time and with
+     * their names on, and the cheat count answers a question nobody asks in the form "how many
+     * games does the database cover". The build string is the only one of the three that cannot
+     * be read off any other screen. */
     int y = LIST_Y + ROW_COUNT * ROW_H + 24;
     ui_fill(LIST_X, y, LIST_W, HAIRLINE, th->panel_alt);
     y += 22;
-
-    snprintf(buf, sizeof(buf), "%d games", app->lib != NULL ? app->lib->count : 0);
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Library");
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
-    y += 24;
-
-    if (cheatdb_available()) {
-        snprintf(buf, sizeof(buf), "%d games", cheatdb_game_count());
-    } else {
-        snprintf(buf, sizeof(buf), "not installed");
-    }
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Cheat database");
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
-    y += 24;
 
     snprintf(buf, sizeof(buf), "%s  %s", MENU_VERSION, BUILD_TIMESTAMP);
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Build");
