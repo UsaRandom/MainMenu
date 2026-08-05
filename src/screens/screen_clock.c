@@ -37,9 +37,14 @@
 #include "ui/draw.h"
 #include "ui/theme.h"
 
-#define LIST_X      SAFE_X
-#define FIELDS_Y    170
+#define HEADER_H    64
 #define FIELD_H     40
+
+/** Baseline of the field row, placed so the row sits in the middle of the space between the
+ *  header and the footer rather than up near the title. This screen has one thing on it and no
+ *  list to anchor to a left margin, so anywhere else reads as a layout that lost its second
+ *  column. */
+#define FIELDS_Y    (((HEADER_H + FOOTER_Y) / 2) - (FIELD_H / 2) + 28)
 #define CLOCK_SEED_YEAR 2026
 
 typedef enum {
@@ -55,9 +60,19 @@ static const char *MONTHS[12] = {
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 };
 
-/** Field x positions, so the row reads as one date and time rather than five boxes. */
+/** Field x offsets from the start of the row, so it reads as one date and time rather than five
+ *  boxes. Offsets, not screen positions: the row is centred, and #row_x turns these into pixels. */
 static const int FIELD_X[F_COUNT] = { 0, 90, 170, 260, 330 };
 static const int FIELD_W[F_COUNT] = { 76, 66, 66, 56, 56 };
+
+/** Left edge of the centred field row.
+ *
+ * Derived from the table rather than written down, so changing a field width cannot leave the row
+ * off-centre by however much the change was worth. */
+static int row_x (void) {
+    int span = FIELD_X[F_COUNT - 1] + FIELD_W[F_COUNT - 1];
+    return (SCREEN_W - span) / 2;
+}
 
 static struct tm edit;
 static int  cursor;
@@ -237,8 +252,9 @@ static void clock_render (app_t *app, surface_t *fb) {
         ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_YELLOW, error);
     }
 
+    int ox = row_x();
     for (int i = 0; i < F_COUNT; i++) {
-        int x = LIST_X + FIELD_X[i];
+        int x = ox + FIELD_X[i];
         int w = FIELD_W[i];
         if (i == cursor) {
             ui_fill(x, FIELDS_Y - 28, w, FIELD_H, th->panel_alt);
@@ -250,17 +266,18 @@ static void clock_render (app_t *app, surface_t *fb) {
 
     /* The colon belongs to the reader, not to a field: without it the two numbers on the right
      * are just two numbers. Drawn between the hour and minute boxes rather than inside either. */
-    ui_label(LIST_X + FIELD_X[F_HOUR] + FIELD_W[F_HOUR], FIELDS_Y, 14, ALIGN_CENTER,
+    ui_label(ox + FIELD_X[F_HOUR] + FIELD_W[F_HOUR], FIELDS_Y, 14, ALIGN_CENTER,
              STL_GRAY, ":");
 
-    /* The cartridge, not the console. A stock N64 has no clock at all -- the battery-backed one
-     * libdragon reports over Joybus is on the flashcart, which is what keeps the time when the
-     * power goes. Saying "the console's clock" pointed the reader at the wrong piece of hardware
-     * to go and check when the time comes back wrong. */
-    ui_label(LIST_X, FIELDS_Y + 60, SAFE_W, ALIGN_LEFT, STL_GRAY,
-             rtc_get_source() == RTC_SOURCE_NONE
-                 ? "No clock here: the time is lost at power off."
-                 : "Kept by the cartridge's clock.");
+    /* Only the case that is a problem. "Kept by the cartridge's clock." used to sit here for the
+     * normal case and was cut: it described the machine working, which the screen already implies
+     * by having taken the setting. This line reports something the user can act on -- the time
+     * they are about to set will not survive the power going off -- and says nothing at all when
+     * there is a working clock. */
+    if (rtc_get_source() == RTC_SOURCE_NONE) {
+        ui_label(SAFE_X, FIELDS_Y + 60, SAFE_W, ALIGN_CENTER, STL_GRAY,
+                 "No clock here: the time is lost at power off.");
+    }
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
     int hx = ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Set");
