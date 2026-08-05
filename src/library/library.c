@@ -152,6 +152,48 @@ static void art_push (library_t *lib, const char *name, const char *full_path) {
     lib->art_count++;
 }
 
+/** @brief The filename part of @p path, or the whole thing if it has no separator. */
+static const char *art_basename (const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+int library_resolve_loose_art (library_t *lib) {
+    if (lib == NULL || lib->art_count == 0) {
+        return 0;
+    }
+
+    int n = 0;
+    for (int i = 0; i < lib->count; i++) {
+        lib_record_t *r = &lib->records[i];
+        if (r->art_file != NULL) {
+            continue;
+        }
+
+        /* Game code first, then the ROM's filename -- the same order and the same two keys
+         * thumbcache's art_resolve() uses, because a record resolved here and a record resolved
+         * lazily must land on the same file. */
+        const char *hit = NULL;
+        if (r->game_code[0] != '\0') {
+            hit = library_find_art(lib, r->game_code);
+        }
+        if (hit == NULL && r->path != NULL) {
+            hit = library_find_art(lib, art_basename(r->path));
+        }
+        if (hit == NULL) {
+            continue;
+        }
+
+        r->art_file = strdup(hit);
+        if (r->art_file != NULL) {
+            n++;
+        }
+    }
+
+    debugf("LIBRARY resolved art for %d of %d titles\n", n, lib->count);
+    return n;
+}
+
 const char *library_find_art (const library_t *lib, const char *name) {
     if (lib == NULL || name == NULL || name[0] == '\0') {
         return NULL;

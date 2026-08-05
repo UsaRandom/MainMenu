@@ -25,6 +25,7 @@
 #include "flashcart/flashcart.h"
 #include "menu/fonts.h"
 #include "menu/music.h"
+#include "menu/launchlog.h"
 #include "menu/profile.h"
 #include "menu/parental.h"
 #include "menu/paths.h"
@@ -130,6 +131,9 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * on the card a user is ever told to delete by hand. See parental.h. */
     parental_load(app->storage);
 
+    /* Where the launch path records what it did, since USB is not a channel here. */
+    launchlog_init(app->storage);
+
     /* Before cache_init(), which is fine -- profile_load() only reads an ini and clamps an index.
      * It has to happen before playstate_load() below, because which file that reads is a function
      * of which profile is active. */
@@ -190,6 +194,13 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     cache_init(app->storage);
     if (!libindex_load(app->lib, app->storage, SCAN_ROOT)) {
         library_scan(app->lib, app->storage, SCAN_ROOT);
+        /* Between the scan and the save, and it has to be between them. The scan is the only
+         * thing that ever fills lib->art, and nothing rebuilds that table when the index loads
+         * instead -- so unless the answers are written into the index now, every boot from a warm
+         * index finds no art for anything. Hardware showed exactly that: art on the first run,
+         * none after a restart, and a library.idx holding 56 strings without a single image path
+         * among them. Memory only; the scan already saw every file. */
+        library_resolve_loose_art(app->lib);
         libindex_save(app->lib, app->storage, SCAN_ROOT);
     }
 

@@ -44,7 +44,18 @@
 #include "library.h"
 
 /** @brief 'M64L' */
-#define LIBINDEX_MAGIC 0x4D36344C
+/* 'M64M'. Was 'M64L' (0x4D36344C) until art paths started being resolved at scan time rather
+ * than lazily per tile. An index written by the old build carries no art at all, and nothing in
+ * the staleness check would notice -- the directories have not changed, so it would be believed
+ * forever and every boot after the first would show a library with no art.
+ *
+ * Bumping this file's own magic rather than MENU_CACHE_FORMAT_VER is deliberate. The shared
+ * version is one number for every cache on purpose, and raising it would take playstate.dat with
+ * it -- the one file here that cannot be rebuilt from the card, holding every favourite and every
+ * play count. The index can be rebuilt; a scan is what it is for. So only the index is
+ * invalidated, and it is invalidated the way cache.c already handles: magic mismatch, delete,
+ * rebuild. */
+#define LIBINDEX_MAGIC 0x4D36344D
 
 /**
  * @brief Fill @p lib from the cache, if the cache is present and still matches the card.

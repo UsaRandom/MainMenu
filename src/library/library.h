@@ -223,6 +223,25 @@ void library_touch (library_t *lib);
 int library_scan (library_t *lib, const char *storage_prefix, const char *root);
 
 /**
+ * @brief Point every record at its loose art file, using the table the scan just built.
+ *
+ * Call once, immediately after library_scan() and before libindex_save(), so the paths reach the
+ * index on the first write rather than on the first launch.
+ *
+ * This is pure memory: the scan already noticed every image on the card and put it in `lib->art`,
+ * so this is a hash-keyed lookup per record and no filesystem access at all. It exists because
+ * `lib->art` is built ONLY by the scan -- nothing rebuilds it when the index loads instead -- so
+ * a menu that boots from a warm index had no way to find art for anything. Resolving eagerly puts
+ * the answers somewhere that survives, which is the index.
+ *
+ * Records whose art is not a loose file are left alone; the metadata-pack search needs real
+ * filesystem probes and stays lazy, in thumbcache's art_resolve().
+ *
+ * @return how many records were given an art path.
+ */
+int library_resolve_loose_art (library_t *lib);
+
+/**
  * @brief Fill @p out with the record indices belonging to @p tab, in display order.
  *
  * A view, not a copy: one pass over the records plus a sort of at most @p cap shorts. At 500
