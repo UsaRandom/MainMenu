@@ -2824,6 +2824,224 @@ on `idle.txt` with the roster loaded.
 
 ---
 
+## 1ad. The second hardware run — five reports, and what the card's own bytes said
+
+Five things came back from the console. Four had causes findable by reading; the fifth is still
+open and now has an instrument pointed at it.
+
+### The grid forgot where you were
+
+`grid_enter()` set `cursor = 0` unconditionally, and it runs on every entry, not only the first.
+So backing out of a game sheet dropped you at the top of the tab. On the test card's N64 tab that
+is thirty-seven titles; open the fifteenth, read it, press B, and the fifteenth is nine presses
+away again. Fixed by not resetting — the static already survives, and `rebuild_view()` was
+already clamping it for the two cases where the view can shrink underneath a held position
+(un-favouriting from the sheet while Favorites is up, switching to a player with a shorter
+Recent).
+
+Pinned by `tools/inputs/detail-return.txt`, which is read rather than diffed: frames 1 and 3
+legitimately differ because the sheet restarts the arrival tween, so the assertion is that both
+show **15 / 37, CHOPPER ATTACK, at the same scroll offset**. Verified at 640x480.
+
+### Art refused to appear until scrolling stopped, on a card whose art was already decoded
+
+`grid_background()` returned early while `frames_since_move < 15`. That gate is correct and its
+reasoning (1q) is unchanged: one row of a real PNG can cost more than the frame it is trying to
+stay out of the way of, so decoding while the cursor moves buys judder and nothing else.
+
+It was applied to the **atlas** as well, and it never should have been. A tile already in
+`thumbs.pak` is one seek and a 27,440-byte read — tens of times cheaper than a decode and nowhere
+near a field. So a warm card behaved exactly like a cold one, which is the whole benefit of the
+atlas thrown away by a branch written about something else.
+
+`thumbcache_run_cached()` now runs during a scroll, on its own 4,000 µs budget, looping rather
+than doing one tile per call — a row is four tiles and one fetch per frame leaves the grid
+permanently a row behind the eye. It never sets `tc->idle`, because declining to decode is not
+the same as establishing there is nothing to do.
+
+The working set was also too small, and the old comment miscounted it: the grid window is 352 px
+on a 110 px row pitch, so a straddling scroll shows **four** rows and sixteen tiles, not twelve.
+Twenty slots left four spare. Now 36 — sixteen visible, `THUMB_PREFETCH_ROWS`(2) either side, and
+four spare — and the grid asks for the off-screen rows itself in `grid_render()`. It has to be
+the grid: `thumbcache_run`'s own prefetch passes walk the library from index 0, so on a large card
+they fill the pool with the front of the alphabet while the tiles either side of the cursor get
+nothing. Proximity is a fact only the screen knows.
+
+Cost is lazy — a slot allocates its surface when something lands in it — so a small library still
+holds a small cache. Full, 36 slots is 987,840 bytes.
+
+### The cheat lookup read three quarters of a megabyte, every time a sheet opened
+
+The reported symptom was "cheat db search seems to lag music when opening details". Moving the
+load off the transition into `background()` (f0192dd4) did not fix it, and could not have: the
+main loop feeds the mixer either side of `background()`, not during it, so a long blocking call
+there starves the DAC exactly as one in `enter()` did.
+
+The blocking call was `cheatdb_load()` reading **`db_head.strtab_size` = 769,488 bytes** — the
+whole database's string table, allocated and freed per lookup — to resolve a few hundred bytes of
+group names. Format 1 interned names across all 341 games, which saved 41 KB on the card and cost
+three quarters of a megabyte of I/O per detail sheet. Against ~133 ms of audio held ahead of the
+DAC (8 buffers at 22,050 Hz), that is not close.
+
+Format **2** puts each game's names in its own blob, after its group rows and codes, with a
+`blob_size` in the index row (now 24 bytes, was 20). A load is one seek and one read:
+
+| | bytes read per lookup |
+|---|---|
+| format 1 | 769,488 + group rows + codes |
+| format 2, mean over 341 games | **5,106** |
+| format 2, worst (GoldenEye, 4,315 cheats) | 240,736 |
+
+### The database was missing seven of the twenty-four games on the card
+
+Measured against the card's actual ROM headers, not estimated. Before: **17 of 24**. Two
+independent causes, both in the key table generator:
+
+* **Version was written as 0 where it meant "any".** `harvest_database()` gave every row
+  `int(ver) if ver else 0`, but only `MATCH_ID_REGION_VERSION` names a version — the other two
+  macros match every revision. The reader takes an exact match or the `0xFF` sentinel, so a stored
+  0 matched revision 0 and nothing else. Cost five titles whose game code was sitting in the
+  database holding hundreds of cheats: Banjo-Kazooie (v1, 269), Star Fox 64 (v1, 279), Rogue
+  Squadron (v1, 219), Pokemon Stadium (v2, 626), Shadows of the Empire (v2, 388).
+* **Region collisions were refused outright.** Two game codes for one title — Ocarina of Time's
+  CZL and NZL, Mario Party's CLB and NLB — were dropped, on the correct reasoning that guessing
+  between them applies one region's addresses to the other region's binary. It is not a guess,
+  though: the corpus filename says which region it is, in the same notation the `rom_info.c`
+  comments use. The join gained a second component instead of giving up, collapsed to three
+  families (NTSC / PAL / Japan), and still refuses when the filename does not say. Cost the two
+  biggest games on the card — Ocarina of Time alone has 553 cheats.
+
+After: **24 of 24**, 341 games in the database (was 325), 1,039 of 1,345 corpus files keyed
+(was 996).
+
+Both were invisible from the console. A game with no cheats and a game whose cheats were keyed to
+a revision nobody owns present identically: "None available".
+
+### The music blipped just before the game started
+
+Reported as "screen turns black, waits a bit, sound plays for a fraction of a second, game
+launches". Nothing in the menu plays anything at that point, which is the clue: **an N64 whose AI
+is not handed a new buffer does not fall silent, it keeps playing the one it has.** `do_load()`
+blocks for the whole ROM stream with nothing feeding the mixer, so the DAC runs dry part way
+through and repeats a fragment of the last thing mixed.
+
+Two changes, and the first alone would probably do it:
+
+* `on_progress()` — called throughout the blocking load — now pumps `sound_poll()`. A DAC being
+  fed silence cannot repeat anything.
+* The music fades with the picture over the same 0.55 s (`music_fade()`, which scales the player
+  gain without touching the stored setting or releasing the player, as `music_set_volume(0)`
+  would), and the player is released at black rather than in `app_deinit()` afterwards. So the
+  last samples mixed before the load are already silent, and the fade is now a fade rather than a
+  cut-off mid-note.
+
+Unverified: the exact mechanism is inferred from the symptom and from how the AI behaves on
+underrun, not measured — there is no way to observe the audio hardware between `boot()` and the
+game. What is certain is that nothing fed the mixer for the duration of a load, and now something
+does.
+
+### The cheat engine: everything observable says yes, and cheats still do nothing
+
+The first launch log is the whole problem in five lines:
+
+```
+rom      sd://roms/n64/Zelda - Ocarina of Time.z64
+groups   1 loaded, 1 ticked
+emitted  4 cheat words (2 lines)
+engine   will hook
+detail   CIC 6105/7105 word[499]=01200008 ok
+```
+
+`01200008` is `jr $t1`, the instruction the engine replaces, at the offset x105 expects. One group
+ticked — that was the user's hand-entered cheat, because Ocarina of Time was one of the seven the
+database was missing. Two lines emitted, both plain 16-bit writes. Nothing here is wrong.
+
+Read and ruled out, none of it by measurement — all of it by reading against the VR4300 manual and
+the alt64 original:
+
+* `A_BASE`/`A_OFFSET` carry the sign correction, so a negative 16-bit offset does not land 64 KB
+  away.
+* `I_ORI(REG_K1, REG_ZERO, EXCEPTION_HANDLER_ADDRESS | WATCHLO_W)` truncates to 16 bits, giving
+  `0x0181` — which is the correct WatchLo, because the field is the **physical** address and
+  0x80000180 is physical 0x180.
+* The engine's `I_BNE(REG_K0, REG_K1, 15)` lands on the first cheat instruction, and
+  `final_engine_address + 20` is the `I_NOP()` placeholder, both counted out instruction by
+  instruction.
+* Both patcher loops' branch offsets (`-5` and `-4`) resolve to their own heads.
+* `I_J(PATCHER_ADDRESS)` executed from DMEM lands at `0xA0700000`, the uncached mirror of the
+  region `cheats_update_cache()` just wrote back. That is right, not a bug.
+* `reboot.S` skips `reset_rdram` on `$a0 != 0`, so the staged engine survives.
+* `cheat_list` is heap and never freed, and nothing allocates after it.
+
+What is left is on the far side of `boot()`, and the leading candidate cannot be checked from a
+desk: the engine hooks by arming a **watch exception** and waiting for the game to write its own
+exception handler to 0x80000180. WatchLo/WatchHi are among the most obscure registers the VR4300
+has. **The ModRetro M64 is a clone console, and an FPGA CPU core that omitted the watch exception
+would break exactly this and nothing else anyone would notice.**
+
+#### Two instruments, since there is no debug link
+
+**The launch log now says everything the menu can know** — header key and check code, CIC and the
+word at the patch offset, `get_memory_size()` and `is_memory_expanded()`, database coverage, which
+groups are ticked by name, and **every emitted line decoded the way `cheats_get_next()` decodes
+it**: the raw word, the type byte, and the address after the `& 0xA07FFFFF` mask. A code that does
+nothing is either not reaching the engine, reaching it at the wrong address, or reaching it
+correctly and being a wrong code, and those have three different fixes.
+
+**And the menu is now able to be its own test subject** (`src/menu/enginetest.c`). A `volatile
+uint16_t` in `.data`, its address printed on the Settings screen as a ready-made Datel line
+(`810A5D50 BEEF` in the current build). Copy `sc64menu.n64` to `roms/n64/enginetest.n64` — a copy
+under another name, because the scan skips the menu at the card root by name — open it, type the
+code, tick it, launch. The engine writes on every exception, of which a menu drawing frames has
+hundreds a second, so the copy that boots reports in its own Settings whether the write landed.
+
+That is a definite answer either way, on the user's hardware, needing nothing but the card. If it
+says the engine ran, a cheat that does nothing is a wrong code or a wrong game. If it says it did
+not, nothing downstream of the IPL3 patch is running and no cheat will ever work on this console.
+
+### Byte order, stated rather than assumed
+
+`cheatdb.c` read its structs straight off disk and the fields came out right because mips64-elf is
+big-endian and nothing else had ever run the file. Which is exactly why the reader could not be
+tested: `tools/hosttest` compiles the real production C natively, and on a little-endian host a
+raw struct read turns `'M64C'` into `'C64M'` and format 2 into 512. The suite's first run said so.
+
+So the format is now explicitly big-endian, behind a `CHEATDB_SWAP` constant. **On target this
+cost nothing measurable: `.text` was 569,976 bytes before and after** — the swap loops are
+constant-folded away entirely.
+
+### The new suite, and proof it can fail
+
+`test_cheatdb.c` reads the real `build/cheats.db` through the production reader and compares
+against `cheatdb_expect.py`, a parser written from the spec rather than from the C. Three
+independent implementations — mkcheatdb.py writes, cheatdb_expect.py reads, cheatdb.c reads —
+because a writer and reader sharing a header can be wrong together all day and round-trip
+perfectly. Compare 1j and 1u, both of which are harnesses that measured the wrong thing and looked
+green doing it.
+
+**3,756 checks over all 341 games, 0 failures.** Every game's group count, code count, first
+group name, first code line and **last** code line — the last one because a blob read one row
+short still gets code 0 right.
+
+The mutation: `codes_off` set to 0, so a game's codes are read from its own group table. **681 of
+3,756 checks go red.** That mistake is invisible from the console — the detail sheet shows the
+right names and the right count, and the engine is handed addresses taken from group headers.
+
+Whole suite, `run.sh --mutate`: 29 + 31 + 47 + 3,756 + 23 checks, 0 failures, all five mutations
+detected.
+
+### Sizes
+
+| | bytes |
+|---|---|
+| `.text` | 570,520 (+544 over 1ac) |
+| `.data` | 107,916 |
+| `.bss` | 75,912 |
+| `output/sc64menu.n64` | 1,638,400 |
+| `menu/cheats.db` | 1,749,404 (was 1,563,980) |
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
@@ -2959,6 +3177,13 @@ Unverified. No M64 hardware or documentation has been consulted for this repo.
 5. **Does the built-in Controller Pak present as a standard joybus mempak?**
 6. **What firmware is on the cart?** Not an M64 question, and the cheapest one to answer. The menu
    refuses anything below 2.17.0 and lands on the fault screen — see 2a.
+7. **Does the M64's CPU implement the watch exception?** The cheat engine hooks by arming
+   WatchLo on physical 0x180 and trapping the game's write of its own exception handler. If the
+   core does not implement it, no cheat can ever run and everything the menu can observe still
+   says "will hook" — which is exactly what the first two hardware runs reported. **Answerable
+   now, without a debug link**: the Settings screen prints a Datel line aimed at a probe in the
+   menu's own `.data`, and a copy of the menu booted with that cheat ticked reports whether the
+   engine wrote it. See 1ad and `src/menu/enginetest.h`.
 
 ~~**Can the menu write to the SD card at all?**~~ — answered by reading the SC64 firmware and
 libcart rather than by testing: yes, and the write path needs nothing the read path does not
