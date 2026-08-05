@@ -27,14 +27,18 @@ CFLAGS="-std=c11 -Wall -Wextra -Werror -Itools/hosttest/shim -Isrc -Isrc/library
 
 echo "== cache round trip"
 rm -rf "$OUT/dir"
-$CC $CFLAGS tools/hosttest/test_cache.c src/library/cache.c -o "$OUT/test_cache"
+# paths.c comes along because cache_init() calls menu_path(). It did not always: the /menu ->
+# /mainmenu rename moved that call into cache.c and nothing here was updated, so this suite
+# stopped LINKING and every later run reported nothing at all. A suite that cannot build is worse
+# than one that fails, because the failure is at the top of a log nobody reads to the bottom of.
+$CC $CFLAGS tools/hosttest/test_cache.c src/library/cache.c src/menu/paths.c tools/hosttest/shim/fs_probe.c -o "$OUT/test_cache"
 TESTDIR="$OUT/dir" "$OUT/test_cache" 2>/dev/null
 
 echo
 echo "== thumbnail atlas round trip"
 rm -rf "$OUT/thumbdir" "$OUT/thumbdir-ro"
 $CC $CFLAGS tools/hosttest/test_thumbstore.c src/library/cache.c src/library/thumbstore.c \
-    -o "$OUT/test_thumbstore"
+    src/menu/paths.c tools/hosttest/shim/fs_probe.c -o "$OUT/test_thumbstore"
 TESTDIR="$OUT/thumbdir" "$OUT/test_thumbstore" 2>/dev/null
 
 echo
@@ -67,7 +71,7 @@ if [ "${1:-}" = "--mutate" ]; then
     rm -rf "$OUT/mutant_thumbdir" "$OUT/mutant_thumbdir-ro"
     $CC -std=c11 -Wall -Itools/hosttest/shim -Isrc -Isrc/library \
         tools/hosttest/test_thumbstore.c src/library/cache.c "$OUT/thumbstore_mutant.c" \
-        -o "$OUT/test_thumbstore_mutant"
+        src/menu/paths.c tools/hosttest/shim/fs_probe.c -o "$OUT/test_thumbstore_mutant"
 
     if TESTDIR="$OUT/mutant_thumbdir" "$OUT/test_thumbstore_mutant" \
             >"$OUT/thumb_mutant.log" 2>/dev/null; then
@@ -106,7 +110,8 @@ if [ "${1:-}" = "--mutate" ]; then
     rm -rf "$OUT/mutant_dir"
     # -Werror dropped: the point is to run the mutant, not to lint it.
     $CC -std=c11 -Wall -Itools/hosttest/shim -Isrc -Isrc/library \
-        tools/hosttest/test_cache.c "$OUT/cache_mutant.c" -o "$OUT/test_cache_mutant"
+        tools/hosttest/test_cache.c "$OUT/cache_mutant.c" src/menu/paths.c tools/hosttest/shim/fs_probe.c \
+        -o "$OUT/test_cache_mutant"
 
     if TESTDIR="$OUT/mutant_dir" "$OUT/test_cache_mutant" >"$OUT/mutant.log" 2>/dev/null; then
         echo "MUTANT PASSED -- the suite cannot detect a broken CRC, which makes it worthless" >&2

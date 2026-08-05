@@ -33,6 +33,7 @@
 #include <unistd.h>
 
 #include "library/cache.h"
+#include "menu/paths.h"
 
 /* ------------------------------------------------------------------ shims */
 
@@ -70,8 +71,13 @@ static void check (bool ok, const char *what) {
 
 static char root[512];
 
+/* MENU_DIR, not a literal. It was "/menu" here, hardcoded, and the rename to "/mainmenu" left
+ * this pointing at a directory that no longer exists -- so poke() and chop() silently failed to
+ * open anything and the three corruption checks below never corrupted a file. Worse, their
+ * matching `!exists(...)` assertions still PASSED, because a path that was never written does not
+ * exist either. Six checks reporting green for a rejection path that was never taken. */
 static void path_of (char *out, size_t cap, const char *name) {
-    snprintf(out, cap, "%s/menu/cache/%s", root, name);
+    snprintf(out, cap, "%s%s/cache/%s", root, MENU_DIR, name);
 }
 
 /** @brief Corrupt one byte at @p off. Returns false if the file is shorter than that. */

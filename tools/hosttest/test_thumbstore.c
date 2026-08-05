@@ -30,6 +30,7 @@
 #include <unistd.h>
 
 #include "library/cache.h"
+#include "menu/paths.h"
 #include "library/thumbstore.h"
 #include "ui/theme.h"
 
@@ -106,7 +107,7 @@ static bool tiles_equal (const surface_t *a, const surface_t *b) {
 
 static long file_size (const char *rel) {
     char path[512];
-    snprintf(path, sizeof(path), "%s/menu/cache/%s", testdir(), rel);
+    snprintf(path, sizeof(path), "%s" MENU_DIR "/cache/%s", testdir(), rel);
     struct stat st;
     return stat(path, &st) == 0 ? (long)st.st_size : -1;
 }
@@ -203,7 +204,7 @@ int main (void) {
     printf("\nrejection\n");
     {
         char path[512];
-        snprintf(path, sizeof(path), "%s/menu/cache/thumbs.pak", testdir());
+        snprintf(path, sizeof(path), "%s" MENU_DIR "/cache/thumbs.pak", testdir());
         FILE *f = fopen(path, "rb+");
         check(f != NULL, "the pak can be reopened to damage it");
         uint32_t junk = 0xDEADBEEF;
