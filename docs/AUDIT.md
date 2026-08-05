@@ -2692,6 +2692,89 @@ which the rail can afford now that the two virtual tabs never spell themselves o
 about 444 px of 608, against 468 before. The final parameters are inner radius 0.36 and a 0.4 px
 rounding radius, chosen by rendering four candidates as ASCII and looking at them.
 
+### Hardware, at last, and four faults ares structurally could not show
+
+The first run on a real SC64 and a real card. All four reported problems were diagnosed from the
+card's contents plus the source; three had a single root cause each, and the fourth turned out to
+be a different bug from the one that looked obvious.
+
+**Art vanished after a restart, and it was not the thumbnail cache.** `lib->art[]` -- the table
+mapping a game to its loose image file -- is filled by exactly one call site, `art_push()` inside
+`scan_dir`. `libindex_load()` never touches it. So every boot that hits a warm index skips the
+scan, leaves that table empty, and `library_find_art()` returns NULL for every title. The only
+fallback is `rec->art_file` in the index, which was resolved lazily per tile and written back only
+by `app_deinit` -- which runs when a game is launched and not when the console is switched off.
+
+The card proved it: `library.idx` held 56 strings, all ROM paths and titles, and **zero** image
+paths. Everything else followed. Nothing resolved art, so nothing decoded, so nothing was stored:
+`thumbs.pak` was 32,768 bytes -- one reserved slot -- with `slot_count = 0` and every byte after
+its 32-byte header zero. And `thumbstore_flush()` with no rows *deletes* the index, which is why
+there was no `thumbs.idx` at all.
+
+Fixed by resolving loose art at scan time, before the first `libindex_save`. It is pure memory --
+the scan already saw every file -- so it costs a hash lookup per record. `LIBINDEX_MAGIC` was
+bumped 'M64L' -> 'M64M' so existing indexes rebuild once. Deliberately not `MENU_CACHE_FORMAT_VER`:
+that is one number for every cache by design, and raising it would take `playstate.dat` with it,
+which is the one file here that cannot be rebuilt.
+
+**Cheats did nothing in-game, and the obvious culprit was not it.** `cheats_patch_ipl3()` returns
+`true` on error -- its success path returns `false` and the caller bails on truthy -- but the check
+that verifies the IPL3 layout does `return false` when it *fails*. So an unrecognised IPL3 was
+reported as patched, the hook was never written, `cheats_install()` returned true anyway, and
+`boot.c` set `skip_rdram_reset` on the strength of it. Engine assembled, never hooked, cheats
+silently inert. That is upstream's code: `git diff 6407ab15 -- src/boot/cheats.c` is +34 lines,
+additive, all bound checks from 2.3.
+
+It is real and it is fixed, but **it is not what bit this card**, and the way that was established
+is worth recording. `tools/hosttest/test_cheatinstall.c` compiles the real `cic.c` and runs it over
+a ROM's first 4 KB. Its first run reported that both tested games would fail -- and printed its own
+control as `jr $t1 = 0x20000240`, which is not a MIPS instruction. `vr4300_asm.h` builds
+instructions through a **bitfield union**, and C does not specify bitfield packing: correct for
+mips64-elf, garbage on x86. Hand-encoding the constant (`9 << 21 | 8` = `0x01200008`) reversed the
+answer completely. Across 23 retail ROMs, 22 hook correctly; only Star Fox 64 (CIC 6101,
+`word[466] = 1509fffe`) takes the broken path. **Both games actually tested hook fine, so the cause
+of the reported failure is still unknown.** Recorded as open rather than closed.
+
+**Music stopped for about a second when a detail sheet opened.** `detail_enter()` called
+`cheatdb_load()` synchronously -- an `fseek` and `fread` of that game's blob. Nothing under ares,
+where the DFS is inside the ROM; about a second on FatFs over a real cart, and nothing feeds the
+mixer during a screen transition. Moved into `background()`, which runs every frame, with a forced
+load on the Z path so the cheats screen can never open against a set that has not arrived.
+
+**The launch progress bar appeared for some games and not others.** It was gated to appear only
+after a load outlived 1.5 s. On this hardware the big cartridges sit either side of that, so it
+looked like a glitch rather than a considered escalation. Removed; the launch is now always a fade
+to black.
+
+### The diagnostic channel is a file on the card, not USB
+
+This cart's USB port does not enumerate, so `debugf` reaches nothing, and a replacement is weeks
+away. That matters less than it sounds: the cheat engine installs inside `boot()`, after the
+display is closed and the filesystem unmounted, so USB could never have observed the interesting
+part anyway.
+
+Two things replace it. Questions that depend only on a ROM's bytes are answered on the development
+machine against the real production code -- `test_cheatinstall.c` is the pattern, and it compiles
+`cic.c` rather than reimplementing a checksum that must never disagree with the console. Questions
+that are genuinely runtime go to `/mainmenu/launch.log`, written immediately before the point of
+no return: which ROM, which CIC, whether the engine can hook it, how many cheat words were
+emitted. The write path is known to work now -- the card came back with config, index, playstate
+and cheatstate all correctly written and CRC-valid.
+
+The same pre-flight feeds the detail sheet, so a game the engine cannot hook says "Not supported
+for this game" where the cheat count would be, rather than letting somebody tick twenty cheats
+that were never going to run.
+
+### Two card facts worth keeping
+
+The RTC has never been set: every timestamp on the card is 5 December 2024, so `last_played` is
+fiction and the Recent tab sorts on it. And `cheats.db` matched both games through the `?` region
+wildcard -- 87 groups for Episode I Racer, 37 for Spider-Man -- with all codes type `80`/`81`,
+masking to valid addresses. The database, the wildcard, the group model and the emitter are all
+working; **324 of its 325 entries carry `check_code = 0`**, so every lookup reaches the game-code
+fallback rather than the primary key. That is the converter's doing and is not itself a fault, but
+it means the check-code path has never been exercised by real data.
+
 ### The host test caught two bugs ares could not reach
 
 Neither is visible in a frame, so neither was reachable from the regression suite at all.

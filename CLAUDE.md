@@ -60,6 +60,12 @@ marked superseded rather than replaced.
 **Comments explain why, including what went wrong before.** A comment that restates the code is
 noise. A comment naming the bug the code now prevents is worth ten of them.
 
+**Never run the regression suite unless asked.** `tools/regress.sh` and `tools/suite.sh` rebuild
+the ROM once per input script and run each under ares; the full matrix is many minutes of machine
+time and it interrupts whatever else is being looked at. Run individual scripts when a change
+plausibly moved their frames, and say which ones were run and which were not. `tools/hosttest/run.sh`
+is not covered by this — it is a few seconds and needs no emulator.
+
 **Unlanded work stays a patch, not a commit.** If a change measures well but regresses something
 else, keep the patch and the reasoning in `docs/`, not in history.
 
