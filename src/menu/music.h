@@ -57,6 +57,18 @@ void music_set_track (int track);
 /** @brief Set volume in steps of 0..#MUSIC_VOLUME_MAX. 0 stops, non-zero from 0 starts. */
 void music_set_volume (int volume);
 
+/**
+ * @brief Scale the current volume by @p gain (0..1) without changing the setting.
+ *
+ * For the launch fade, which needs the music to arrive at silence at the same moment the picture
+ * does. music_set_volume() is the wrong tool: it works in ten steps, it persists, and it releases
+ * the player at zero -- so a fade through it would be audibly stepped and would leave the user's
+ * volume set to nothing the next time they switched on.
+ *
+ * Nothing restores this. The only caller is on its way out of the program.
+ */
+void music_fade (float gain);
+
 /** @brief Advance to the next track when a shuffled song ends. Call once per frame. */
 void music_poll (void);
 

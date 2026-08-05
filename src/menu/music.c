@@ -258,6 +258,15 @@ void music_set_volume (int vol) {
     }
 }
 
+void music_fade (float gain) {
+    if (!playing) {
+        return;
+    }
+    if (gain < 0.0f) gain = 0.0f;
+    if (gain > 1.0f) gain = 1.0f;
+    midi64_player_set_volume(&player, (int)(gain * (float)q15_volume()));
+}
+
 void music_poll (void) {
     if (!playing || selected != MUSIC_TRACK_SHUFFLE) return;
     if (!midi64_player_done(&player)) return;
