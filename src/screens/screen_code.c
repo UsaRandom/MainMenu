@@ -1,21 +1,29 @@
 /**
  * @file screen_code.c
- * @brief The parental code pad: four button presses, no keyboard.
+ * @brief The parental code pad: six button presses, no keyboard.
  * @ingroup screens
  *
  * Every other menu that asks for a PIN on a console draws a grid of digits and makes you steer a
  * cursor onto each one, which is slow, and which a child can read over your shoulder from across
- * the room. Here the code IS buttons: the parent presses four of A, Z, L, R and the four C
- * directions, and the screen shows filled dots rather than which ones. It cannot be shoulder-read
- * and it takes about a second.
+ * the room. Here the code IS buttons: the parent presses six of the four C directions, and the
+ * screen shows filled dots rather than which ones. It cannot be shoulder-read and it takes about
+ * a second.
  *
  * B is not in the alphabet, so it is always "delete the last press" -- and on an empty entry it
- * cancels. That is the whole interaction; there is no confirm button, because a four-press code
- * submits itself on the fourth press.
+ * cancels. That is the whole interaction; there is no confirm button, because a six-press code
+ * submits itself on the sixth press.
  *
- * Used from three places, which is why the request is armed with screen_code_ask() rather than
- * hardcoded: unlocking a game before launch, getting into the parental panel, and setting or
- * clearing the code itself.
+ * Used from four places, which is why the request is armed with screen_code_ask() rather than
+ * hardcoded: unlocking a game before launch, getting into the parental panel, setting or clearing
+ * the code itself, and locking a game from the detail sheet. The last of those is why the request
+ * can carry an action as well as a destination -- see code_ask_t.
+ *
+ * ## The wait
+ *
+ * A wrong entry costs five seconds more than the last one, up to ten minutes, and the count that
+ * decides it lives on the card. The pad owns none of that: it ticks the clock down and draws it.
+ * Keeping the countdown in parental.c is what stops B-ing out and coming back from clearing it,
+ * and what makes a console reset re-arm the full wait instead of skipping it. See parental.h.
  */
 
 #include <stdio.h>
@@ -23,6 +31,8 @@
 #include <libdragon.h>
 
 #include "app.h"
+#include "library/library.h"
+#include "library/playstate.h"
 #include "menu/fonts.h"
 #include "menu/parental.h"
 #include "menu/settings.h"
@@ -31,8 +41,8 @@
 #include "ui/draw.h"
 #include "ui/theme.h"
 
-#define DOT_D        28                  /**< diameter of one entered-press dot */
-#define DOT_GAP      22
+#define DOT_D        24                  /**< diameter of one entered-press dot */
+#define DOT_GAP      18
 #define DOTS_W       (PARENTAL_CODE_LEN * DOT_D + (PARENTAL_CODE_LEN - 1) * DOT_GAP)
 #define DOTS_X       ((SCREEN_W - DOTS_W) / 2)
 #define DOTS_Y       220
@@ -43,6 +53,7 @@
 static code_ask_t   ask;
 static const char  *prompt;
 static screen_id_t  on_ok, on_cancel;
+static int          act_rom_id = -1;
 
 static uint8_t digits[PARENTAL_CODE_LEN];
 static uint8_t first[PARENTAL_CODE_LEN];   /**< the first entry, while confirming a new code */
@@ -56,6 +67,15 @@ void screen_code_ask (code_ask_t what, const char *p, screen_id_t ok, screen_id_
     prompt = p;
     on_ok = ok;
     on_cancel = cancel;
+    act_rom_id = -1;
+}
+
+void screen_code_ask_toggle_lock (int rom_id, screen_id_t back) {
+    ask = CODE_ASK_TOGGLE_LOCK;
+    prompt = NULL;
+    on_ok = back;
+    on_cancel = back;
+    act_rom_id = rom_id;
 }
 
 static void code_enter (app_t *app) {
@@ -78,10 +98,6 @@ static void code_leave (app_t *app) {
 /** @brief Which alphabet button was pressed this frame, or -1. */
 static int digit_pressed (const input_t *in) {
     static const struct { button_t bit; int digit; } MAP[] = {
-        { BTN_A,      PBTN_A },
-        { BTN_Z,      PBTN_Z },
-        { BTN_L,      PBTN_L },
-        { BTN_R,      PBTN_R },
         { BTN_CUP,    PBTN_CUP },
         { BTN_CDOWN,  PBTN_CDOWN },
         { BTN_CLEFT,  PBTN_CLEFT },
@@ -95,50 +111,85 @@ static int digit_pressed (const input_t *in) {
     return -1;
 }
 
-/** @brief The fourth press landed. Decide what it meant. */
+/** @brief Wrong, and it counts against them. The attempt was already recorded; see guess(). */
+static void refuse (const char *why) {
+    sound_play_effect(SFX_ERROR);
+    message = why;
+    wrong_t = WRONG_HOLD_S;
+    count = 0;
+}
+
+/**
+ * @brief Judge an entry that is being asked to prove it knows the code.
+ *
+ * The attempt is counted and written to the card BEFORE the comparison, always. With the writes
+ * the other way round, a wrong guess followed by pulling the power costs nothing and the whole
+ * backoff is decoration. See parental.h.
+ */
+static bool guess (void) {
+    parental_note_attempt();
+    if (!parental_code_matches(digits)) {
+        return false;
+    }
+    parental_note_success();
+    return true;
+}
+
+/** @brief The sixth press landed. Decide what it meant. */
 static void submit (app_t *app) {
     switch (ask) {
         case CODE_ASK_UNLOCK:
-            if (parental_code_matches(&app->settings, digits)) {
+            if (guess()) {
                 sound_play_effect(SFX_ENTER);
                 app_goto(app, on_ok);
             } else {
-                sound_play_effect(SFX_ERROR);
-                message = "Not that one";
-                wrong_t = WRONG_HOLD_S;
-                count = 0;
+                refuse("Not that one");
             }
             break;
 
         case CODE_ASK_CLEAR:
-            if (parental_code_matches(&app->settings, digits)) {
-                parental_code_store(&app->settings, NULL);
-                settings_save(&app->settings);
+            if (guess()) {
+                parental_code_store(NULL);
                 sound_play_effect(SFX_ENTER);
                 app_goto(app, on_ok);
             } else {
-                sound_play_effect(SFX_ERROR);
-                message = "Not that one";
-                wrong_t = WRONG_HOLD_S;
-                count = 0;
+                refuse("Not that one");
+            }
+            break;
+
+        case CODE_ASK_TOGGLE_LOCK:
+            if (guess()) {
+                /* Applied here rather than by the screen we return to, because by then the sheet
+                 * may be sitting on a different game -- the whole point of carrying the rom_id
+                 * through the pad is that the action outlives the screen that asked for it. */
+                if (act_rom_id >= 0 && app->lib != NULL && act_rom_id < app->lib->count) {
+                    app->lib->records[act_rom_id].flags ^= LIBF_LOCKED;
+                    playstate_touch();
+                }
+                sound_play_effect(SFX_ENTER);
+                app_goto(app, on_ok);
+            } else {
+                refuse("Not that one");
             }
             break;
 
         case CODE_ASK_SET:
             if (!confirming) {
                 /* Twice, because there is no way to review a code made of dots. A parent who
-                 * fumbles the fourth press and does not find out until their child is locked out
+                 * fumbles the last press and does not find out until their child is locked out
                  * of the console has been failed by the screen, not by themselves. */
                 memcpy(first, digits, sizeof(first));
                 confirming = true;
                 count = 0;
                 sound_play_effect(SFX_SETTING);
             } else if (memcmp(first, digits, sizeof(first)) == 0) {
-                parental_code_store(&app->settings, digits);
-                settings_save(&app->settings);
+                parental_code_store(digits);
                 sound_play_effect(SFX_ENTER);
                 app_goto(app, on_ok);
             } else {
+                /* Not counted as a failed guess: nobody is proving anything here, and charging a
+                 * parent five seconds for mistyping a code they are in the middle of inventing
+                 * would be the feature working against the person it belongs to. */
                 sound_play_effect(SFX_ERROR);
                 message = "Those did not match";
                 wrong_t = WRONG_HOLD_S;
@@ -154,12 +205,15 @@ static void code_update (app_t *app, float dt) {
 
     if (wrong_t > 0.0f) {
         wrong_t -= dt;
-        /* Input is dead while the rejection shows. Not an anti-guessing measure -- it is under a
+        /* Input is dead while the rejection shows. Not part of the backoff -- it is under a
          * second -- but a press that lands mid-flash would otherwise be swallowed into a fresh
          * entry the user has not started yet. */
         return;
     }
 
+    /* B first, and it works during the wait. Someone who opened this by accident, or who has
+     * given up, must not be held on a screen they cannot leave for ten minutes -- and letting
+     * them go costs nothing, because the wait is not the pad's and does not reset with it. */
     if (input_pressed(in, BTN_B)) {
         if (count > 0) {
             count--;
@@ -168,6 +222,11 @@ static void code_update (app_t *app, float dt) {
             sound_play_effect(SFX_EXIT);
             app_goto(app, on_cancel);
         }
+        return;
+    }
+
+    if (parental_wait_left() > 0.0f) {
+        parental_wait_tick(dt);
         return;
     }
 
@@ -186,6 +245,8 @@ static void code_update (app_t *app, float dt) {
 
 static void code_render (app_t *app, surface_t *fb) {
     const theme_t *th = app->theme;
+    bool waiting = parental_wait_left() > 0.0f;
+    char buf[64];
 
     rdpq_attach(fb, NULL);
     ui_fill(0, 0, SCREEN_W, SCREEN_H, th->bg);
@@ -196,9 +257,17 @@ static void code_render (app_t *app, surface_t *fb) {
 
     const char *line = prompt;
     if (ask == CODE_ASK_SET) {
-        line = confirming ? "Again, to be sure" : "Choose four buttons";
+        line = confirming ? "Again, to be sure" : "Choose six presses";
+    } else if (ask == CODE_ASK_TOGGLE_LOCK) {
+        line = "Enter the code to change the padlock";
     }
-    ui_label(SAFE_X, 150, SAFE_W, ALIGN_CENTER, STL_DEFAULT, line ? line : "Enter the code");
+    if (waiting) {
+        parental_wait_text(buf, sizeof(buf));
+        ui_label(SAFE_X, 150, SAFE_W, ALIGN_CENTER, STL_YELLOW, "Wrong code");
+    } else {
+        ui_label(SAFE_X, 150, SAFE_W, ALIGN_CENTER, STL_DEFAULT,
+                 line ? line : "Enter the code");
+    }
 
     /* Dots, never glyphs. Showing which button was pressed would make the code readable from the
      * other side of the room by the person it exists to stop. */
@@ -206,6 +275,8 @@ static void code_render (app_t *app, surface_t *fb) {
         int x = DOTS_X + i * (DOT_D + DOT_GAP);
         if (wrong_t > 0.0f) {
             ui_fill(x, DOTS_Y, DOT_D, DOT_D, BTN_START_COLOR);
+        } else if (waiting) {
+            ui_border(x, DOTS_Y, DOT_D, DOT_D, 3, th->panel_alt);
         } else if (i < count) {
             ui_fill(x, DOTS_Y, DOT_D, DOT_D, th->text_accent);
         } else {
@@ -213,11 +284,18 @@ static void code_render (app_t *app, surface_t *fb) {
         }
     }
 
-    if (wrong_t > 0.0f && message != NULL) {
+    if (waiting) {
+        /* The number counts down on screen rather than leaving the pad simply dead. A screen that
+         * ignores presses without saying why reads as a crash, and the person most likely to see
+         * it is the parent, who has forgotten how many times the child tried. */
+        char line2[96];
+        snprintf(line2, sizeof(line2), "Try again in %s", buf);
+        ui_label(SAFE_X, DOTS_Y + DOT_D + 44, SAFE_W, ALIGN_CENTER, STL_DEFAULT, line2);
+    } else if (wrong_t > 0.0f && message != NULL) {
         ui_label(SAFE_X, DOTS_Y + DOT_D + 44, SAFE_W, ALIGN_CENTER, STL_YELLOW, message);
     } else {
         /* The alphabet, drawn as the buttons themselves. A parent who has never seen this screen
-         * should not have to discover by experiment that Start and B are not in it. */
+         * should not have to discover by experiment which buttons are in it. */
         int total = PBTN_COUNT * UI_BTN_D + (PBTN_COUNT - 1) * 10;
         int x = (SCREEN_W - total) / 2;
         for (int i = 0; i < PBTN_COUNT; i++) {
@@ -225,7 +303,7 @@ static void code_render (app_t *app, surface_t *fb) {
             x += UI_BTN_D + 10;
         }
         ui_label(SAFE_X, DOTS_Y + DOT_D + 96, SAFE_W, ALIGN_CENTER, STL_GRAY,
-                 "Any four of these");
+                 "Any six of these");
     }
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);

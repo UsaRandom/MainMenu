@@ -118,7 +118,7 @@ static void settings_update (app_t *app, float dt) {
                  * one press from any child who found Settings, and the feature is decoration --
                  * see the note at the top of screen_parental.c. */
                 settings_save(&app->settings);
-                if (parental_code_set(&app->settings)) {
+                if (parental_code_set()) {
                     screen_code_ask(CODE_ASK_UNLOCK, "Enter the parental code",
                                     SCREEN_PARENTAL, SCREEN_SETTINGS);
                     app_goto(app, SCREEN_CODE);
@@ -174,7 +174,7 @@ static void settings_render (app_t *app, surface_t *fb) {
     draw_row(app, ROW_CLOCK, "Clock", buf);
 
     draw_row(app, ROW_PARENTAL, "Parental controls",
-             parental_code_set(&app->settings) ? "On" : "Off");
+             parental_code_set() ? "On" : "Off");
 
     /* Status: the answers to the first three support questions, in one place. */
     int y = LIST_Y + ROW_COUNT * ROW_H + 24;

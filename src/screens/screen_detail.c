@@ -118,6 +118,21 @@ static void detail_update (app_t *app, float dt) {
         sound_play_effect(SFX_SETTING);
     }
 
+    /* Locking from the sheet, beside favouriting: the two C buttons either side are the two
+     * things you can do *to* a game, rather than with it. The list under Parental controls stays
+     * for working through a shelf; this is the short path for the one in your hand.
+     *
+     * The code is asked for in both directions, locking as well as unlocking. Locking without it
+     * would let a child pad every game on the card with locks their parent then has to clear one
+     * at a time, which is a nuisance the feature has no business enabling. No conflict with the
+     * C-only code alphabet: that is read on the pad, and this navigates away to it first. */
+    if (input_pressed(in, BTN_CLEFT) && app->launch.rom_id >= 0 && parental_code_set()) {
+        sound_play_effect(SFX_ENTER);
+        screen_code_ask_toggle_lock(app->launch.rom_id, SCREEN_DETAIL);
+        app_goto(app, SCREEN_CODE);
+        return;
+    }
+
     /* Unconditional now. It was guarded on group_count, which locked the cheats screen away
      * for exactly the games that have no cheats -- and those are the ones somebody wants to type
      * one in for. The screen says so itself when the list is empty. */
@@ -150,7 +165,7 @@ static void detail_update (app_t *app, float dt) {
          * view, the position counter, Recent, Favourites and the opening-tab logic. */
         uint16_t flags = (app->launch.rom_id >= 0)
                        ? app->lib->records[app->launch.rom_id].flags : 0;
-        switch (parental_check(&app->settings, flags, time(NULL))) {
+        switch (parental_check(flags, time(NULL))) {
             case PARENTAL_GAME_LOCKED:
                 sound_play_effect(SFX_ERROR);
                 screen_code_ask(CODE_ASK_UNLOCK, "This game is locked",
@@ -160,7 +175,7 @@ static void detail_update (app_t *app, float dt) {
             case PARENTAL_OUTSIDE_HOURS: {
                 char window[48];
                 static char why[80];
-                parental_window_text(&app->settings, window, sizeof(window));
+                parental_window_text(window, sizeof(window));
                 snprintf(why, sizeof(why), "Playing is allowed %s", window);
                 sound_play_effect(SFX_ERROR);
                 screen_code_ask(CODE_ASK_UNLOCK, why, SCREEN_LAUNCH, SCREEN_DETAIL);
@@ -260,9 +275,23 @@ static void detail_render (app_t *app, surface_t *fb) {
     }
 
     /* Said here as well as badged on the tile, because the sheet is where someone stands before
-     * pressing A and it should not be the code prompt that first mentions it. */
-    if (rec != NULL && (rec->flags & LIBF_LOCKED)) {
-        y = info_row(INFO_X, y, INFO_W, "Locked", "Code needed");
+     * pressing A and it should not be the code prompt that first mentions it -- and if the reason
+     * is the hour rather than a padlock, saying *when* it opens is the difference between waiting
+     * and giving up. Both cases still open the pad on A; this only stops the refusal being a
+     * surprise. */
+    if (rec != NULL && parental_code_set()) {
+        long until = parental_seconds_until_open(time(NULL));
+        if (rec->flags & LIBF_LOCKED) {
+            y = info_row(INFO_X, y, INFO_W, "Locked", "Code needed");
+        } else if (until > 0) {
+            long mins = (until + 59) / 60;
+            if (mins >= 60) {
+                snprintf(buf, sizeof(buf), "In %ldh %02ldm", mins / 60, mins % 60);
+            } else {
+                snprintf(buf, sizeof(buf), "In %ld min", mins);
+            }
+            y = info_row(INFO_X, y, INFO_W, "Play unlocked", buf);
+        }
     }
 
     /* Always, including when there are none. The row was conditional, which meant its absence
@@ -323,6 +352,13 @@ static void detail_render (app_t *app, surface_t *fb) {
      * menu; Start stays bound because nothing is gained by taking it away. */
     hx = ui_hint(hx, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Play");
     hx = ui_hint(hx, FOOTER_Y + 14, ">", BTN_C_COLOR, UI_BTN_DISC, "Fav");
+    /* Only when a code is set, because without one the button does nothing -- and a hint for a
+     * button that does nothing is worse than no hint. This is also the only place the padlock is
+     * advertised, so it appears exactly when it has become real. */
+    if (parental_code_set()) {
+        hx = ui_hint(hx, FOOTER_Y + 14, "<", BTN_C_COLOR, UI_BTN_DISC,
+                     (rec != NULL && (rec->flags & LIBF_LOCKED)) ? "Unlock" : "Lock");
+    }
     hx = ui_hint(hx, FOOTER_Y + 14, "Z", BTN_Z_COLOR, UI_BTN_TALL, "Cheats");
     (void)hx;
     ui_button(SAFE_X + SAFE_W - UI_BTN_D, FOOTER_Y + 14, "B", BTN_B_COLOR, UI_BTN_DISC);

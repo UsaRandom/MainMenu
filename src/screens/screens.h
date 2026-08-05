@@ -29,6 +29,7 @@ typedef enum {
     CODE_ASK_UNLOCK = 0,   /**< prove you know the code; one entry */
     CODE_ASK_SET,          /**< choose a new one; entered twice and compared */
     CODE_ASK_CLEAR,        /**< prove you know it, then remove it */
+    CODE_ASK_TOGGLE_LOCK,  /**< prove you know it, then flip one game's padlock */
 } code_ask_t;
 
 /**
@@ -39,6 +40,16 @@ typedef enum {
  * and @p cancel are where the pad navigates on success and on B.
  */
 void screen_code_ask (code_ask_t what, const char *prompt, screen_id_t ok, screen_id_t cancel);
+
+/**
+ * @brief Arm the pad to flip @p rom_id's padlock on a correct entry, then return to @p back.
+ *
+ * The only request that carries an *action* rather than only a destination, and it has to: the
+ * screen that asked is destroyed and rebuilt on the way back, and by the time it returns its
+ * cursor may be on a different game. Applying it inside the pad is what makes the action belong
+ * to the game the user was looking at when they pressed the button.
+ */
+void screen_code_ask_toggle_lock (int rom_id, screen_id_t back);
 
 /**
  * @brief Arm the cheat editor, then `app_goto(app, SCREEN_CHEATEDIT)`.

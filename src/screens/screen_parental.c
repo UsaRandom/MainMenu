@@ -66,11 +66,11 @@ static void parental_enter (app_t *app) {
 static void parental_update (app_t *app, float dt) {
     (void)dt;
     const input_t *in = &app->input;
-    settings_t *s = &app->settings;
+    parental_t *s = parental_state();
 
     if (input_pressed(in, BTN_B) || input_pressed(in, BTN_START)) {
         sound_play_effect(SFX_EXIT);
-        settings_save(s);
+        parental_save();
         app_goto(app, SCREEN_SETTINGS);
         return;
     }
@@ -91,7 +91,7 @@ static void parental_update (app_t *app, float dt) {
                 /* Setting a code writes it; clearing one has to prove you know it first,
                  * otherwise the lock is removable by anyone who can find this screen -- and this
                  * screen is only protected by the code being there. */
-                if (parental_code_set(s)) {
+                if (parental_code_set()) {
                     screen_code_ask(CODE_ASK_CLEAR, "Enter it once more to remove it",
                                     SCREEN_PARENTAL, SCREEN_PARENTAL);
                 } else {
@@ -113,7 +113,7 @@ static void parental_update (app_t *app, float dt) {
 
         case ROW_HOURS:
             if (activate || delta != 0) {
-                s->parental_hours_enabled = !s->parental_hours_enabled;
+                s->hours_enabled = !s->hours_enabled;
                 sound_play_effect(SFX_SETTING);
             }
             break;
@@ -121,7 +121,7 @@ static void parental_update (app_t *app, float dt) {
         case ROW_FROM:
             if (delta != 0 || activate) {
                 int step = (delta != 0) ? delta : 1;
-                s->parental_hour_from = ((s->parental_hour_from + step) % 24 + 24) % 24;
+                s->hour_from = ((s->hour_from + step) % 24 + 24) % 24;
                 sound_play_effect(SFX_SETTING);
             }
             break;
@@ -129,7 +129,7 @@ static void parental_update (app_t *app, float dt) {
         case ROW_TO:
             if (delta != 0 || activate) {
                 int step = (delta != 0) ? delta : 1;
-                s->parental_hour_to = ((s->parental_hour_to + step) % 24 + 24) % 24;
+                s->hour_to = ((s->hour_to + step) % 24 + 24) % 24;
                 sound_play_effect(SFX_SETTING);
             }
             break;
@@ -155,7 +155,7 @@ static void draw_row (app_t *app, int idx, const char *label, const char *value,
 
 static void parental_render (app_t *app, surface_t *fb) {
     const theme_t *th = app->theme;
-    const settings_t *s = &app->settings;
+    const parental_t *s = parental_state();
     char buf[96];
 
     rdpq_attach(fb, NULL);
@@ -165,7 +165,7 @@ static void parental_render (app_t *app, surface_t *fb) {
     ui_fill(0, 64 - ACCENT_BAR, SCREEN_W, ACCENT_BAR, th->tab_underline);
     ui_label(SAFE_X, 36, SAFE_W, ALIGN_LEFT, STL_DEFAULT, "Parental controls");
 
-    bool have_code = parental_code_set(s);
+    bool have_code = parental_code_set();
 
     draw_row(app, ROW_CODE, have_code ? "Code (A to remove)" : "Code (A to set)",
              have_code ? "Set" : "Not set", !have_code);
@@ -178,14 +178,14 @@ static void parental_render (app_t *app, surface_t *fb) {
     }
     draw_row(app, ROW_LOCKS, "Locked games", buf, n == 0);
 
-    parental_window_text(s, buf, sizeof(buf));
-    draw_row(app, ROW_HOURS, "Playing allowed", buf, !s->parental_hours_enabled);
+    parental_window_text(buf, sizeof(buf));
+    draw_row(app, ROW_HOURS, "Playing allowed", buf, !s->hours_enabled);
 
     char hour[16];
-    parental_hour_text(s->parental_hour_from, hour, sizeof(hour));
-    draw_row(app, ROW_FROM, "From", hour, !s->parental_hours_enabled);
-    parental_hour_text(s->parental_hour_to, hour, sizeof(hour));
-    draw_row(app, ROW_TO, "Until", hour, !s->parental_hours_enabled);
+    parental_hour_text(s->hour_from, hour, sizeof(hour));
+    draw_row(app, ROW_FROM, "From", hour, !s->hours_enabled);
+    parental_hour_text(s->hour_to, hour, sizeof(hour));
+    draw_row(app, ROW_TO, "Until", hour, !s->hours_enabled);
 
     /* The three ways this can be switched on and not working. */
     int y = LIST_Y + ROW_COUNT * ROW_H + 24;
@@ -198,26 +198,23 @@ static void parental_render (app_t *app, surface_t *fb) {
         y += 26;
     }
     if (!cache_writable()) {
-        /* The code is written by ini_save(), which upstream has shipped for years; the locks go
-         * through cache.c, which has never run against real storage. On a card the menu cannot
-         * write, the code outlives a reboot and the locks do not -- and a parent must not be left
-         * believing otherwise. */
+        /* Three things fail on a card that cannot be written, and they fail differently. The code
+         * and its failure count go through ini_save() into parental.ini, which upstream has
+         * shipped for years but still cannot write to a locked card. The locks go through cache.c,
+         * which has never run against real storage at all. So the code may survive a reboot while
+         * the locks do not, and the wait after a wrong entry lasts only until the console is
+         * switched off -- and a parent must not be left believing otherwise. */
         ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_YELLOW,
-                 "Locked games are not saved to this card.");
+                 "Nothing here is saved to this card.");
         y += 26;
     }
-    if (s->parental_hours_enabled && !parental_clock_ok(time(NULL))) {
+    if (s->hours_enabled && !parental_clock_ok(time(NULL))) {
         /* Fails open, and says so. A schedule that failed closed on a console with no clock would
          * lock the family out of a menu they never asked to be locked out of. */
         ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_YELLOW,
                  "No clock, so the hours are not enforced.");
         y += 26;
     }
-    if (have_code) {
-        ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY,
-                 "A lock on a menu, not security. See the manual.");
-    }
-
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
     (void)ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Change");
     ui_button(SAFE_X + SAFE_W - UI_BTN_D, FOOTER_Y + 14, "B", BTN_B_COLOR, UI_BTN_DISC);

@@ -19,11 +19,15 @@ press a
 wait 25
 fbdump              # 2: the fields, seeded
 
+# The presses are relative to whatever the console booted with, so no comment here names the value
+# it lands on -- the point is only that it lands somewhere nobody reaches by accident, and that
+# frame 4 shows the same value back. Today that is 2032 Nov 1 15:53; if the seed ever moves, the
+# hashes move with it and the two frames still have to agree.
 press up x2         # year
 press right
-press up x5         # month -> Jun
+press up x5         # month
 press right
-press up x9         # day
+press up x9         # day, wrapping within the month
 press right
 press up x14        # hour
 press right

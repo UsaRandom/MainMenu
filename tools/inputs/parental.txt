@@ -4,9 +4,9 @@
 # anything in sequence: a code that is set but guards nothing, or a lock on a menu with no code,
 # both look fine in a single frame.
 #
-# The code is A Z L R -- four buttons the script can press. The C directions are in the alphabet
-# too and `press cup` reaches them (see mkinput.py), but a code made of them would test the
-# alphabet rather than the flow.
+# The code is six C presses -- cup cdown cleft cright cup cdown -- because the alphabet is now the
+# four C directions and nothing else. Six of four is 4,096, the same space the old four of eight
+# gave. A code entered with A/Z/L/R would no longer be accepted at all.
 
 wait 120
 
@@ -25,17 +25,21 @@ fbdump              # 2: the panel, nothing set
 
 press a             # Code -> the pad, asking for a new one
 wait 20
-press a
-press z
-press l
-press r
+press cup
+press cdown
+press cleft
+press cright
+press cup
+press cdown
 wait 20
 fbdump              # 3: entered once, now asking again
 
-press a
-press z
-press l
-press r
+press cup
+press cdown
+press cleft
+press cright
+press cup
+press cdown
 wait 20
 fbdump              # 4: back on the panel, code set
 
@@ -60,24 +64,34 @@ fbdump              # 6: the grid, padlocks on the two locked tiles
 
 press a             # the detail sheet for a locked game
 wait 40
-fbdump              # 7: the sheet, with its Locked row
+fbdump              # 7: the sheet, with its Locked row and the C-left hint
 
 press a             # try to launch it
 wait 25
 fbdump              # 8: the code pad, refusing
 
-press a
-press z
-press l
-press cup           # deliberately wrong on the fourth press
+press cup
+press cdown
+press cleft
+press cright
+press cup
+press cup           # deliberately wrong on the sixth press
 wait 25
-fbdump              # 9: rejected
+fbdump              # 9: rejected, and that guess is now on the card
 
-wait 60             # let the rejection clear
-press a
-press z
-press l
-press r             # the real code
+# Five seconds of penalty for the one wrong entry above, and the pad says so rather than simply
+# ignoring presses. 60 frames is a second, so this frame lands well inside the wait.
+wait 60
+fbdump              # 10: the wait, counting down
+
+# 5 s is 300 frames; overshoot so the exact frame the wait expires on is not load-bearing.
+wait 340
+press cup
+press cdown
+press cleft
+press cright
+press cup
+press cdown        # the real code
 wait 40
 
 exit

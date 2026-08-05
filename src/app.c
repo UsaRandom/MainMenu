@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 #include <libdragon.h>
 
 #include "app.h"
@@ -22,6 +23,7 @@
 #include "dev/inputscript.h"
 #include "flashcart/flashcart.h"
 #include "menu/fonts.h"
+#include "menu/parental.h"
 #include "menu/paths.h"
 #include "menu/sound.h"
 #include "screens/screens.h"
@@ -36,6 +38,11 @@
  * whatever else is on the card; library.c's SCAN_SKIP is what keeps that bounded, and AUDIT.md
  * carries what it measured. */
 #define SCAN_ROOT       "/"
+
+/** The wall clock a scripted run is pinned to: 2026-08-04 14:30:00 UTC. Mid-afternoon on purpose
+ *  -- it is inside the 8 am to 8 pm window the parental panel defaults to, so a script that turns
+ *  the schedule on is testing the allowed case unless it deliberately moves the hours. */
+#define SCRIPT_CLOCK_EPOCH  1785853800L
 
 /* Video. Three buffers, not upstream's two: with two, display_try_get() returns NULL whenever
  * the RDP has not drained, and the CPU spins instead of doing useful work -- which is exactly
@@ -73,6 +80,17 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     joypad_init();
     timer_init();
     rtc_init();
+
+    /* A scripted run has to be a pure function of the script, and the clock is not. ares hands the
+     * console the host's time, so the settings screen's Clock row -- and every field the clock
+     * screen seeds from it -- came out different on every run: two back-to-back runs of clock.txt
+     * disagreed on all four of their frames, and parental.txt's first frame moved with them. The
+     * hashes for those frames were noise being read as evidence. Same reasoning as the fixed dt in
+     * AUDIT.md 1z, and it compiles out entirely without DEV_HARNESS. */
+    if (inputscript_active()) {
+        struct timeval tv = { .tv_sec = SCRIPT_CLOCK_EPOCH, .tv_usec = 0 };
+        settimeofday(&tv, NULL);
+    }
     rspq_init();
     rdpq_init();
     dfs_init(DFS_DEFAULT_LOCATION);
@@ -85,6 +103,10 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     menu_path(cfg, sizeof(cfg), app->storage, CONFIG_FILE);
     settings_init(cfg);
     settings_load(&app->settings);
+
+    /* The code and the failure count are not settings and are not a cache: they are the one file
+     * on the card a user is ever told to delete by hand. See parental.h. */
+    parental_load(app->storage);
 
     /* The setting existed and the toggle drew, but nothing ever told the sound system about it --
      * turning sound effects off in settings changed a bool and nothing else. */
