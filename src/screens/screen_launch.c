@@ -14,6 +14,8 @@
 #include "library/library.h"
 #include "flashcart/flashcart.h"
 #include "menu/cart_load.h"
+#include "menu/cheatcheck.h"
+#include "menu/launchlog.h"
 #include "utils/fs.h"
 #include "library/playstate.h"
 #include "cheats/cheatstate.h"
@@ -39,14 +41,18 @@
  * second is not information, it is a flicker -- and it makes a launch feel like a transaction
  * rather than like starting a game.
  *
- * So the normal path is a **fade to black**, the same gesture as a console cutting to a game, and
- * the load happens behind it. The bar is kept for the case that actually warrants one: if a load
- * is still running after LATE_BAR_US it appears, because at that point the user is waiting and a
- * black screen with nothing on it stops being a transition and starts being a hang.
+ * So the path is a **fade to black**, the same gesture as a console cutting to a game, and the
+ * load happens behind it. There is no bar at all any more.
+ *
+ * There was one, held back until a load outlived 1.5 s on the reasoning that by then the user is
+ * waiting and an empty black screen stops being a transition and starts being a hang. On hardware
+ * that reasoning did not survive contact: the big cartridges here -- Donkey Kong 64, the Zeldas --
+ * sit either side of the threshold, so the bar appeared for some games and not others, which
+ * reads as a glitch rather than as a considerate escalation. A launch that is consistently a cut
+ * to black beats one that is usually a cut and occasionally a progress dialog.
  *
  * That 22 MB/s figure is the cart owner's, not a measurement taken here -- ares has no SD at all.
- * It is used for the simulated load and nothing depends on it being exact; the threshold below is
- * far enough above any plausible fast-path load that being wrong by 2x changes nothing. */
+ * It is used only for the simulated load, which exists because the dummy driver copies nothing. */
 
 /** The cut.
  *
@@ -57,14 +63,9 @@
  * now, so it should be the part with presence. */
 #define DUR_LAUNCH_FADE   0.55f
 
-/** How long a load may run behind the black before it earns a progress bar. */
-#define LATE_BAR_US       1500000
-
-static const char *progress_label;
 static app_t     *progress_app;
 static bool       started;
 static float      fade_t;
-static uint32_t   load_start_ticks;
 
 /**
  * @brief Black over whatever is already in @p fb, at @p k of full.
@@ -86,59 +87,26 @@ static void draw_fade_into (surface_t *fb, float k) {
     rdpq_detach_show();
 }
 
-/** @brief The late bar, on black. Only reached when a load outlives LATE_BAR_US. */
-static void draw_progress_into (surface_t *fb, float progress) {
-    const theme_t *th = progress_app->theme;
-
-    rdpq_attach_clear(fb, NULL);
-    ui_fill(0, 0, SCREEN_W, SCREEN_H, RGBA5551(0, 0, 0));
-
-    int bar_w = 384;
-    int bar_h = 12;
-    int bar_x = (SCREEN_W - bar_w) / 2;
-    int bar_y = SCREEN_H / 2;
-
-    ui_fill(bar_x, bar_y, bar_w, bar_h, th->panel);
-
-    int filled = (int)(progress * (float)bar_w);
-    ui_fill(bar_x, bar_y, filled, bar_h, th->text_accent);
-
-    rdpq_set_mode_standard();
-    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
-    ui_text(bar_x, bar_y - 40, bar_w, ALIGN_CENTER, STL_DEFAULT,
-            progress_label ? progress_label : "Loading");
-
-    char pct[8];
-    snprintf(pct, sizeof(pct), "%d%%", (int)(progress * 100.0f));
-    ui_text(bar_x, bar_y + bar_h + 12, bar_w, ALIGN_CENTER, STL_GRAY, pct);
-
-    rdpq_detach_show();
-}
-
 /* Called from inside flashcart_load_rom(). Acquires its own framebuffer, because the one the main
  * loop handed to render() has already been shown by the time the load starts. Skips the update
  * rather than blocking when nothing is free -- a dropped frame here is invisible, a stalled load
  * is not.
  *
- * Stays black until the load has outlived LATE_BAR_US, so the common sub-second load is a clean
- * cut and only a genuinely slow one grows a bar. */
+ * Holds full black for the whole load. The progress argument is ignored and kept only because
+ * this is flashcart_progress_callback_t; drawing it was the bar, and the bar is gone. */
 static void on_progress (float progress) {
+    (void)progress;
     surface_t *fb = display_try_get();
     if (fb == NULL) {
         return;
     }
-    if (TIMER_MICROS(TICKS_SINCE(load_start_ticks)) < LATE_BAR_US) {
-        draw_fade_into(fb, 1.0f);
-    } else {
-        draw_progress_into(fb, progress);
-    }
+    draw_fade_into(fb, 1.0f);
 }
 
 static void launch_enter (app_t *app) {
     progress_app = app;
     started = false;
     fade_t = 0.0f;
-    progress_label = app->launch.rom_info.title[0] ? app->launch.rom_info.title : "Loading ROM";
     app->launch.err = CART_LOAD_OK;
 }
 
@@ -303,6 +271,55 @@ static void simulate_load (app_t *app) {
     on_progress(1.0f);
 }
 
+/** @brief How many groups are ticked. Local: nothing else needs it and cheatdb.h is a read-only API. */
+static int enabled_group_count (const cheatset_t *set) {
+    int n = 0;
+    for (int i = 0; i < set->group_count; i++) {
+        if (set->groups[i].enabled) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/**
+ * @brief Write what this launch is about to do to the card.
+ *
+ * Everything interesting about a launch happens where it cannot be observed: the cheat engine
+ * installs inside boot(), after the display is closed and the filesystem is unmounted. On a cart
+ * with working USB `debugf` would still miss it. So the last thing done while the filesystem is
+ * alive is to record what was decided -- which ROM, which CIC, whether the engine can hook it,
+ * and how many cheat words were emitted. See launchlog.h.
+ */
+static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
+    const char *path = (app->launch.rom_path != NULL) ? path_get(app->launch.rom_path) : "?";
+
+    size_t words = 0;
+    if (cheats != NULL) {
+        while (!(cheats[words] == 0 && cheats[words + 1] == 0)) {
+            words += 2;
+        }
+    }
+
+    char fit_detail[96];
+    cheatfit_t fit = (emu >= 0) ? CHEATFIT_OK : cheatcheck_rom(path, fit_detail, sizeof(fit_detail));
+    if (emu >= 0) {
+        snprintf(fit_detail, sizeof(fit_detail), "emulated system; the engine patches N64 code only");
+    }
+
+    launchlog_write(
+        "rom      %s\n"
+        "groups   %d loaded, %d ticked\n"
+        "emitted  %u cheat words (%u lines)\n"
+        "engine   %s\n"
+        "detail   %s\n",
+        path,
+        app->cheats.group_count, enabled_group_count(&app->cheats),
+        (unsigned)words, (unsigned)(words / 2),
+        (fit == CHEATFIT_OK) ? "will hook" : "WILL NOT HOOK -- ticked cheats will do nothing",
+        fit_detail);
+}
+
 /** @brief Load the ROM and hand off to the bootloader. Blocking; draws its own frames. */
 static void do_load (app_t *app) {
     int emu = -1;
@@ -379,6 +396,10 @@ static void do_load (app_t *app) {
 
     bp->cheat_list = build_cheat_list(app);
 
+    /* Last thing before the point of no return. app->running = false returns to main(), which
+     * calls boot() immediately -- there is no later. */
+    log_launch(app, bp->cheat_list, emu);
+
     app->running = false;
 }
 
@@ -391,7 +412,6 @@ static void launch_render (app_t *app, surface_t *fb) {
      * would read as a stutter rather than as a transition. */
     if (!started && k >= 1.0f) {
         started = true;
-        load_start_ticks = TICKS_READ();
         do_load(app);
     }
 }
