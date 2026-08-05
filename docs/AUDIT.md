@@ -73,6 +73,168 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
+## 2d. The clock can be set, and libdragon's writability check is a lie by design
+
+There was no way to set the time. `last_played`, the parental schedule and everything that wants
+to say how long ago something happened all read a clock nobody could correct. `screen_clock.c` is
+five fields — year, month, day, hour, minute — reached from Settings, whose row shows the current
+time rather than the word "Clock" twice.
+
+**Not `rtc_set()`.** The pinned libdragon deprecates `rtc_get`, `rtc_set` and `rtc_is_writable` in
+favour of the ISO C ones: `rtc_init()` hooks the clock into newlib, so `time()` reads it and
+`settimeofday()` writes it. `rtc_is_writable()` deserves naming — it is
+
+```c
+__attribute__((deprecated("just assume it's always writable")))
+static inline bool rtc_is_writable( void ) { return true; }
+```
+
+an unconditional yes. NEXT.md called it "not a real check" from the header alone and that is
+exactly right. So the screen **reads the clock back** after writing, with two seconds of tolerance
+because the clock is running while it happens, and says so if the value did not take.
+
+`rtc_get_source()` is the honest signal for whether a set survives a power cycle:
+`RTC_SOURCE_NONE` is libdragon's software clock. The screen says which one the console has rather
+than letting a parent set a bedtime that evaporates. Under ares the source is *not* NONE, so the
+screen reads "Kept by the console's clock" — which is what the API reports and is the best signal
+available; whether it is true is a hardware question and stays open.
+
+Day clamping is not politeness either: 31 January with the month stepped to February is 31
+February, and `mktime()` resolves that silently to 2 or 3 March — the screen would accept one date
+and the clock would hold another.
+
+**Cost: 15.5 KB of text and 2.1 KB of data**, 524,888 → 540,440 and 98,132 → 100,220. That is
+`strftime`, `localtime` and `mktime` dragging in newlib's date machinery, and it is most of a
+screen's worth of code for three format calls. Affordable on 8 MB and worth knowing before anyone
+adds a fourth date format somewhere else expecting it to be free.
+
+Verified against the whole suite: exactly one frame moved, `parental 00`, which is the settings
+screen that gained the row. Nothing else in 67 frames changed.
+
+## 2c. Shipped cheats become editable, and three scripts turn out to have been photographing the wrong thing
+
+Z on the cheats list opens the editor on whatever is under the cursor, shipped or hand-entered.
+`cheats.db` is read-only, so saving always writes a user cheat — and **a user cheat whose name
+matches a group already in the set takes that group over** rather than appearing beside it. The
+group keeps its name, its position and its `cheatstate` tick; only its codes change. Verified end
+to end: `tools/inputs/cheat-edit.txt` opens AeroGauge's "Unlock Hidden Tracks & Cars", changes
+`8009127C 0001` to `8009127C 0006`, saves, and comes back to a list still **43 long** with the same
+name in the same place.
+
+### The name limit was set by the screen and should have been set by the corpus
+
+The first attempt sized the stored name at what the editor's cell strip can show — 23 characters,
+`USERCHEAT_NAME_CAP` 24 — and refused anything longer, because a truncated name no longer matches
+the group it came from and the edit would land beside the original instead of replacing it. The
+refusal was correct and the limit was not. Measured against the fetched libretro corpus, over
+**228,209 cheat names**:
+
+| fits in | share |
+|---|---|
+| 15 chars | 57.7% |
+| 19 | 73.2% |
+| **23** | **80.5%** |
+| 31 | 91.7% |
+| 39 | 96.2% |
+| **63** | **99.4%** |
+
+Longest is 197; the median is 13. So the original limit refused one cheat in five, and the very
+first one the script landed on — "Unlock Hidden Tracks & Cars", 27 characters — was refused.
+
+The fix separates two things that were wrongly one: how long a name can be **stored**
+(`USERCHEAT_NAME_CAP`, now 64, record 108 → 140 bytes) and how many characters can be **typed**
+(`NAME_CELLS`, still 23, which is a screen-width fact — 23 × 20 px against SAFE_W's 608). A name
+too long for the strip is shown as a label and only its codes are editable. Nothing is refused for
+length any more short of 63 characters.
+
+Line counts needed no such change: **99.5%** of groups are 8 lines or fewer, which is what
+`USERCHEAT_MAX_LINES` already allowed. The longest is 182.
+
+### Three things found on the way, two of them silent
+
+**The editor's error message had never been visible.** It was drawn at `LINES_Y + 8*ROW_H + 8` =
+y 440, and `FOOTER_Y` is 424 — the footer is filled *after* the message, so every refusal to save
+was painted over before the frame was shown. It now shares the header's right-hand slot with the
+line counter. Nothing caught this because a refusal draws no other pixels.
+
+**`realloc(NULL, 0)` may return NULL, and `grow_set()` could not tell that from being out of
+memory.** Overriding a shipped group asks for zero name bytes, and on a game with no prior user
+cheats `user_strtab` is NULL — so the first override on any such game would have reported a failed
+edit. Caught before running, by reading the path the new call takes rather than the one it used to.
+The strtab realloc is now skipped when the total is zero.
+
+**`cheats.txt` had never once drawn the cheats screen.** It opened `wait 90`, and the boot plate is
+still up at frame 90, so `press right` and `press a` were swallowed and all five of its frames were
+the same picture of the grid. It is the script named for the feature, it asserts in its own header
+that "the sheet's N of M enabled and the list agree", and it had been passing its hash check while
+photographing a tab bar. Now `wait 140`, and it reaches AeroGauge's 43 cheats and its sheet reading
+`2 of 43 enabled`. `press r  # page down` was stale in the same file — R became Add when the editor
+needed a button.
+
+Same family as 2b: a script that navigates by a count it cannot verify, or acts before the screen
+it names exists, produces frames that look like a result and are not one.
+
+### The whole suite had been running against no cheat database at all
+
+`build/cheats.db` is a release artifact, gitignored, and was simply absent on this machine —
+so `cheats.txt`, `cheat-leak.txt` and `cheat-entry.txt` were all exercising the empty-list path and
+`cheatdb_load()` was never returning a group. Fetched: **1,345 `.cht` files → 325 games, 37,638
+cheats retained, 18,211 dropped** (1,527 KB). The Makefile stages it when present, so the suite now
+covers the populated path. Worth stating plainly: the cheats screens have been measured for the
+first time here, and any earlier claim about them rests on an empty database.
+
+### One number for all the caches has a host-side half nobody had wired up
+
+`MENU_CACHE_FORMAT_VER` 1 → 2 for the record growth, which is the documented behaviour — one number
+for every cache file, everything rebuilds together, and it costs nothing today because no cache has
+ever been written to a real card. But `tools/mkplaystate.py` carried its own `FORMAT_VER = 1` with a
+comment saying it must match, and it stopped matching. The symptom was not an error: the menu
+rejected the fixture's `playstate.dat`, Recent and Favourites went empty and were therefore hidden,
+the grid opened on N64 instead of Recent, and **every script that steps right through the tabs
+quietly visited different games**. Two runs of `cheat-edit.txt` an hour apart opened different
+titles for this reason. `mkplaystate.py` now reads the value out of `cache.h` instead of holding a
+copy of it.
+
+## 2b. Two settings removed, and a blind spot that made the suite agree with itself
+
+Three rows left the settings screen: *Keep saves in a saves/ folder*, *Fast reboot back to the
+menu* and the *Storage* status line. Both toggles were removed by fixing the behaviour at the
+value it already defaulted to — `use_saves_folder` was `true` (`settings.c:18`) and
+`rom_fast_reboot_enabled` was `false` (`settings.c:31`) — so no card in existence changes
+behaviour and there is nothing to migrate.
+
+The fast-reboot row was also **mislabelled in the direction that matters**. It set
+`FLASHCART_REBOOT_MODE_ROM` → `BOOT_MODE_ROM` (`cart_load.c:134`, `sc64.c:728`), which makes the
+console's Reset button re-run the *game*. A row called "fast reboot back to the menu" was the one
+setting that took the menu away and left no route back short of a power cycle. Nothing now calls
+`flashcart_set_next_boot_mode()`, so Reset always returns here;
+`CART_LOAD_ERR_BOOT_MODE_FAIL` and `CART_LOAD_ERR_FUNCTION_NOT_SUPPORTED` became unreachable and
+went with it.
+
+### The suite reported byte-identical hashes, and it was wrong to
+
+All fifteen scripts, every frame, unchanged — against a screen that had just lost two of five
+rows and a status line. The house rule is that a green result is worth nothing until the setup has
+been shown capable of going red, and this is what that rule is for. Two compounding causes:
+
+**No script ever screenshotted the settings screen.** Five scripts press Start, none dumped a
+frame there. The screen was simply outside the suite, so of course nothing moved.
+
+**`parental.txt` navigated by over-pressing.** It reached Parental controls with `press down x4`
+against a cursor that clamps at `ROW_COUNT - 1`. The row moved from index 4 to index 2 and the
+script went on landing on it exactly, so even the frames downstream of the settings screen were
+unaffected. Clamped navigation makes a script insensitive to the layout it is navigating — it
+cannot tell "the row is where I think" from "the row is somewhere at or past where I think".
+
+Both fixed: the script presses exactly twice, and dumps the settings screen as its first frame.
+The new frame does move — `acea4e13a62166a5` with the old rows, `1e83b575be18bd6a` without them —
+verified by stashing only `src/` and running the same script against both, so the hash difference
+is attributable to the code and not to the script edit.
+
+Worth carrying: **a hash suite is only evidence for the pixels it renders**, and "nothing moved"
+after a UI change is a prompt to ask whether the change is on screen anywhere, not a result. Same
+family as 1j and 1u — an instrument that cannot go red reporting green.
+
 ## 2a. The write path answered by reading the firmware instead of guessing
 
 `Polprzewodnikowy/SummerCart64` @ `a1e7996` (`v2.20.2-25-ga1e7996`), cloned to
