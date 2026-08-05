@@ -160,6 +160,8 @@ SRCS = \
 	menu/fonts.c \
 	menu/parental.c \
 	menu/path.c \
+	menu/cheatcheck.c \
+	menu/launchlog.c \
 	menu/paths.c \
 	menu/profile.c \
 	menu/image_decoder.c \

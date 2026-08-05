@@ -100,34 +100,55 @@ static inline uint32_t cheats_calc_x106_xor(uint8_t seed, uint8_t offset) {
  * @param target The target address.
  * @return true if successful, false otherwise.
  */
+int cheats_ipl3_patch_offset (cic_type_t cic_type) {
+    switch (cic_type) {
+    case CIC_5101: return 476;
+    case CIC_6101:
+    case CIC_7102: return 466;
+    case CIC_x102: return 475;
+    case CIC_x103: return 472;
+    case CIC_x105: return 499;
+    case CIC_x106: return 488;
+    default: return -1;
+    }
+}
+
+bool cheats_ipl3_layout_ok (cic_type_t cic_type, uint32_t word_at_offset) {
+    int patch_offset = cheats_ipl3_patch_offset(cic_type);
+    if (patch_offset < 0) {
+        return false;
+    }
+    if (cic_type == CIC_x106) {
+        // NOTE: CIC x106 IPL3 is partially scrambled
+        word_at_offset ^= cheats_calc_x106_xor(cic_get_seed(cic_type),
+                                               (uint32_t)patch_offset - X106_ENC_START);
+    }
+    return word_at_offset == I_JR(REG_T1);
+}
+
 static bool cheats_patch_ipl3 (cic_type_t cic_type, io32_t *target) {
-    uint32_t patch_offset = 0;
     uint32_t j_instruction = I_J((uint32_t)(target));
 
     io32_t *ipl3 = SP_MEM->DMEM;
 
-    switch (cic_type) {
-    case CIC_5101: patch_offset = 476; break;
-    case CIC_6101:
-    case CIC_7102: patch_offset = 466; break;
-    case CIC_x102: patch_offset = 475; break;
-    case CIC_x103: patch_offset = 472; break;
-    case CIC_x105: patch_offset = 499; break;
-    case CIC_x106: patch_offset = 488; break;
-    default: return true;
+    int offset = cheats_ipl3_patch_offset(cic_type);
+    if (offset < 0) {
+        return true;
     }
+    uint32_t patch_offset = (uint32_t)offset;
 
-    // NOTE: Check for "jr $t1" instruction
-    //       Libdragon IPL3 could be brute-force signed with any retail
-    //       CIC seed and checksum, and we support only retail libultra IPL3
-    uint32_t test_instruction = cpu_io_read(&ipl3[patch_offset]);
-    if (cic_type == CIC_x106) {
-        // NOTE: CIC x106 IPL3 is partially scrambled
-        test_instruction ^= cheats_calc_x106_xor(cic_get_seed(cic_type), patch_offset - X106_ENC_START);
-    }
-
-    if (test_instruction != I_JR(REG_T1)) {
-        return false;
+    /* NOTE: Check for "jr $t1" instruction
+     *       Libdragon IPL3 could be brute-force signed with any retail
+     *       CIC seed and checksum, and we support only retail libultra IPL3
+     *
+     * This returned FALSE here, which this function's callers read as success -- so an IPL3 we
+     * had just failed to recognise was reported as patched, the jump below was never written,
+     * and cheats_install() went on to build the whole engine, return true, and have boot.c set
+     * skip_rdram_reset on the strength of it. The engine was assembled, never hooked, and the
+     * game booted with cheats silently doing nothing. Of the 23 retail ROMs measured with
+     * tools/hosttest/test_cheatinstall.c, one -- Star Fox 64, CIC 6101 -- takes this path. */
+    if (!cheats_ipl3_layout_ok(cic_type, cpu_io_read(&ipl3[patch_offset]))) {
+        return true;
     }
 
     switch (cic_type) {
