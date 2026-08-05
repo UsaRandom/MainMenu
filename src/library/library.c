@@ -48,6 +48,19 @@ static const char *SCAN_SKIP[] = {
     "mainmenu", "menu", "metadata", "emulators", "saves", "System Volume Information",
 };
 
+/**
+ * @brief Files that are never games, however much their extension says otherwise.
+ *
+ * A flashcart menu lives at the card root under a fixed name, and `sc64menu.n64` ends in `.n64`.
+ * Scanning from `/` put the menu's own ROM in reach for the first time, so without this the first
+ * thing a user sees in their N64 tab is this program, offering to boot itself. The other two names
+ * are the ED64 and 64drive equivalents: this fork does not support either cart, but a card that
+ * has been used with one still has the file sitting at its root.
+ */
+static const char *SCAN_SKIP_FILES[] = {
+    "sc64menu.n64", "menu.bin", "OS64.v64", "OS64P.v64",
+};
+
 static const char *TAB_LABELS[TAB_COUNT] = {
     "RECENT", "FAVORITES",
     "N64", "NES", "SNES", "GB", "GBC", "SMS",
@@ -316,6 +329,16 @@ bool library_scan_skipped (const char *name) {
     return false;
 }
 
+/** @brief Is @p name a file that is never a game? See SCAN_SKIP_FILES. */
+static bool skipped_file (const char *name) {
+    for (unsigned i = 0; i < sizeof(SCAN_SKIP_FILES) / sizeof(SCAN_SKIP_FILES[0]); i++) {
+        if (strcasecmp(name, SCAN_SKIP_FILES[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static int scan_dir (library_t *lib, const char *dir, int depth) {
     if (depth > SCAN_MAX_DEPTH) {
         return 0;
@@ -338,6 +361,8 @@ static int scan_dir (library_t *lib, const char *dir, int depth) {
             if (!library_scan_skipped(info.d_name)) {
                 added += scan_dir(lib, child, depth + 1);
             }
+        } else if (skipped_file(info.d_name)) {
+            /* Nothing at all: not a game, and not art either. */
         } else if (is_image(info.d_name)) {
             /* Art sitting loose in the tree, whatever it is named or formatted as. Recorded here rather than
              * searched for later: this loop is already visiting every file, so the whole

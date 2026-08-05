@@ -39,8 +39,9 @@ HEADER_BYTES = 8192
 
 TRUNCATE = {".z64", ".n64", ".v64", ".rom", ".smc", ".sfc", ".gb", ".gbc", ".sms", ".gg", ".nes"}
 
-# The menu's own ROM and its RTC sidecar sit at the card root, outside /roms, so nothing ever
-# scans them -- copying them would only pack a ROM inside a ROM.
+# The menu's own ROM and its RTC sidecar sit at the card root. The scan reaches the root now, so
+# the menu does exclude sc64menu.n64 by name -- but copying it would pack a ROM inside a ROM
+# regardless, and the mirror is meant to be small.
 SKIP_NAMES = {"sc64menu.n64", "sc64menu.rtc"}
 
 # macOS litters removable media. AppleDouble files in particular are named ._<original>, so they

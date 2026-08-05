@@ -123,7 +123,8 @@ depth; the leading-dot test already covered `.Spotlight-V100`, `.Trashes`, `.fse
 AppleDouble `._*` files, which carry the real file's extension and would otherwise index as a
 second copy of every game.
 
-`emulators` is the one that matters. `neon64bu.rom` is a NES core and `.rom` is an N64 extension;
+Two of the entries were found only by trying the change against a real card rather than the
+fixture. `emulators` is the first. `neon64bu.rom` is a NES core and `.rom` is an N64 extension;
 `gb.v64`, `gbc.v64`, `lithium64.z64` and `smsPlus64.z64` are all ROM extensions too. Proved by
 putting the cores at `/emulators` and building both ways: **48 games with the exclusion, 53
 without** — every core listed in the N64 tab as something to play. Under the old `/roms` root they
@@ -139,6 +140,20 @@ the stored one **every single time**, the index would have been thrown away on e
 full scan the index exists to avoid would have run for ever — a permanent 1-second boot regression
 on exactly the cards that work properly. Under ares the DFS is read-only and nothing in there ever
 moves, so the walk looks perfectly stable. `library_scan_skipped()` is now shared by both walks.
+
+The second is the menu's own ROM. `sc64menu.n64` sits at the card root and ends in `.n64`, so
+rooting the scan at `/` put this program in its own N64 tab, offering to boot itself. Proved the
+same way — a `sc64menu.n64` planted in the fixture root gives **48 titles with the name skipped and
+49 without**. `menu.bin`, `OS64.v64` and `OS64P.v64` are skipped beside it: this fork supports
+neither the ED64 nor the 64drive, but a card that has been used with one still has the file.
+
+**`make clean` used to destroy things nothing can put back.** It was `rm -rf build/`, and `build/`
+is also where the fetched cheat corpus lives (1,345 files) and where `build/artcache` lives —
+which has to be populated by hand and which *nothing fetches at all*. Losing artcache is the
+AUDIT 1w trap firing silently: every fixture cover becomes a procedural gradient, every decode
+number moves, and `real-art.txt` and `jpeg-art.txt` go on passing against gradients. `clean` now
+keeps `cht`, `cheats.db` and `artcache`; `distclean` is the old behaviour, named so nobody reaches
+it by reflex. This was found the direct way, by running `make clean` and losing them.
 
 Still unexercised: the fixture carries no `library.idx`, so the *fresh* path — signature walk
 matches, scan skipped — has never run under ares at all. Everything above about it is reading.

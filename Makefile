@@ -351,11 +351,30 @@ sc64: $(OUTPUT_DIR)/$(PROJECT_NAME).n64
 all: sc64
 .PHONY: all
 
+# Everything under build/ EXCEPT the three things nothing can cheaply put back. `rm -rf build`
+# also took out the fetched cheat corpus -- a download of 1,345 files -- and build/artcache, which
+# has to be populated by hand and which nothing fetches at all. Losing artcache silently swaps
+# every fixture cover for a procedural gradient and quietly changes every decode number in
+# AUDIT.md, while the art scripts go on passing; see AUDIT.md 1w. A clean target that destroys
+# something irreplaceable is a trap, not a convenience.
+CLEAN_KEEP := cht cheats.db artcache
+
 clean:
 	@rm -f ./$(FILESYSTEM)
 	@find ./$(FILESYSTEM_DIR) -type d -empty -delete
-	@rm -rf ./$(BUILD_DIR) ./$(OUTPUT_DIR)
+	@rm -rf ./$(OUTPUT_DIR)
+	@if [ -d ./$(BUILD_DIR) ]; then \
+		find ./$(BUILD_DIR) -mindepth 1 -maxdepth 1 \
+			$(foreach k,$(CLEAN_KEEP),! -name '$(k)') -exec rm -rf {} + ; \
+	fi
 .PHONY: clean
+
+# The old behaviour, when it really is wanted. Named so nobody reaches it by reflex.
+distclean:
+	@rm -f ./$(FILESYSTEM)
+	@find ./$(FILESYSTEM_DIR) -type d -empty -delete
+	@rm -rf ./$(BUILD_DIR) ./$(OUTPUT_DIR)
+.PHONY: distclean
 
 format:
 	@find ./$(SOURCE_DIR) \
