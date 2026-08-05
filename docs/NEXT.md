@@ -23,7 +23,7 @@ use it.
 - Open: does the build section stay at all, or move to a separate file? A player needs "put this
   file on a card", not `N64_INST`.
 
-## 2. SD card layout — one folder we own, and everything else anywhere
+## 2. SD card layout — one folder we own, and everything else anywhere — done
 
 Two halves.
 
@@ -49,14 +49,19 @@ works. Today the scan is rooted at `/roms` and the cores and database are at fix
 - Cores and `cheats.db` are cheaper as a short probe list than as scanner coupling: try
   `/mainmenu/<x>`, then `/<x>`, then the old `/menu/<x>` for anyone with an existing card. Three
   `stat`s at launch, no new scan state.
-- **Open: does a recursive scan of a full 32 GB card stay affordable?** The measured cost is
-  11,153 µs/ROM against real files, but that is per *ROM*, not per directory entry. A card with a
-  large unrelated folder tree pays for the walk. Measure before committing to it.
-- **Open: `libindex` directory signatures are keyed on the scanned root.** Changing the root
-  invalidates every existing index, which is fine and automatic, but the signature scheme itself
-  assumes a shallow, known set of directories. Check it still holds over an arbitrary tree.
+- **Cost of the recursive scan: none measurable.** 20,809 µs/ROM rooted at `/roms` against
+  20,682 µs at `/`, same fixture, same 48 titles — 0.6% apart and in the wrong direction to be a
+  cost. **Still open for a real card:** the fixture root holds three entries, two excluded, so what
+  this measured is that the exclusions work. `tools/mksdmirror.py` and a real card answer the rest.
+- **The `libindex` signature walk did not share the scan's exclusions**, and its own comment
+  claimed it did. Rooted at `/` it would have walked `mainmenu/cache`, which is rewritten every
+  boot, so the index would have been declared stale on every start of a console that can write to
+  its card — for ever. Found by reading; ares cannot catch it, because its DFS is read-only.
+  `library_scan_skipped()` is now shared by both. See AUDIT.md 2f.
+- **`emulators` had to join the exclusion list or cores appear as games**: 48 titles with it, 53
+  without, because `.rom`, `.v64` and `.z64` are all core filenames as well as game extensions.
 
-## 3. Parental controls
+## 3. Parental controls — done
 
 **Six presses, C buttons only.** The alphabet drops from eight symbols to four (C-up, C-down,
 C-left, C-right) and the length goes 4 → 6, so the space is 4⁶ = 4,096 — identical to today's
@@ -187,4 +192,13 @@ Two things carried forward:
 3's countdown and backoff. 2 is the largest and the only one that can regress the scan, so it
 wants its own measurement pass. 6 is self-contained.
 
-    5 (done) -> 4 removals (done) -> 1 (done) -> 6 (done) -> 4 clock (done) -> 3 -> 2
+    5 (done) -> 4 removals (done) -> 1 (done) -> 6 (done) -> 4 clock (done) -> 3 (done) -> 2 (done)
+
+Everything on this list has landed. What it left open, in one place:
+
+- **A recursive scan has only been measured against a fixture whose root has three entries.** A
+  real card is the open question — mirror one with `tools/mksdmirror.py`.
+- **The `libindex` fresh path has never run under ares at all**, because the fixture carries no
+  `library.idx`. Everything AUDIT.md 2f says about the signature walk is reading, not measurement.
+- **`parental.ini` has never been written to real storage.** It is the one write whose failure is
+  invisible, and the only thing standing behind it is that `ini_save()` is upstream's writer.

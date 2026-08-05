@@ -73,6 +73,137 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
+## 2f. The whole card is searched, and one folder is ours
+
+`/menu` meant two things — where the menu writes its own state, and where the user is expected to
+put content. Split into two rules.
+
+**Menu-written state goes to `/mainmenu/`, and is looked for nowhere else.** `config.ini`,
+`cache/*` and the new `parental.ini`. Nothing migrates: every one of those is derivable from the
+card, so a card that had a `/menu` folder rebuilds into `/mainmenu` on first boot and the old
+folder is left alone. Deleting folders on someone else's card is not ours to do.
+
+**Content is probed in three places** — `/mainmenu/<x>`, then `/<x>`, then `/menu/<x>` — for
+`cheats.db`, `emulators/<core>` and the art pack. Three `stat`s at launch, no new scan state, and
+an existing card keeps working with no action at all.
+
+Measured rather than assumed, by moving `cheats.db` and rebuilding the fixture for each position.
+The settings screen's "Cheat database" row is the readout:
+
+| `cheats.db` at | `clock 00` |
+|---|---|
+| `/mainmenu/cheats.db` | `b63d632c0a55882f` |
+| `/cheats.db` | `b63d632c0a55882f` |
+| `/menu/cheats.db` | `b63d632c0a55882f` |
+| `/roms/nowhere/cheats.db` | `0c643128841e21ad` |
+
+The fourth row is the point: without a negative control, three identical hashes are equally
+consistent with the probe finding nothing anywhere.
+
+**The scan root moved from `/roms` to `/`.** Someone who empties a zip onto a card should get a
+working menu, and someone who has kept their collection in a folder of their own naming should not
+have to rename it.
+
+NEXT.md asked whether a recursive walk of a whole card stays affordable. On this fixture it costs
+nothing measurable:
+
+| scan root | titles | total | per ROM |
+|---|---|---|---|
+| `/roms` | 48 | 998,852 µs | 20,809 µs |
+| `/` | 48 | 992,760 µs | 20,682 µs |
+
+0.6% apart, and in the wrong direction to be a cost — it is noise. **This does not answer the
+question for a real card.** The fixture root holds three entries, two of which are excluded, so
+what was measured is that the exclusions work, not that a 32 GB card with an unrelated folder tree
+is affordable. `tools/mksdmirror.py` exists for that and needs a real card. Still open.
+
+**The exclusion list is load-bearing, not an optimisation.** `library.c`'s `SCAN_SKIP` refuses
+`mainmenu`, `menu`, `metadata`, `emulators`, `saves` and `System Volume Information` at every
+depth; the leading-dot test already covered `.Spotlight-V100`, `.Trashes`, `.fseventsd` and
+AppleDouble `._*` files, which carry the real file's extension and would otherwise index as a
+second copy of every game.
+
+`emulators` is the one that matters. `neon64bu.rom` is a NES core and `.rom` is an N64 extension;
+`gb.v64`, `gbc.v64`, `lithium64.z64` and `smsPlus64.z64` are all ROM extensions too. Proved by
+putting the cores at `/emulators` and building both ways: **48 games with the exclusion, 53
+without** — every core listed in the N64 tab as something to play. Under the old `/roms` root they
+were never in reach, so rooting the scan at `/` is what created this and nothing else would have
+caught it.
+
+**A bug found by reading, that ares cannot catch.** `libindex.c`'s signature walk — the thing that
+decides on every boot whether the index is still good — did *not* apply the exclusion list, though
+its own comment claimed it visited "the same entries `scan_dir()` visits". Rooted at `/` it would
+have walked the art pack and `mainmenu/cache`, and `mainmenu/cache` is rewritten on every boot: the
+writability probe alone is created and deleted inside it. So the signature would have differed from
+the stored one **every single time**, the index would have been thrown away on every start, and the
+full scan the index exists to avoid would have run for ever — a permanent 1-second boot regression
+on exactly the cards that work properly. Under ares the DFS is read-only and nothing in there ever
+moves, so the walk looks perfectly stable. `library_scan_skipped()` is now shared by both walks.
+
+Still unexercised: the fixture carries no `library.idx`, so the *fresh* path — signature walk
+matches, scan skipped — has never run under ares at all. Everything above about it is reading.
+
+## 2e. Parental controls: six presses, its own file, and a wait that survives the power switch
+
+**Six C presses, not four of eight.** The alphabet is the four C directions and nothing else, and a
+code is six of them: 4⁶ = 4,096, exactly what four presses of eight buttons gave. Nothing is lost
+and three things are gained — it is simpler to say out loud to the other parent, it frees A, B, Z
+and the shoulders to go on meaning what they mean everywhere else, and the D-pad ambiguity goes
+away (a D-pad arrow and a C arrow are the same picture).
+
+**The code, the failure count and the schedule moved out of `config.ini` into
+`/mainmenu/parental.ini`.** Forgetting the code is now recovered by deleting one file, and that
+recovery costs nothing else the parent has set — which is only true if the file holds nothing else,
+which is why the schedule moved with it. No master code to build, document or defend. No code set
+means no enforcement, so deleting it also releases the locked games; their `LIBF_LOCKED` flags stay
+in `playstate.dat` and come back the moment a code is set again.
+
+**It deliberately does not go through `cache.c`.** Every file that layer writes is a cache, and a
+version mismatch deletes it and rebuilds from the card. There is nothing on a card to rebuild a
+code from, so routing this file through it would mean the next routine `MENU_CACHE_FORMAT_VER` bump
+silently unlocked every locked game on every card in the field. It is written with `ini_save()`
+instead — the same writer `config.ini` uses.
+
+**A wrong guess costs 5 s more than the last, capped at 10 minutes.** Three properties, and each
+one is load-bearing:
+
+- **The count is written before the guess is compared.** `guess()` in screen_code.c calls
+  `parental_note_attempt()` first, always. The other order makes pulling the power on a wrong
+  answer free and the whole thing collapses to nothing.
+- **A correct entry clears it.** This is what makes a counter viable with no clock — nothing has to
+  expire, because the person who knows the code clears it every time they use it.
+- **Ten minutes is a ceiling, not politeness.** Uncapped, a child who cannot get in leaves a few
+  hundred failures behind and the parent waits forty minutes: the feature turned against its owner.
+  Ten minutes still makes 4,096 combinations hopeless.
+
+The countdown lives in `parental.c`, not in the pad, so leaving the screen and coming back does not
+clear it and a console reset re-arms the full wait from the stored count rather than skipping it.
+It is accumulated frame time — no clock anywhere in it. B still works during the wait: someone who
+opened the screen by accident must not be held on it for ten minutes, and letting them go costs
+nothing because the wait is not the pad's.
+
+Verified end to end by `parental.txt`: one wrong sixth press, and frame 09 shows six dimmed dots,
+"Wrong code", and "Try again in 5 seconds". The correct code afterwards launches.
+
+**C-left locks or unlocks the game on the detail sheet**, asking for the code in both directions.
+Locking needs it too — otherwise a child can pad every game on the card with locks the parent then
+clears one at a time. This is the only request that carries an *action* through the pad rather than
+only a destination: the sheet is rebuilt on the way back and its cursor may be on a different game
+by then, so `screen_code_ask_toggle_lock()` records the `rom_id` and the pad applies it.
+
+**Deleted with no replacement anywhere:** "A lock on a menu, not security. See the manual." It is a
+games menu; nothing here makes a claim that needs qualifying, and qualifying it invites the reader
+to go and test the claim.
+
+**A harness fault this uncovered, and it was reading noise as evidence.** ares hands the console the
+host's wall clock, so the settings screen's Clock row — and every field the clock screen seeds from
+it — came out different on every run. Two back-to-back runs of `clock.txt` disagreed on **all four**
+of their frames, and `parental.txt`'s first frame moved with them. Those hashes had never been
+evidence of anything. Fixed by pinning the clock to 2026-08-04 14:30 UTC when an input script is
+driving, exactly as the fixed `dt` in 1z pins the frame time; it compiles out without
+`DEV_HARNESS`. The suite now reproduces byte-for-byte across two full runs, 72 frames over 16
+scripts, which it demonstrably did not before.
+
 ## 2d. The clock can be set, and libdragon's writability check is a lie by design
 
 There was no way to set the time. `last_played`, the parental schedule and everything that wants
@@ -94,14 +225,30 @@ exactly right. So the screen **reads the clock back** after writing, with two se
 because the clock is running while it happens, and says so if the value did not take.
 
 `rtc_get_source()` is the honest signal for whether a set survives a power cycle:
-`RTC_SOURCE_NONE` is libdragon's software clock. The screen says which one the console has rather
+`RTC_SOURCE_NONE` is libdragon's software clock. The screen says which one is in play rather
 than letting a parent set a bedtime that evaporates. Under ares the source is *not* NONE, so the
-screen reads "Kept by the console's clock" — which is what the API reports and is the best signal
+screen reads "Kept by the cartridge's clock" — which is what the API reports and is the best signal
 available; whether it is true is a hardware question and stays open.
+
+That line first read "the console's clock", which is wrong and points the reader at the wrong
+hardware. **A stock N64 has no clock.** `RTC_SOURCE_JOYBUS` is libdragon's name for the PIF/
+controller-port protocol, and on this machine the device answering it is the flashcart — so the
+battery that keeps the time is on the cartridge, and that is what someone should go and check when
+the date comes back wrong.
 
 Day clamping is not politeness either: 31 January with the month stepped to February is 31
 February, and `mktime()` resolves that silently to 2 or 3 March — the screen would accept one date
 and the clock would hold another.
+
+**No timezone and no DST, and that is the whole design.** Nothing sets `TZ`, so newlib runs with a
+zero offset and no daylight rules: `localtime()` is `gmtime()`, and `mktime()` is its exact
+inverse. The clock therefore holds the digits the user typed and nothing reinterprets them.
+Measured rather than reasoned — `clock.txt` enters 2032 Nov 1 15:53 and the settings row afterwards
+reads `01 Nov 2032  15:53`, so no offset is applied on either side of the write. The consequence a
+user sees is that the hour has to be retyped twice a year in a country that shifts, which is what
+every console of this era did. The consequence for the code is that the parental schedule can
+compare `tm_hour` against a stored hour with no conversion anywhere, and that anything that ever
+sets `TZ` breaks that silently in both directions at once.
 
 **Cost: 15.5 KB of text and 2.1 KB of data**, 524,888 → 540,440 and 98,132 → 100,220. That is
 `strftime`, `localtime` and `mktime` dragging in newlib's date machinery, and it is most of a
