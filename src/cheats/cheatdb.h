@@ -30,8 +30,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/** @brief Bumped whenever the on-disk layout changes; a mismatch is a hard reject, not a migration. */
-#define CHEATDB_FORMAT_VER  1
+/** @brief Bumped whenever the on-disk layout changes; a mismatch is a hard reject, not a migration.
+ *
+ * 2: each game's names moved into its own blob, and the index row grew a blob_size so the whole
+ * thing is one read. Version 1 kept one string table for the entire database and every load read
+ * all of it -- see cheatdb_load(). */
+#define CHEATDB_FORMAT_VER  2
 
 /** @brief 'M64C' */
 #define CHEATDB_MAGIC       0x4D363443
@@ -59,7 +63,9 @@ typedef struct {
     int            group_count;
     cheat_code_t  *codes;
     int            code_count;
-    char          *strtab;      /**< one allocation backing every group name from the database */
+    /** This game's blob, exactly as it sits on disk: group rows, code lines, then the names.
+     *  Held because every database group's `name` points into it. */
+    char          *strtab;
     /** Names of hand-entered groups, which cannot point into the database's table. Owned here and
      *  freed by cheatdb_free() so callers have one release function, not two. */
     char          *user_strtab;

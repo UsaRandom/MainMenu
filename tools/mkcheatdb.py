@@ -47,7 +47,7 @@ import urllib.request
 import zipfile
 
 MAGIC = 0x4D363443              # 'M64C'
-FORMAT_VER = 1
+FORMAT_VER = 2
 ANY_VERSION = 0xFF
 
 CORPUS_ZIP = "https://github.com/libretro/libretro-database/archive/refs/heads/master.zip"
@@ -279,40 +279,59 @@ def main():
     games.sort(key=lambda g: g[0])          # sorted by check_code, so the reader can bisect
 
     # --- serialise -------------------------------------------------------------------
-    strtab = bytearray()
-    stroff = {}
-
-    def intern(s):
-        b = s.encode("utf-8", "replace")[:127]
-        if b in stroff:
-            return stroff[b]
-        off = len(strtab)
-        stroff[b] = off
-        strtab.extend(b)
-        strtab.append(0)
-        return off
-
+    #
+    # Every game's blob is self-contained: group rows, then code lines, then the names those rows
+    # point at, all contiguous, with the total length in the index. So a load is one seek and one
+    # read of a few kilobytes.
+    #
+    # Format 1 kept a single string table for the whole database, and the reader had to read the
+    # WHOLE of it to resolve one game's names -- 769,488 bytes on the shipped file, on every
+    # detail sheet that opened. That is far longer than the audio the mixer holds ahead of the
+    # DAC, so the music stopped dead each time. Interning across games saved 41 KB of card space
+    # and cost three quarters of a megabyte of I/O per lookup.
     blob = bytearray()
     index = bytearray()
 
     for check_code, game_code, version, kept in games:
         off = len(blob)
+
+        # Names sit after the group rows and the codes, so their offsets are known in advance
+        # from the two counts -- no second pass and no patching up.
+        total_lines = sum(len(l) for _n, l in kept)
+        names_base = len(kept) * 8 + total_lines * 8
+        names = bytearray()
+        seen = {}
+
+        def local_intern(s, names=names, seen=seen, names_base=names_base):
+            b = s.encode("utf-8", "replace")[:127]
+            if b in seen:
+                return seen[b]
+            off_ = names_base + len(names)
+            seen[b] = off_
+            names.extend(b)
+            names.append(0)
+            return off_
+
         code_rows = []
         grp_rows = bytearray()
         first = 0
         for name, lines in kept:
-            grp_rows += struct.pack(">IHH", intern(name), first, len(lines))
+            grp_rows += struct.pack(">IHH", local_intern(name), first, len(lines))
             code_rows.extend(lines)
             first += len(lines)
-        blob += grp_rows
+
+        game = bytearray(grp_rows)
         for addr, val in code_rows:
-            blob += struct.pack(">II", addr, val)
+            game += struct.pack(">II", addr, val)
+        game += names
+        blob += game
 
-        index += struct.pack(">Q4sBBHI", check_code, game_code.encode("ascii")[:4].ljust(4, b"\0"),
-                             version, 0, len(kept), off)
+        index += struct.pack(">Q4sBBHII", check_code,
+                             game_code.encode("ascii")[:4].ljust(4, b"\0"),
+                             version, 0, len(kept), off, len(game))
 
-    if len(strtab) == 0:
-        strtab.append(0)
+    # Kept as an empty region so the header keeps its shape. Nothing reads it any more.
+    strtab = bytearray(b"\0")
 
     header_size = 64
     index_off = header_size

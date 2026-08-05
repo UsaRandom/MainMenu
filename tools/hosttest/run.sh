@@ -50,6 +50,24 @@ $CC $CFLAGS tools/hosttest/test_profile.c src/library/cache.c src/library/locks.
 TESTDIR="$OUT/profiledir" "$OUT/test_profile" 2>/dev/null
 
 echo
+echo "== cheat database, read three ways"
+# Against the REAL build/cheats.db rather than a constructed one, because the thing under test is
+# whether the C reader and the Python writer agree about a layout, and a fixture written by this
+# suite would only prove the suite agrees with itself. Needs the corpus; says so when it is absent
+# rather than reporting a pass over nothing.
+if [ -f build/cheats.db ]; then
+    rm -rf "$OUT/cheatdir"
+    mkdir -p "$OUT/cheatdir/mainmenu"
+    cp build/cheats.db "$OUT/cheatdir/mainmenu/cheats.db"
+    python3 tools/hosttest/cheatdb_expect.py build/cheats.db "$OUT/cheatdb-expect.txt"
+    $CC $CFLAGS tools/hosttest/test_cheatdb.c src/cheats/cheatdb.c src/menu/paths.c \
+        tools/hosttest/shim/fs_probe.c -o "$OUT/test_cheatdb"
+    TESTDIR="$OUT/cheatdir/" EXPECT="$OUT/cheatdb-expect.txt" "$OUT/test_cheatdb" 2>/dev/null
+else
+    echo "  SKIPPED -- no build/cheats.db; run tools/mkcheatdb.py --fetch"
+fi
+
+echo
 echo "== JPEG variants picojpeg does and does not accept"
 if python3 tools/hosttest/mkjpegs.py "$OUT/jpegs" >"$OUT/mkjpegs.log" 2>&1; then
     sed 's/^/  /' "$OUT/mkjpegs.log"
@@ -137,6 +155,31 @@ if [ "${1:-}" = "--mutate" ]; then
     fi
     grep -E 'FAIL|failures' "$OUT/profile_mutant.log"
     echo "mutation detected, so a green profile run above means something"
+
+    if [ -f build/cheats.db ]; then
+        echo
+        echo "== mutation: read a game's codes from its group table, the cheat suite must go red"
+        # Where the code lines start inside a blob is the one number the format 2 rewrite
+        # introduced, and getting it wrong is invisible from the console: the detail sheet shows
+        # the right names and the right count, and the engine is handed addresses taken from the
+        # group table. Cheats that write to arbitrary memory, presented as the cheats you picked.
+        sed 's/size_t codes_off = (size_t)n \* sizeof(cheatdb_group_t);/size_t codes_off = 0;/' \
+            src/cheats/cheatdb.c > "$OUT/cheatdb_mutant.c"
+        grep -q 'size_t codes_off = 0;' "$OUT/cheatdb_mutant.c" ||
+            { echo "cheatdb mutation did not apply" >&2; exit 1; }
+
+        $CC -std=c11 -Wall -Itools/hosttest/shim -Isrc -Isrc/library \
+            tools/hosttest/test_cheatdb.c "$OUT/cheatdb_mutant.c" src/menu/paths.c \
+            tools/hosttest/shim/fs_probe.c -o "$OUT/test_cheatdb_mutant"
+
+        if TESTDIR="$OUT/cheatdir/" EXPECT="$OUT/cheatdb-expect.txt" \
+                "$OUT/test_cheatdb_mutant" >"$OUT/cheatdb_mutant.log" 2>/dev/null; then
+            echo "MUTANT PASSED -- the cheat suite cannot tell codes from group headers" >&2
+            exit 1
+        fi
+        tail -1 "$OUT/cheatdb_mutant.log"
+        echo "mutation detected, so a green cheat run above means something"
+    fi
 
     echo
     echo "== mutation: break the CRC seed, the suite must go red"

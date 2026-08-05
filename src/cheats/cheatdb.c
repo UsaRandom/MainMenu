@@ -28,7 +28,7 @@ typedef struct __attribute__((packed)) {
     uint8_t  reserved[36];
 } cheatdb_header_t;
 
-/** @brief One index row, 20 bytes packed, sorted by check_code so it can be binary-searched. */
+/** @brief One index row, 24 bytes packed, sorted by check_code so it can be binary-searched. */
 typedef struct __attribute__((packed)) {
     uint64_t check_code;
     char     game_code[4];
@@ -36,14 +36,45 @@ typedef struct __attribute__((packed)) {
     uint8_t  flags;
     uint16_t cheat_count;
     uint32_t cheats_off;    /**< from blob_off */
+    uint32_t blob_size;     /**< group rows + codes + names, so a load is one read */
 } cheatdb_index_t;
 
 /** @brief Per-game blob header row, 8 bytes. */
 typedef struct __attribute__((packed)) {
-    uint32_t name_off;      /**< from strtab_off */
+    uint32_t name_off;      /**< from the start of this game's own blob */
     uint16_t code_first;    /**< index into this game's own code array */
     uint16_t code_count;
 } cheatdb_group_t;
+
+/* Every number in this file is big-endian, because the machine that reads it is.
+ *
+ * That was left implicit -- the structs above were read straight off disk and the fields came out
+ * right because mips64-elf is big-endian and nothing else ever ran this code. Which is true, and
+ * is also why the reader could not be tested: tools/hosttest runs the real cheatdb.c natively,
+ * and on a little-endian host a raw struct read turns 'M64C' into 'C64M' and format 2 into 512.
+ * The suite's first run said exactly that.
+ *
+ * So the byte order is stated. On the console CHEATDB_SWAP is 0, the loops below are constant-
+ * folded away, and the generated code is what it was. Off it, the same file parses.
+ */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define CHEATDB_SWAP 1
+#else
+#define CHEATDB_SWAP 0
+#endif
+
+static inline uint16_t swap16 (uint16_t v) {
+    return (uint16_t)((v >> 8) | (v << 8));
+}
+
+static inline uint32_t swap32 (uint32_t v) {
+    return ((v >> 24) & 0x000000FFu) | ((v >> 8) & 0x0000FF00u) |
+           ((v << 8) & 0x00FF0000u) | ((v << 24) & 0xFF000000u);
+}
+
+static inline uint64_t swap64 (uint64_t v) {
+    return ((uint64_t)swap32((uint32_t)v) << 32) | swap32((uint32_t)(v >> 32));
+}
 
 static FILE             *db_file;
 static cheatdb_header_t  db_head;
@@ -87,6 +118,15 @@ bool cheatdb_open (const char *storage_prefix) {
         cheatdb_close();
         return false;
     }
+    if (CHEATDB_SWAP) {
+        db_head.magic       = swap32(db_head.magic);
+        db_head.format_ver  = swap16(db_head.format_ver);
+        db_head.game_count  = swap32(db_head.game_count);
+        db_head.index_off   = swap32(db_head.index_off);
+        db_head.blob_off    = swap32(db_head.blob_off);
+        db_head.strtab_off  = swap32(db_head.strtab_off);
+        db_head.strtab_size = swap32(db_head.strtab_size);
+    }
 
     /* Magic and version checked before anything is trusted, and a mismatch is a hard reject
      * rather than a migration -- same discipline as every other cache file here. A truncated or
@@ -113,6 +153,14 @@ bool cheatdb_open (const char *storage_prefix) {
         fread(db_index, 1, index_bytes, db_file) != index_bytes) {
         cheatdb_close();
         return false;
+    }
+    if (CHEATDB_SWAP) {
+        for (uint32_t i = 0; i < db_head.game_count; i++) {
+            db_index[i].check_code  = swap64(db_index[i].check_code);
+            db_index[i].cheat_count = swap16(db_index[i].cheat_count);
+            db_index[i].cheats_off  = swap32(db_index[i].cheats_off);
+            db_index[i].blob_size   = swap32(db_index[i].blob_size);
+        }
     }
 
     debugf("cheatdb: %lu games\n", (unsigned long)db_head.game_count);
@@ -184,6 +232,20 @@ void cheatdb_free (cheatset_t *set) {
     memset(set, 0, sizeof(*set));
 }
 
+/**
+ * @brief Load one game's blob: one seek, one read.
+ *
+ * Version 1 kept a single string table for the whole database and read **all** of it on every
+ * load -- 769,488 bytes on the shipped file, allocated and freed each time a game sheet opened.
+ * That was the blocking call behind the reported symptom "cheat db search seems to lag music when
+ * opening details": three quarters of a megabyte off FatFs is far longer than the ~133 ms of
+ * audio the mixer holds ahead of the DAC, so the music stopped for as long as it took, every
+ * single time. Nothing about the read was needed -- a game uses a few hundred bytes of names.
+ *
+ * In version 2 the names live in the game's own blob, so this reads group rows, code lines and
+ * names in one go: about 12 KB for the largest game in the corpus and under 1 KB for a typical
+ * one. The blob is kept as `out->strtab` because every group name points into it.
+ */
 bool cheatdb_load (uint64_t check_code, const char *game_code, uint8_t version, cheatset_t *out) {
     memset(out, 0, sizeof(*out));
 
@@ -193,15 +255,32 @@ bool cheatdb_load (uint64_t check_code, const char *game_code, uint8_t version, 
     }
 
     uint32_t n = row->cheat_count;
-    cheatdb_group_t *raw = malloc((size_t)n * sizeof(cheatdb_group_t));
-    if (raw == NULL) {
+    uint32_t blob_size = row->blob_size;
+
+    /* The group table alone must fit, or the loop below reads past the buffer. A file that fails
+     * this is corrupt, and a corrupt file must be rejected rather than trusted with a length. */
+    if (blob_size < (uint64_t)n * sizeof(cheatdb_group_t) || blob_size > (16u << 20)) {
         return false;
     }
 
-    if (fseek(db_file, db_head.blob_off + row->cheats_off, SEEK_SET) != 0 ||
-        fread(raw, sizeof(cheatdb_group_t), n, db_file) != n) {
-        free(raw);
+    char *blob = malloc(blob_size);
+    if (blob == NULL) {
         return false;
+    }
+    if (fseek(db_file, db_head.blob_off + row->cheats_off, SEEK_SET) != 0 ||
+        fread(blob, 1, blob_size, db_file) != blob_size) {
+        free(blob);
+        return false;
+    }
+    blob[blob_size - 1] = '\0';      /* so a bad name offset cannot run off the end */
+
+    cheatdb_group_t *raw = (cheatdb_group_t *)blob;
+    if (CHEATDB_SWAP) {
+        for (uint32_t i = 0; i < n; i++) {
+            raw[i].name_off   = swap32(raw[i].name_off);
+            raw[i].code_first = swap16(raw[i].code_first);
+            raw[i].code_count = swap16(raw[i].code_count);
+        }
     }
 
     /* Codes follow the group table for this game, contiguously. total is the end of the last
@@ -210,7 +289,7 @@ bool cheatdb_load (uint64_t check_code, const char *game_code, uint8_t version, 
     for (uint32_t i = 0; i < n; i++) {
         uint32_t end = (uint32_t)raw[i].code_first + raw[i].code_count;
         if (raw[i].code_count == 0 || end < raw[i].code_first) {
-            free(raw);
+            free(blob);
             return false;                        /* malformed: empty or wrapping group */
         }
         if (end > total_codes) {
@@ -218,49 +297,44 @@ bool cheatdb_load (uint64_t check_code, const char *game_code, uint8_t version, 
         }
     }
 
-    cheat_code_t *codes = malloc((size_t)total_codes * sizeof(cheat_code_t));
-    if (codes == NULL) {
-        free(raw);
-        return false;
-    }
-    if (fread(codes, sizeof(cheat_code_t), total_codes, db_file) != total_codes) {
-        free(raw);
-        free(codes);
+    size_t codes_off = (size_t)n * sizeof(cheatdb_group_t);
+    if (codes_off + (size_t)total_codes * sizeof(cheat_code_t) > blob_size) {
+        free(blob);
         return false;
     }
 
-    char *strtab = malloc(db_head.strtab_size);
-    if (strtab == NULL) {
-        free(raw);
-        free(codes);
+    /* Copied out rather than aliased into the blob: usercheats.c appends hand-entered lines to
+     * this array and reallocs it, which it cannot do to a pointer into the middle of another
+     * allocation. A few kilobytes; the read it replaces was three quarters of a megabyte. */
+    cheat_code_t *codes = malloc((size_t)total_codes * sizeof(cheat_code_t));
+    if (codes == NULL) {
+        free(blob);
         return false;
     }
-    if (fseek(db_file, db_head.strtab_off, SEEK_SET) != 0 ||
-        fread(strtab, 1, db_head.strtab_size, db_file) != db_head.strtab_size) {
-        free(raw);
-        free(codes);
-        free(strtab);
-        return false;
+    memcpy(codes, &blob[codes_off], (size_t)total_codes * sizeof(cheat_code_t));
+    if (CHEATDB_SWAP) {
+        for (uint32_t i = 0; i < total_codes; i++) {
+            codes[i].address = swap32(codes[i].address);
+            codes[i].value   = swap32(codes[i].value);
+        }
     }
-    strtab[db_head.strtab_size - 1] = '\0';      /* so a bad offset cannot run off the end */
 
     cheat_group_t *groups = calloc(n, sizeof(cheat_group_t));
     if (groups == NULL) {
-        free(raw);
+        free(blob);
         free(codes);
-        free(strtab);
         return false;
     }
 
     for (uint32_t i = 0; i < n; i++) {
         uint32_t off = raw[i].name_off;
-        groups[i].name    = (off < db_head.strtab_size) ? &strtab[off] : "(unnamed)";
+        groups[i].name    = (off < blob_size) ? &blob[off] : "(unnamed)";
         groups[i].first   = raw[i].code_first;
         groups[i].count   = raw[i].code_count;
         groups[i].enabled = false;
     }
-    free(raw);
 
+    char *strtab = blob;
     out->groups      = groups;
     out->group_count = (int)n;
     out->codes       = codes;
