@@ -2616,6 +2616,131 @@ Two limits worth stating rather than discovering later:
 
 ---
 
+## 1ac. Profiles — on a branch, not on main
+
+Ten players, each with their own favourites, play history, cheat selections, theme and saves.
+Built on the `profiles` branch because the feature has not been decided on.
+
+### The split was already most of the way there
+
+`playstate.dat` has been a separate file from `library.idx` since M3, for a reason recorded in
+playstate.h: the index is derived from the card and safe to delete, play history is not. That is
+the same line a profile has to be cut along, so the model layer came to **+2,240 bytes of text**
+(556,824 -> 559,064) before any UI. The whole feature, screen included, is **+10,624 bytes**
+(-> 567,448). Nothing else moved much: `data` +704 (-> 106,892), `bss` +920 (-> 71,264).
+
+What is per profile is `playstate.dat` and `cheatstate.dat`, plus the theme and the saves folder.
+What stays shared is everything derived from the card — `library.idx`, `thumbs.pak`/`.idx`,
+`cheats.db` — because ten copies of a 292 KB atlas would be the largest thing on the card and
+every byte of it identical.
+
+### Profile 1 writes where every existing card already writes
+
+Profile 1 is index 0 and takes the unsuffixed paths: `cache/playstate.dat`, `<romdir>/saves/`.
+Profiles 2..10 nest — `cache/p2/…`, `<romdir>/saves/p2/`.
+
+The proposal on the table was sibling folders, `p0saves/` and `p1saves/`. Rejected for two
+measured reasons rather than taste. There is no unsuffixed case in that scheme, so **every save on
+every existing card stops being found on the first boot after the upgrade** — silently, because
+the menu still runs and the folder it now looks in is simply empty. And `library.c`'s SCAN_SKIP
+excludes `saves` by exact name, so a sibling `p2saves/` would be walked as though it held games,
+while nesting costs the scanner nothing at all.
+
+### The padlock had to come out of playstate first
+
+`LIBF_LOCKED` rode in the same flags word as `LIBF_FAVORITE` inside `playstate.dat`. Making that
+file per profile would have made the parental padlock per profile too — **two presses on the boot
+screen and every locked game on the card is open**, with no code entered and nothing to notice.
+
+Split into `locks.dat`, shared, keyed the same way. Cards written before it exists keep their
+locks in `playstate.dat`; that read path is untouched and `locks_load()` notices the case (no
+`locks.dat`, but the library already has locked records) and marks itself dirty, so the first save
+moves them across. A version bump would have been the other option and would have cost every user
+their favourites, since playstate is the one cache that cannot be rebuilt from the card.
+
+### The tab rail could not carry the player name
+
+The name started in the tab rail, right-aligned, on the reasoning that a shared console's real
+failure is playing an hour as the wrong person. The rail is 608 px and the comment above
+`draw_tab_rail()` measured its worst case at 468, so 140 px looked like enough for a Z glyph and
+a name.
+
+It was not, because the worst case moves. Recent and Favourites were icon-only *until selected*
+and then spelled themselves out, so selecting Favourites turned one 20 px glyph into nine
+letters and shoved every tab right into the name. An icon that changes size when you look at it
+is a layout that moves under the cursor.
+
+Both fixed at once: the two virtual tabs are now always icons, and the name moved to the footer
+as a fourth hint on a `UI_BTN_TALL` Z -- the same shape the detail sheet's Cheats hint uses,
+because Z is a trigger and drawing it as a coloured disc says "face button" about something that
+is not one. `PROFILE_NAME_CAP` came down from 13 to 9 to keep that footer row inside the safe
+area at four hints, and the two status counts under the settings list -- a library total and a
+cheat database total -- came off, because the grid answers the first in a more useful form and
+nobody asks the second.
+
+The Favourites icon became a five-pointed star with rounded points and intersections, replacing
+the corner triangle. It is a baked table of 26 horizontal runs, not geometry: rounding a star is
+a morphological closing followed by an opening, which is a supersampled distance operation and
+not something to run per frame for a glyph this size.
+
+Two things had to be got right and only one of them was obvious. **Fit the bounding box, not the
+radius** -- a star is 1.902 outer-radii wide and 1.809 tall, so centring it on the radius leaves
+two dead rows under the legs, which at 20 px is most of a leg. And **20 px is not enough**: the
+first version was drawn in TAB_ICON's existing box, and once the rounding was applied the legs
+merged into the waist and the shape read as a pentagon with a spike on top. `TAB_ICON` went to 24,
+which the rail can afford now that the two virtual tabs never spell themselves out -- worst case
+about 444 px of 608, against 468 before. The final parameters are inner radius 0.36 and a 0.4 px
+rounding radius, chosen by rendering four candidates as ASCII and looking at them.
+
+### The host test caught two bugs ares could not reach
+
+Neither is visible in a frame, so neither was reachable from the regression suite at all.
+
+1. **`profile_save()` never created `/mainmenu/`.** It worked only because `cache_init()` happens
+   to create `/mainmenu/cache`, and therefore its parent, before any screen can reach the roster
+   editor. An ordering dependency, not a guarantee. Caught by calling `profile_save()` without
+   `cache_init()`: the roster silently failed to persist and every name came back as "Player N".
+2. **`locks_load()` left `dirty` set from a previous load** when it took the no-file path. Harmless
+   in the product, where it loads once at boot, and wrong.
+
+`tools/hosttest/run.sh --mutate` gains a fourth mutation: give profile 1 a `p1/` prefix. That is
+the one mistake here that is silent, unrecoverable and shaped exactly like working software — the
+menu still boots, still saves, still loads, into a folder nothing has ever written. 47 checks, and
+the mutation takes exactly one of them red.
+
+### ~~The host test suite had not linked since the /menu rename~~ — fixed
+
+Found while adding to it, and worth recording because of how it failed. `cache_init()` started
+calling `menu_path()` when `/menu` became `/mainmenu`, and `run.sh` was never told to link
+`paths.c` — so **every suite in it failed at the link step**, and had been doing so silently for
+however long. `tools/hosttest/run.sh` was the answer to "the write half is unexecuted on real
+storage", and it had been answering nothing.
+
+Underneath that, `test_cache.c` hardcoded `"%s/menu/cache/%s"`. Once it linked again, six checks
+went red: `poke()` and `chop()` were opening a path that no longer exists, so the three corruption
+cases never corrupted anything. Their matching assertions still **passed** — `!exists("b.dat")` is
+true of a file that was never written. Six green checks for a rejection path that was never taken,
+which is the exact failure mode CLAUDE.md's "check that a test can fail" rule exists to catch, and
+which no amount of reading the output would have revealed.
+
+### What this run does not prove
+
+- **The roster does not survive a power cycle under ares**, because nothing does: the storage
+  prefix is the ROM's read-only DFS. `tools/inputs/profiles.txt` exercises every screen and every
+  transition, and `profiles.ini` is never written. Same gap as every other written file here.
+- **Switching profile changes which `playstate.dat` is read and which `saves/` a launch writes
+  into, and neither is observable from a frame.** The fixture has no saved games and no
+  favourites to lose. This is what the host test covers instead, and it is not the same thing.
+- **The full regression suite has still not been run against the music, settings, clock or
+  profile work.** Only `profiles`, `clock`, `clock-locked`, `parental` and `idle`. The three
+  Settings-row counts moved because Settings gained a row, and were updated; the other nine
+  scripts are unverified.
+
+The settled-frame no-allocation gate does still hold: `mallocs=0 reallocs=0 frees=0` at n=1,200
+on `idle.txt` with the roster loaded.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
