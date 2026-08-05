@@ -134,7 +134,6 @@ typedef struct {
 #define ROW_Y(r)            (GRID_Y + GRID_PAD_TOP + (r) * ROW_PITCH)
 
 extern const theme_t THEME_MIDNIGHT;
-extern const theme_t THEME_CARTRIDGE;
 extern const theme_t THEME_PHOSPHOR;
 extern const theme_t THEME_PURPLE;
 extern const theme_t THEME_RED;

@@ -27,9 +27,10 @@ void theme_apply (const theme_t *th) {
     }
     /* The font styles are the half of a theme that is not drawn by this module. They were
      * registered once at load in fixed colours, so every label stayed white however dark or
-     * light the surfaces under it became -- which made `cartridge`, the one light theme,
-     * unreadable from the moment it was added. Anything that changes app->theme must come
-     * through here. */
+     * light the surfaces under it became. That was invisible on the dark palettes and fatal on a
+     * light one -- see AUDIT.md 1x, and note that the light theme which exposed it has since been
+     * removed, so nothing in the set would catch a regression here now. Anything that changes
+     * app->theme must come through this function. */
     fonts_set_palette(th->text, th->text_dim, th->text_accent);
 }
 
@@ -51,26 +52,6 @@ const theme_t THEME_MIDNIGHT = {
     .badge_save    = RGBA5551(0x42, 0xBD, 0x63),
     .overlay       = RGBA5551(0x08, 0x08, 0x10), .overlay_a = 199,     /* 78% */
     .tile_dim_a    = 87,                                               /* 34% */
-};
-
-const theme_t THEME_CARTRIDGE = {
-    .name          = "cartridge",
-    .bg            = RGBA5551(0xBD, 0xBD, 0xB5),
-    .bg_alt        = RGBA5551(0xAD, 0xAD, 0xA5),
-    .panel         = RGBA5551(0xE6, 0xE6, 0xDE),
-    .panel_alt     = RGBA5551(0xF7, 0xF7, 0xEF),
-    .text          = RGBA5551(0x19, 0x19, 0x19),
-    .text_dim      = RGBA5551(0x5A, 0x5A, 0x5A),
-    .text_accent   = RGBA5551(0xC5, 0x10, 0x29),
-    .tab_active    = RGBA5551(0x19, 0x19, 0x19),
-    .tab_inactive  = RGBA5551(0x73, 0x73, 0x73),
-    .tab_underline = RGBA5551(0xC5, 0x10, 0x29),
-    .sel_outline   = RGBA5551(0x19, 0x19, 0x19),
-    .sel_shadow    = RGBA5551(0x00, 0x00, 0x00), .sel_shadow_a = 102,  /* 40% */
-    .badge_fav     = RGBA5551(0xE6, 0x8C, 0x10),
-    .badge_save    = RGBA5551(0x29, 0x84, 0x4A),
-    .overlay       = RGBA5551(0xF7, 0xF7, 0xEF), .overlay_a = 204,     /* 80% */
-    .tile_dim_a    = 87,
 };
 
 const theme_t THEME_PHOSPHOR = {
@@ -142,7 +123,6 @@ const theme_t THEME_RED = {
 
 static const theme_t *const THEMES[] = {
     &THEME_MIDNIGHT,
-    &THEME_CARTRIDGE,
     &THEME_PHOSPHOR,
     &THEME_PURPLE,
     &THEME_RED,
