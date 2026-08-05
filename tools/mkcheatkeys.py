@@ -50,8 +50,41 @@ def normalise(s):
     return s
 
 
+ANY_VERSION_OUT = 0xFF
+
+# Region markers a rom_info comment or a corpus filename uses to tell two releases apart.
+# Collapsed to three families, because that is the granularity at which cheat addresses actually
+# differ: an NTSC build and a PAL build of the same game are different binaries, a French and a
+# German PAL build usually are not.
+REGION_FAMILY = {
+    "u": "N", "usa": "N", "us": "N", "ntsc": "N", "america": "N",
+    "e": "P", "eur": "P", "europe": "P", "pal": "P", "a": "P", "australia": "P",
+    "g": "P", "germany": "P", "f": "P", "france": "P", "s": "P", "spain": "P",
+    "i": "P", "italy": "P", "uk": "P",
+    "j": "J", "jp": "J", "japan": "J",
+}
+
+
+def region_of(text):
+    """The release's region family from its parenthesised markers, or "" if it says nothing.
+
+    Read BEFORE normalisation, which throws these away on purpose -- normalisation exists to make
+    "(USA)" and "(Europe)" the same title, and this exists to remember that they are not the same
+    ROM. Bracketed alternate titles are dropped first: Ocarina of Time's rom_info comment carries
+    "[Zelda no Densetsu - Toki no Ocarina (J)]", and reading the (J) out of the Japanese *title*
+    would tag the NTSC row as Japan-only.
+    """
+    text = re.sub(r"\[[^\]]*\]", " ", text)
+    for tok in re.findall(r"\(([^)]*)\)", text):
+        for part in re.split(r"[,\s]+", tok):
+            fam = REGION_FAMILY.get(part.strip().lower())
+            if fam:
+                return fam
+    return ""
+
+
 def harvest_database(path):
-    """[(game_code, version, check_code, title)] from the MATCH_* rows."""
+    """[(game_code, version, check_code, title, region)] from the MATCH_* rows."""
     src = open(path, encoding="utf-8").read()
     out = []
 
@@ -64,11 +97,19 @@ def harvest_database(path):
             # value. Appending "E" here would key a Japanese release to a USA code and the
             # reader would never match it -- NHFJ against a stored NHFE.
             code += "?"
-        out.append((code, int(ver) if ver else 0, 0, title.strip()))
+        # Only MATCH_ID_REGION_VERSION names a version. The other two match every revision of the
+        # game, and writing 0 for them said the opposite: the reader takes an exact version match
+        # or the ANY sentinel, so a stored 0 matched revision 0 and nothing else. Five of the
+        # twenty-four titles on the test card missed for this reason alone -- Banjo-Kazooie (v1),
+        # Star Fox 64 (v1), Rogue Squadron (v1), Pokemon Stadium (v2), Shadows of the Empire (v2)
+        # -- each with its game code sitting in the database, holding hundreds of cheats, keyed
+        # to a revision nobody owns.
+        version = int(ver) if (kind == "ID_REGION_VERSION" and ver) else ANY_VERSION_OUT
+        out.append((code, version, 0, title.strip(), region_of(title)))
 
     cc_pat = re.compile(r'MATCH_CHECK_CODE\s*\(\s*(0x[0-9A-Fa-f]+)[^)]*\)\s*,\s*//\s*(.+)')
     for cc, title in (m.groups() for m in cc_pat.finditer(src)):
-        out.append(("", 0, int(cc, 16), title.strip()))
+        out.append(("", ANY_VERSION_OUT, int(cc, 16), title.strip(), region_of(title)))
 
     return out
 
@@ -88,13 +129,14 @@ def main():
 
     # Group by normalised title first, so a collision can be inspected rather than only counted.
     grouped = {}
-    for code, ver, cc, title in db:
+    for code, ver, cc, title, reg in db:
         k = normalise(title)
         if not k:
             continue
-        grouped.setdefault(k, []).append((code, ver, cc, title))
+        grouped.setdefault(k, []).append((code, ver, cc, title, reg))
 
-    by_title = {}
+    by_title = {}       # k -> row, for titles only one database row wants
+    by_region = {}      # k -> {region family: row}, for titles several rows want
     collisions = set()
     for k, rows_for in grouped.items():
         distinct = {r[:3] for r in rows_for}
@@ -108,17 +150,45 @@ def main():
         # the bracketed suffix that told them apart. The cheat corpus is keyed by No-Intro names
         # for clean dumps, so a cracked-dump row is never the right answer for one of them. When
         # exactly one game-code row is in the group, it is unambiguously the one meant.
-        #
-        # This does NOT resolve two game codes differing only by region -- Ocarina of Time's CZL
-        # and NZL, Mario Party's CLB and NLB. Those are genuinely different games to the cheat
-        # engine, addresses and all, and picking either would be the "worse than no cheat" case
-        # this file exists to avoid. They stay refused.
         id_rows = {r[:3] for r in rows_for if r[0]}
         if len(id_rows) == 1:
             by_title[k] = next(r for r in rows_for if r[0])
             continue
 
-        collisions.add(k)                     # ambiguous: refuse rather than pick
+        # Two game codes for one title is almost always one release per region -- Ocarina of
+        # Time's CZL and NZL, Mario Party's CLB and NLB. These used to be refused outright, on the
+        # correct reasoning that guessing between them applies one region's addresses to the
+        # other's binary, which is worse than having no cheat at all.
+        #
+        # It is not a guess, though: the corpus filename says which region it is, in the same
+        # "(USA)" / "(Europe)" notation the rom_info comments use. So the join gains a second
+        # component instead of giving up. It cost the two biggest games on the test card, and it
+        # is refused still whenever the filename does not say.
+        codes_by_region = {}
+        ambiguous = False
+        for r in rows_for:
+            if not r[0]:
+                continue                      # check-code rows carry no game code to key on
+            if codes_by_region.setdefault(r[4], r)[:3] != r[:3]:
+                ambiguous = True              # two codes claim the same region: still a guess
+        if not ambiguous and len(codes_by_region) > 1:
+            by_region[k] = codes_by_region
+            continue
+
+        collisions.add(k)                     # genuinely ambiguous: refuse rather than pick
+
+    def pick_region(candidates, stem):
+        """The row whose region matches @p stem's, or None if the filename does not settle it."""
+        fam = region_of(stem)
+        if fam in candidates:
+            return candidates[fam]
+        # An unmarked rom_info row is the NTSC/Japanese release -- the PAL one is what gets the
+        # "(E)" or "(PAL)" note, never the other way round in this database.
+        if fam in ("N", "J", "") and "" in candidates:
+            return candidates[""]
+        if fam == "" and "N" in candidates:
+            return candidates["N"]
+        return None
 
     rows, misses = [], []
     for fn in sorted(os.listdir(args.input)):
@@ -130,10 +200,15 @@ def main():
             misses.append("%s  (ambiguous title, refused)" % stem)
             continue
         hit = by_title.get(k)
+        if hit is None and k in by_region:
+            hit = pick_region(by_region[k], stem)
+            if hit is None:
+                misses.append("%s  (title exists per region, filename does not say which)" % stem)
+                continue
         if hit is None:
             misses.append(stem)
             continue
-        code, ver, cc, title = hit
+        code, ver, cc, title, reg = hit
         rows.append((stem, code or "????", ver, cc))
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
