@@ -1,0 +1,56 @@
+# The clock is behind the parental code once a code exists.
+#
+# Why this needs its own script rather than a few more lines in parental.txt: parental.txt sets the
+# code from *inside* the panel and never leaves it, and the moment a code exists the panel is itself
+# behind the pad -- so any detour to Settings and back would have to key the code in again just to
+# resume, and would renumber every frame after it.
+#
+# What it is checking is the one hole a schedule has. Playing allowed 8 am to 8 pm is enforced
+# against a clock and nothing else, so a child who can set the clock can move bedtime, and the row
+# would be decoration. clock.txt covers the other half: with no code set, the clock opens straight
+# away and nobody is asked for anything.
+
+wait 120
+
+press start         # settings
+wait 20
+
+press down x3       # -> Parental controls
+press a             # no code yet, so straight in
+wait 20
+
+press a             # Code -> the pad, asking for a new one
+wait 20
+press cup
+press cdown
+press cleft
+press cright
+press cup
+press cdown
+wait 20
+press cup
+press cdown
+press cleft
+press cright
+press cup
+press cdown
+wait 20
+fbdump              # 1: the panel, code set
+
+press b             # -> settings, whose cursor resets to Theme
+wait 20
+press down x2       # -> Clock
+press a
+wait 25
+fbdump              # 2: the pad, not the clock
+
+press cup
+press cdown
+press cleft
+press cright
+press cup
+press cdown
+wait 30
+fbdump              # 3: through it, and now on the clock
+
+exit

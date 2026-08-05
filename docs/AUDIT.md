@@ -206,6 +206,18 @@ clears one at a time. This is the only request that carries an *action* through 
 only a destination: the sheet is rebuilt on the way back and its cursor may be on a different game
 by then, so `screen_code_ask_toggle_lock()` records the `rom_id` and the pad applies it.
 
+**Setting the clock is behind the code too, and only once there is one.** The schedule is enforced
+against this clock and nothing else, so a child who can set the time can move bedtime and the
+"Playing allowed 8 am to 8 pm" row is decoration. With no code set the clock opens straight away --
+making everyone key in six presses to correct the date on a console whose owner never asked for
+parental controls would be a cost with no matching benefit.
+
+`clock-locked.txt` covers the gated half and `clock.txt` the ungated one, which together are what
+make the *IFF* real: adding the gate moved **none of the 72 existing frames** and added three. Had
+it fired unconditionally, `clock.txt` frame 01 would have become the pad instead of the date
+fields. Its own frame 00 hashes `bf846a4fe5d4fcb4`, identical to `parental 03` — two scripts
+arriving at the same screen by different routes.
+
 **Deleted with no replacement anywhere:** "A lock on a menu, not security. See the manual." It is a
 games menu; nothing here makes a claim that needs qualifying, and qualifying it invites the reader
 to go and test the claim.

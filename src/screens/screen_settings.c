@@ -108,7 +108,22 @@ static void settings_update (app_t *app, float dt) {
             break;
         case ROW_CLOCK:
             if (toggle) {
-                app_goto(app, SCREEN_CLOCK);
+                /* Behind the code, but only once there is one. The schedule is enforced against
+                 * this clock and nothing else, so a child who can set the time can move bedtime
+                 * -- which would make the whole "Playing allowed 8 am to 8 pm" row decoration.
+                 * The panel is gated for the same reason and by the same call.
+                 *
+                 * Only when a code is set, because with none there is nothing to enforce and
+                 * nothing to protect: making everyone key in a code to correct the date on a
+                 * console whose owner never asked for parental controls would be a cost with no
+                 * matching benefit. */
+                if (parental_code_set()) {
+                    screen_code_ask(CODE_ASK_UNLOCK, "Enter the code to set the clock",
+                                    SCREEN_CLOCK, SCREEN_SETTINGS);
+                    app_goto(app, SCREEN_CODE);
+                } else {
+                    app_goto(app, SCREEN_CLOCK);
+                }
                 return;
             }
             break;

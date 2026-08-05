@@ -89,6 +89,10 @@ only work together, and offering half of one silently changes the wrong thing in
 also enter your own from the menu, which is the only option for the emulated systems and for
 anything newer than the collection.
 
+Once a code is set, **setting the console clock also asks for it**. The playing-hours window is
+measured against that clock and nothing else, so leaving it open would be leaving the window open.
+With no code set, the clock is not asked about at all.
+
 ## If you forget the parental code
 
 Put the card in a computer and delete **`/mainmenu/parental.ini`**. That is the whole recovery.
