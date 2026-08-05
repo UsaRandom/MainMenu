@@ -17,6 +17,7 @@
 #include <libdragon.h>
 
 #include "app.h"
+#include "menu/enginetest.h"
 #include "menu/fonts.h"
 #include "library/cache.h"
 #include "menu/music.h"
@@ -359,6 +360,25 @@ static void settings_render (app_t *app, surface_t *fb) {
     snprintf(buf, sizeof(buf), "%s  %s", MENU_VERSION, BUILD_TIMESTAMP);
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Build");
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
+    y += 22;
+
+    /* Whether the cheat engine actually runs on this console, which is the one thing about cheats
+     * that cannot be established from the menu side and the one thing the first hardware run left
+     * open -- everything observable said "will hook" and no cheat did anything in game.
+     *
+     * A line rather than a row, deliberately. It is a diagnostic, it is read and not changed, and
+     * making it selectable would renumber every row above it for the fourth time and move thirteen
+     * input scripts with them. See enginetest.h for what to do with the code it prints. */
+    if (enginetest_seen()) {
+        ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Cheat engine");
+        ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_DEFAULT, "Confirmed running");
+    } else {
+        char code[32];
+        enginetest_code(code, sizeof(code));
+        snprintf(buf, sizeof(buf), "Untested, try %s", code);
+        ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Cheat engine");
+        ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
+    }
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
     (void)ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Change");

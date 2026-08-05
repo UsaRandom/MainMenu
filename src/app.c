@@ -18,6 +18,7 @@
 #include "library/playstate.h"
 #include "library/thumbstore.h"
 #include "cheats/cheatdb.h"
+#include "menu/enginetest.h"
 #include "menu/image_decoder.h"
 #include "dev/allocwatch.h"
 #include "dev/debug_emux.h"
@@ -448,6 +449,11 @@ void app_run (boot_params_t *boot_params) {
             app->bg_us += TIMER_MICROS(TICKS_DISTANCE(t3, TICKS_READ()));
             app->bg_calls++;
         }
+
+        /* One load and a compare. It has to be per frame rather than per visit to the settings
+         * screen, because the thing it is watching for is written by an exception handler and a
+         * screen nobody has opened observes nothing. See enginetest.h. */
+        enginetest_poll();
 
         app->frame++;
         if ((app->frame % 60) == 0) {

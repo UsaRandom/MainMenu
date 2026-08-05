@@ -161,6 +161,7 @@ SRCS = \
 	menu/parental.c \
 	menu/path.c \
 	menu/cheatcheck.c \
+	menu/enginetest.c \
 	menu/launchlog.c \
 	menu/paths.c \
 	menu/profile.c \
