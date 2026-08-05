@@ -193,6 +193,18 @@ lib_record_t *library_push (library_t *lib);
  */
 void library_join (char *out, size_t cap, const char *storage_prefix, const char *root);
 
+/**
+ * @brief Is @p name a directory the scan refuses to enter?
+ *
+ * Exported for libindex.c, which fingerprints the same tree to decide whether the index is still
+ * good. The two walks MUST agree on what they are looking at: a signature that recursed into a
+ * directory the scan skips would fire on changes the index does not contain, and `mainmenu/cache`
+ * changes on every boot -- so the index would be declared stale every time and the full scan the
+ * index exists to avoid would run for ever. Under ares that cannot happen, because the DFS is
+ * read-only and nothing under mainmenu/ ever moves.
+ */
+bool library_scan_skipped (const char *name);
+
 /** @brief Free the library and every string it owns. */
 void library_free (library_t *lib);
 

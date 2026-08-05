@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a menu/cache/playstate.dat by hand, so the read path can be tested under ares.
+"""Write a mainmenu/cache/playstate.dat by hand, so the read path can be tested under ares.
 
 The menu cannot create this file on the machine it is developed on: ares exposes the ROM's own
 DFS as storage and the DFS is read-only, so `cache_writable()` is false and every writer
@@ -18,7 +18,7 @@ without parsing ROM headers, and it is exercised by the SNES titles in the fixtu
 
 Byte order is BIG-ENDIAN throughout: the file is written and read by an N64 and never travels.
 
-    tools/mkplaystate.py -o build/fixture/menu/cache/playstate.dat \\
+    tools/mkplaystate.py -o build/fixture/mainmenu/cache/playstate.dat \\
         --played "Super Mario World.smc" --favorite "Donkey Kong Country.smc"
 """
 

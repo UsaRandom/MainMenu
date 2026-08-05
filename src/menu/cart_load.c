@@ -4,20 +4,21 @@
  * @ingroup menu
  */
 
+#include <stdio.h>
 #include <string.h>
 #include <libdragon.h>
 #include "app.h"
 #include "cart_load.h"
 #include "path.h"
+#include "paths.h"
 #include "utils/fs.h"
 #include "utils/utils.h"
 
-#ifndef DDIPL_LOCATION
-#define DDIPL_LOCATION          "/menu/64ddipl"
-#endif
-#ifndef EMU_LOCATION
-#define EMU_LOCATION            "/menu/emulators"
-#endif
+/** @brief The folder cores are looked for in, under each of the roots menu/paths.h probes.
+ *
+ * DDIPL_LOCATION used to sit beside this, pointing at a 64DD IPL that nothing in this fork has
+ * ever loaded -- the 64DD path went with the file browser. */
+#define EMU_SUBDIR              "emulators"
 
 /**
  * @brief The SNES core, and the one it replaced.
@@ -150,69 +151,71 @@ cart_load_err_t cart_load_n64_rom_and_save (app_t *app, flashcart_progress_callb
  * @return cart_load_err_t Error code.
  */
 cart_load_err_t cart_load_emulator (app_t *app, cart_load_emu_type_t emu_type, flashcart_progress_callback_t progress) {
-    path_t *path = path_init(app->storage, EMU_LOCATION);
-
+    const char *core = NULL;
     flashcart_save_type_t save_type = FLASHCART_SAVE_TYPE_NONE;
     uint32_t emulated_rom_offset = 0x200000;
     uint32_t emulated_file_offset = 0;
 
     switch (emu_type) {
         case CART_LOAD_EMU_TYPE_NES:
-            path_push(path, "neon64bu.rom");
+            core = "neon64bu.rom";
              // Tested against Neon 64 v1.2, v0.3 and v2
             save_type = FLASHCART_SAVE_TYPE_SRAM_1MBIT;
             break;
         case CART_LOAD_EMU_TYPE_SNES:
-            path_push(path, SNES_CORE);
+            core = SNES_CORE;
             save_type = FLASHCART_SAVE_TYPE_SRAM_256KBIT;
             break;
         case CART_LOAD_EMU_TYPE_GAMEBOY:
-            path_push(path, "gb.v64");
+            core = "gb.v64";
             // TODO: Saves might be less problematic by using the FAKE type.
             save_type = FLASHCART_SAVE_TYPE_FLASHRAM_1MBIT; //FLASHCART_SAVE_TYPE_FLASHRAM_FAKE;
             break;
         case CART_LOAD_EMU_TYPE_GAMEBOY_COLOR:
-            path_push(path, "gbc.v64");
+            core = "gbc.v64";
             // TODO: Saves might be less problematic by using the FAKE type.
             save_type = FLASHCART_SAVE_TYPE_FLASHRAM_1MBIT; //FLASHCART_SAVE_TYPE_FLASHRAM_FAKE;
             break;
         case CART_LOAD_EMU_TYPE_SEGA_GENERIC_8BIT:
-            path_push(path, "smsPlus64.z64");
+            core = "smsPlus64.z64";
             save_type = FLASHCART_SAVE_TYPE_NONE;
             break;
         case CART_LOAD_EMU_TYPE_FAIRCHILD_CHANNELF:
-            path_push(path, "Press-F.z64");
+            core = "Press-F.z64";
             save_type = FLASHCART_SAVE_TYPE_NONE;
             break;
     }
 
-    if (!file_exists(path_get(path)) && emu_type == CART_LOAD_EMU_TYPE_SNES) {
-        path_pop(path);
-        path_push(path, SNES_CORE_FALLBACK);
+    /* Probed across the three roots rather than fixed at one, so a card that keeps its cores in
+     * /emulators works without being reorganised first. See menu/paths.h. */
+    char leaf[80];
+    char core_path[300];
+    snprintf(leaf, sizeof(leaf), EMU_SUBDIR "/%s", core);
+    bool found = menu_find_file(core_path, sizeof(core_path), app->storage, leaf);
+
+    if (!found && emu_type == CART_LOAD_EMU_TYPE_SNES) {
+        snprintf(leaf, sizeof(leaf), EMU_SUBDIR "/%s", SNES_CORE_FALLBACK);
+        found = menu_find_file(core_path, sizeof(core_path), app->storage, leaf);
     }
 
-    if (!file_exists(path_get(path))) {
-        path_free(path);
+    if (!found) {
         return CART_LOAD_ERR_EMU_NOT_FOUND;
     }
 
     /* Which core was actually chosen, said out loud. Every decision here -- the system-to-core
-     * mapping, whether the sodium64 fallback was taken, and below whether a copier header was
-     * stripped -- becomes invisible the moment the console reboots into the core, and on hardware
-     * there is no framebuffer left to inspect. Two lines, each next to the decision it reports. */
-    debugf("emu: type=%d core=%s\n", (int)emu_type, path_get(path));
+     * mapping, whether the sodium64 fallback was taken, which of the three roots it came from, and
+     * below whether a copier header was stripped -- becomes invisible the moment the console
+     * reboots into the core, and on hardware there is no framebuffer left to inspect. */
+    debugf("emu: type=%d core=%s\n", (int)emu_type, core_path);
 
-    app->flashcart_err = flashcart_load_rom(path_get(path), false, progress);
+    app->flashcart_err = flashcart_load_rom(core_path, false, progress);
     if (app->flashcart_err != FLASHCART_OK) {
-        path_free(path);
         return CART_LOAD_ERR_EMU_LOAD_FAIL;
     }
 
-    path_free(path);
-
     /* The emulated ROM itself. app->launch.rom_path already holds it, where upstream rebuilt it
      * from the browser's directory plus the highlighted entry's name. */
-    path = path_clone(app->launch.rom_path);
+    path_t *path = path_clone(app->launch.rom_path);
 
     switch (emu_type) {
         case CART_LOAD_EMU_TYPE_SNES:

@@ -22,12 +22,20 @@
 #include "dev/inputscript.h"
 #include "flashcart/flashcart.h"
 #include "menu/fonts.h"
+#include "menu/paths.h"
 #include "menu/sound.h"
 #include "screens/screens.h"
 #include "ui/tween.h"
 
-#define MENU_DIRECTORY  "/menu"
 #define CONFIG_FILE     "config.ini"
+
+/** Where the search for games starts: the whole card, not a folder called `roms`.
+ *
+ * Someone who empties a zip onto a card should get a working menu, and someone who has kept their
+ * collection in `Games\N64` for fifteen years should not have to rename it. The cost is a walk of
+ * whatever else is on the card; library.c's SCAN_SKIP is what keeps that bounded, and AUDIT.md
+ * carries what it measured. */
+#define SCAN_ROOT       "/"
 
 /* Video. Three buffers, not upstream's two: with two, display_try_get() returns NULL whenever
  * the RDP has not drained, and the CPU spins instead of doing useful work -- which is exactly
@@ -73,11 +81,10 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     sound_init_default();
     sound_init_sfx();
 
-    path_t *cfg = path_init(app->storage, MENU_DIRECTORY);
-    path_push(cfg, CONFIG_FILE);
-    settings_init(path_get(cfg));
+    char cfg[300];
+    menu_path(cfg, sizeof(cfg), app->storage, CONFIG_FILE);
+    settings_init(cfg);
     settings_load(&app->settings);
-    path_free(cfg);
 
     /* The setting existed and the toggle drew, but nothing ever told the sound system about it --
      * turning sound effects off in settings changed a bool and nothing else. */
@@ -111,9 +118,9 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * scan is 5.75 s, which is the single largest fixed cost in the product; libindex_load()
      * answers the same question with a directory enumeration and no file opens at all. */
     cache_init(app->storage);
-    if (!libindex_load(app->lib, app->storage, "/roms")) {
-        library_scan(app->lib, app->storage, "/roms");
-        libindex_save(app->lib, app->storage, "/roms");
+    if (!libindex_load(app->lib, app->storage, SCAN_ROOT)) {
+        library_scan(app->lib, app->storage, SCAN_ROOT);
+        libindex_save(app->lib, app->storage, SCAN_ROOT);
     }
 
     /* After the library exists, never before: playstate is applied onto records and keys on the
@@ -145,7 +152,7 @@ static void app_deinit (app_t *app) {
          * before a single tile had been asked for, so it carried no art paths at all -- see
          * library_t::dirty. Without this the five-rule art search is repeated in full on every
          * boot for the entire library, which is the one cost the index was supposed to remove. */
-        libindex_save(app->lib, app->storage, "/roms");
+        libindex_save(app->lib, app->storage, SCAN_ROOT);
     }
     /* app->lib is NULL whenever app_init() faulted before building it -- no flashcart, or out of
      * memory. Nothing can have marked playstate dirty in that case, so this guard has never

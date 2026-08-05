@@ -11,6 +11,7 @@
 
 #include "cache.h"
 #include "libindex.h"
+#include "library.h"
 
 #define LIBINDEX_FILE   "library.idx"
 
@@ -91,8 +92,14 @@ typedef struct {
  *
  * The entry count and size sum together catch every change that matters: a ROM added, removed,
  * replaced with a different build, or art dropped alongside it. They are taken over the same
- * entries library.c's scan_dir() visits, including the dotfile skip, so the two agree on what
- * "this directory" means.
+ * entries library.c's scan_dir() visits -- the dotfile skip AND library_scan_skipped() -- so the
+ * two agree on what "this directory" means.
+ *
+ * That second half is load-bearing rather than tidy. `mainmenu/cache` is rewritten on every boot
+ * and the writability probe is created and deleted inside it, so a signature that counted it would
+ * differ from the stored one every single time and the index would be thrown away on every start
+ * of a console that can write to its card. Nothing under ares can catch that: the DFS is read-only,
+ * so those directories never move and the walk looks stable.
  */
 static void sig_dir (sigwalk_t *w, const char *dir, int depth) {
     if (depth > SIG_MAX_DEPTH || w->overflow) {
@@ -118,7 +125,8 @@ static void sig_dir (sigwalk_t *w, const char *dir, int depth) {
     dir_t info;
     int result = dir_findfirst(dir, &info);
     while (result == 0) {
-        if (info.d_name[0] != '.') {
+        if (info.d_name[0] != '.' &&
+            !(info.d_type == DT_DIR && library_scan_skipped(info.d_name))) {
             sig->entries++;
             if (info.d_type == DT_DIR) {
                 if (kid_count == kid_cap) {

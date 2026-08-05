@@ -10,9 +10,10 @@
 #include <libdragon.h>
 
 #include "cache.h"
+#include "menu/paths.h"
 #include "utils/fs.h"
 
-#define CACHE_SUBDIR    "menu/cache"
+#define CACHE_SUBDIR    "cache"
 #define PROBE_NAME      "writable.probe"
 
 /** Refuse anything absurd rather than trying to allocate it. The largest real payload is the
@@ -78,14 +79,10 @@ void cache_path (char *out, size_t cap, const char *name) {
 }
 
 void cache_init (const char *storage_prefix) {
-    /* storage_prefix already ends in a slash ("sd:/", "rom:/"). Concatenating naively gives
-     * "sd://menu/cache", which FatFs has never been asked to accept -- the same doubled-separator
-     * bug AUDIT.md 1n records for every library path. Strip it here rather than hope. */
-    size_t n = strlen(storage_prefix);
-    while (n > 0 && storage_prefix[n - 1] == '/') {
-        n--;
-    }
-    snprintf(cache_dir, sizeof(cache_dir), "%.*s/" CACHE_SUBDIR, (int)n, storage_prefix);
+    /* menu_path() strips the slash the prefix already ends in: concatenating naively gives
+     * "sd://mainmenu/cache", which FatFs has never been asked to accept -- the same
+     * doubled-separator bug AUDIT.md 1n records for every library path. */
+    menu_path(cache_dir, sizeof(cache_dir), storage_prefix, CACHE_SUBDIR);
 
     writable = false;
 

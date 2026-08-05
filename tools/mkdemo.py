@@ -714,11 +714,11 @@ def main():
                 os.path.join(root, "roms", folder, "%s.png" % title))
             n_emu += 1
 
-    emit(root, os.path.join("menu", "config.ini"),
+    emit(root, os.path.join("mainmenu", "config.ini"),
          b"[menu]\ndefault_directory=/roms\npal60_enabled=false\n")
     emit(root, os.path.join("saves", ".gitkeep"), b"")
     for core in ("neon64bu.rom", "lithium64.z64", "gb.v64", "gbc.v64", "smsPlus64.z64"):
-        emit(root, os.path.join("menu", "emulators", core),
+        emit(root, os.path.join("mainmenu", "emulators", core),
              bytes((i * 31 + 0x10) & 0xFF for i in range(4096)))
 
     # A play history, so Recent and Favourites are not empty in a screenshot. This is the only
@@ -733,7 +733,7 @@ def main():
     if not args.no_playstate:
         subprocess.check_call([
             sys.executable, os.path.join(HERE, "mkplaystate.py"),
-            "-o", os.path.join(root, "menu", "cache", "playstate.dat"),
+            "-o", os.path.join(root, "mainmenu", "cache", "playstate.dat"),
             "--played-code", cc("Quarry Kings"), "--played", "Chrome Lark.sfc",
             "--played-code", cc("Nightbus"), "--played-code", cc("Aurora Drift"),
             "--favorite-code", cc("Solar Tide"), "--favorite-code", cc("Glass Meridian"),
@@ -746,7 +746,7 @@ def main():
         subprocess.check_call([
             sys.executable, os.path.join(HERE, "mkcheatdb.py"),
             "-i", cht_dir, "--keys", key_path,
-            "-o", os.path.join(root, "menu", "cheats.db"),
+            "-o", os.path.join(root, "mainmenu", "cheats.db"),
             "--report", os.path.join(args.build_dir, "demo-cheatdb-report.txt"),
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         n_cheats = sum(len(v) for v in DEMO_CHEATS.values())

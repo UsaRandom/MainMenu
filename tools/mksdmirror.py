@@ -17,7 +17,7 @@ is true, so a launch is simulated and never touches the file. Truncating every R
 559 MB to about 2 MB.
 
 What is copied whole is everything the menu actually reads end to end: the cover art, so the real
-JPEG and PNG decode paths run against real files rather than gradients, and `menu/cheats.db`, so
+JPEG and PNG decode paths run against real files rather than gradients, and `mainmenu/cheats.db`, so
 the lookups are the real ones. Emulator cores are truncated with the ROMs -- nothing opens them
 under a dummy flashcart.
 

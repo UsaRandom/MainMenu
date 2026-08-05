@@ -310,7 +310,7 @@ def main():
         emit(root, os.path.join("roms", "n64", "%s.z64" % name), body)
 
         if not args.no_art:
-            rel = os.path.join("menu", "metadata", code[0], code[1], code[2], code[3],
+            rel = os.path.join("mainmenu", "metadata", code[0], code[1], code[2], code[3],
                                "boxart_front.png")
             path = os.path.join(root, rel)
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -342,7 +342,7 @@ def main():
             emit(root, os.path.join("roms", folder, sanitize(t) + ext), stub)
             n_emu += 1
 
-    emit(root, os.path.join("menu", "config.ini"),
+    emit(root, os.path.join("mainmenu", "config.ini"),
          b"[menu]\n"
          b"default_directory=/roms\n"
          b"pal60_enabled=false\n")
@@ -357,7 +357,7 @@ def main():
     # sodium64.z64 is deliberately absent: with both present the fallback can never run, and the
     # primary is the path that matters. See docs/AUDIT.md 1n.
     for core in ("neon64bu.rom", "lithium64.z64", "gb.v64", "gbc.v64", "smsPlus64.z64"):
-        emit(root, os.path.join("menu", "emulators", core),
+        emit(root, os.path.join("mainmenu", "emulators", core),
              bytes((i * 31 + 0x10) & 0xFF for i in range(4096)))
 
     total = sum(os.path.getsize(os.path.join(d, f))

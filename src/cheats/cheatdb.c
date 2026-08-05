@@ -10,9 +10,8 @@
 #include <libdragon.h>
 
 #include "cheats/cheatdb.h"
-#include "menu/path.h"
+#include "menu/paths.h"
 
-#define CHEATDB_LOCATION    "/menu"
 #define CHEATDB_FILE        "cheats.db"
 
 /** @brief On-disk header. Fixed 64 bytes; fields are big-endian, as everything on this machine is. */
@@ -71,13 +70,17 @@ void cheatdb_close (void) {
 bool cheatdb_open (const char *storage_prefix) {
     cheatdb_close();
 
-    path_t *p = path_init(storage_prefix, CHEATDB_LOCATION);
-    path_push(p, CHEATDB_FILE);
-    db_file = fopen(path_get(p), "rb");
-    path_free(p);
-
-    if (db_file == NULL) {
+    /* Probed rather than fixed: someone who downloaded a database has it in their Downloads
+     * folder, not in a folder they have never heard of, and telling them to create one is a step
+     * that buys nothing. See menu/paths.h. */
+    char path[300];
+    if (!menu_find_file(path, sizeof(path), storage_prefix, CHEATDB_FILE)) {
         return false;         /* no database on this card; not an error */
+    }
+
+    db_file = fopen(path, "rb");
+    if (db_file == NULL) {
+        return false;
     }
 
     if (fread(&db_head, sizeof(db_head), 1, db_file) != 1) {

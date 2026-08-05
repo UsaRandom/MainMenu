@@ -153,6 +153,7 @@ SRCS = \
 	menu/fonts.c \
 	menu/parental.c \
 	menu/path.c \
+	menu/paths.c \
 	menu/image_decoder.c \
 	menu/rom_info.c \
 	menu/settings.c \
@@ -301,17 +302,17 @@ dfsroot: $(FILESYSTEM)
 	@# needs there to be NO history at all, so that Recent and Favourites stay hidden and the menu
 	@# opens on N64. Writing the fixture's here would name titles the demo tree does not contain:
 	@# harmless in effect, since nothing matches, but it puts a file where the absence is the point.
-	@if [ -z "$(DEMO)" ] && [ ! -f $(DFS_ROOT_DIR)/menu/cache/playstate.dat ]; then \
-		python3 tools/mkplaystate.py -o $(DFS_ROOT_DIR)/menu/cache/playstate.dat \
+	@if [ -z "$(DEMO)" ] && [ ! -f $(DFS_ROOT_DIR)/mainmenu/cache/playstate.dat ]; then \
+		python3 tools/mkplaystate.py -o $(DFS_ROOT_DIR)/mainmenu/cache/playstate.dat \
 			--played "Chrono Drift.sfc" --played "Star Relic.sfc" \
 			--favorite "Pixel Knights.sfc" >/dev/null; \
 	fi
 	@# cheats.db is a release artifact built by tools/mkcheatdb.py, never committed. Staged when
 	@# it happens to be there so the cheats screen has something to show under ares. Same rule as
 	@# the playstate: a tree that carries its own keeps it.
-	@if [ -f $(BUILD_DIR)/cheats.db ] && [ ! -f $(DFS_ROOT_DIR)/menu/cheats.db ]; then \
-		mkdir -p $(DFS_ROOT_DIR)/menu; \
-		cp $(BUILD_DIR)/cheats.db $(DFS_ROOT_DIR)/menu/cheats.db; \
+	@if [ -f $(BUILD_DIR)/cheats.db ] && [ ! -f $(DFS_ROOT_DIR)/mainmenu/cheats.db ]; then \
+		mkdir -p $(DFS_ROOT_DIR)/mainmenu; \
+		cp $(BUILD_DIR)/cheats.db $(DFS_ROOT_DIR)/mainmenu/cheats.db; \
 		echo "    [FIXTURE] staged cheats.db ($$(du -h $(BUILD_DIR)/cheats.db | cut -f1))"; \
 	fi
 	@echo "    [FIXTURE] staged $$(find $(DFS_ROOT_DIR) -type f | wc -l | tr -d ' ') files into the DFS"

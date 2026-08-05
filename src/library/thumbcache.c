@@ -10,6 +10,7 @@
 #include <libdragon.h>
 
 #include "menu/image_decoder.h"
+#include "menu/paths.h"
 #include "thumbcache.h"
 #include "thumbstore.h"
 #include "ui/theme.h"
@@ -24,7 +25,7 @@
 #define THUMB_AB_PREFIX 0
 #endif
 
-#define METADATA_DIR    "menu/metadata"
+#define METADATA_DIR    "metadata"
 #define ART_FILE        "boxart_front.png"
 
 /* The asset spec asks authors for 280 x 196, but the corpus people actually use ranges from
@@ -53,11 +54,15 @@ struct thumbcache_s {
     bool idle;
     uint16_t decoding_id;
 
-    /** Whether menu/metadata exists at all: -1 unknown, 0 absent, 1 present. Probed once.
+    /** Whether an art pack exists at all: -1 unknown, 0 absent, 1 present. Probed once.
      *  Without this a card carrying no art pack pays three filesystem probes per title to
      *  discover three times over that a directory it does not have is still not there --
      *  1,500 stats on a 500-title library, all of them answerable by one. */
     int8_t metadata_dir;
+
+    /** Which root the pack turned out to be under, resolved with the line above. Held rather
+     *  than recomputed because it is on the path of every title that misses a loose image. */
+    char metadata_root[300];
 
     int resident;
     uint32_t decoded_count;
@@ -227,11 +232,13 @@ static int64_t art_resolve (thumbcache_t *tc, const library_t *lib, lib_record_t
     }
 
     if (tc->metadata_dir < 0) {
-        char probe[512];
-        snprintf(probe, sizeof(probe), "%s%s", tc->storage, METADATA_DIR);
-        dir_t d;
-        tc->metadata_dir = (dir_findfirst(probe, &d) == 0) ? 1 : 0;
-        debugf("ART: metadata dir %s\n", tc->metadata_dir ? "present" : "absent");
+        /* Probed across the three roots once, then remembered: an art pack downloaded as a zip
+         * and emptied onto the card lands at /metadata, and requiring it to be moved is the kind
+         * of preparation this menu exists not to ask for. See menu/paths.h. */
+        tc->metadata_dir = menu_find_dir(tc->metadata_root, sizeof(tc->metadata_root),
+                                         tc->storage, METADATA_DIR) ? 1 : 0;
+        debugf("ART: metadata dir %s (%s)\n",
+               tc->metadata_dir ? "present" : "absent", tc->metadata_root);
     }
     if (tc->metadata_dir == 0) {
         return -1;
@@ -241,15 +248,15 @@ static int64_t art_resolve (thumbcache_t *tc, const library_t *lib, lib_record_t
     for (int candidate = 0; candidate < 3; candidate++) {
         switch (candidate) {
             case 0:
-                snprintf(out, cap, "%s%s/%c/%c/%c/%c/%s", tc->storage, METADATA_DIR,
+                snprintf(out, cap, "%s/%c/%c/%c/%c/%s", tc->metadata_root,
                          c[0], c[1], c[2], c[3], ART_FILE);
                 break;
             case 1:
-                snprintf(out, cap, "%s%s/%c/%c/%c/%s", tc->storage, METADATA_DIR,
+                snprintf(out, cap, "%s/%c/%c/%c/%s", tc->metadata_root,
                          c[0], c[1], c[2], ART_FILE);
                 break;
             default:
-                snprintf(out, cap, "%s%s/%s.png", tc->storage, METADATA_DIR, c);
+                snprintf(out, cap, "%s/%s.png", tc->metadata_root, c);
                 break;
         }
         thumb_statcalls++;

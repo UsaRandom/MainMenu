@@ -14,7 +14,39 @@
 #include "menu/path.h"
 
 #define LIB_INITIAL_CAP 64
-#define SCAN_MAX_DEPTH  4
+
+/** Five, not four. The scan root moved from `/roms` to `/`, so everything on the card is one
+ *  level further down than it was; four here would have quietly shortened the reach of a card
+ *  organised exactly as before. */
+#define SCAN_MAX_DEPTH  5
+
+/**
+ * @brief Directory names the scan will not walk into, at any depth.
+ *
+ * The scan starts at the card root now, so it has to be told what is not content. Everything here
+ * is a directory that either belongs to the menu or belongs to the computer the card was last
+ * plugged into, and walking any of them costs time and finds nothing.
+ *
+ * - `mainmenu`, `menu` -- ours, and its old name. `mainmenu/cache` alone can hold hundreds of
+ *   files, none of which is a game.
+ * - `metadata` -- an art pack, which is four levels of single-letter directories and one PNG per
+ *   game, every one of them named `boxart_front.png`. Walking it would push several hundred
+ *   identically-named images into the loose-art table, where the name is the key.
+ * - `emulators` -- and this one is not an optimisation. `neon64bu.rom` is a core, and `.rom` is an
+ *   N64 extension, so a card with its cores at `/emulators` would list the NES emulator in the N64
+ *   tab as a game. Rooting the scan at `/` is what created that; under `/roms` the cores were
+ *   never in reach.
+ * - `saves` -- created beside every ROM the moment one is launched, so this is the exclusion that
+ *   fires most often. `.sav` is not a ROM extension so nothing would be indexed from it either
+ *   way; skipping the directory saves the walk.
+ * - `System Volume Information` -- Windows. The dotted litter (`.Spotlight-V100`, `.Trashes`,
+ *   `.fseventsd`, and AppleDouble `._*` files, which carry the real file's extension and would
+ *   otherwise index as a second copy of every game) is already skipped by the leading-dot test in
+ *   scan_dir().
+ */
+static const char *SCAN_SKIP[] = {
+    "mainmenu", "menu", "metadata", "emulators", "saves", "System Volume Information",
+};
 
 static const char *TAB_LABELS[TAB_COUNT] = {
     "RECENT", "FAVORITES",
@@ -275,6 +307,15 @@ static void index_n64 (lib_record_t *rec, const char *full_path) {
     path_free(p);
 }
 
+bool library_scan_skipped (const char *name) {
+    for (unsigned i = 0; i < sizeof(SCAN_SKIP) / sizeof(SCAN_SKIP[0]); i++) {
+        if (strcasecmp(name, SCAN_SKIP[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static int scan_dir (library_t *lib, const char *dir, int depth) {
     if (depth > SCAN_MAX_DEPTH) {
         return 0;
@@ -294,7 +335,9 @@ static int scan_dir (library_t *lib, const char *dir, int depth) {
         snprintf(child, sizeof(child), "%s/%s", dir, info.d_name);
 
         if (info.d_type == DT_DIR) {
-            added += scan_dir(lib, child, depth + 1);
+            if (!library_scan_skipped(info.d_name)) {
+                added += scan_dir(lib, child, depth + 1);
+            }
         } else if (is_image(info.d_name)) {
             /* Art sitting loose in the tree, whatever it is named or formatted as. Recorded here rather than
              * searched for later: this loop is already visiting every file, so the whole
