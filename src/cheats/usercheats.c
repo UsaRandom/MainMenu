@@ -120,6 +120,35 @@ int usercheats_count (uint64_t game_key) {
     return n;
 }
 
+/**
+ * @brief Case-insensitive name compare, for deciding whether two cheats are the same cheat.
+ *
+ * Case-insensitive because the editor's alphabet is uppercase only. A shipped cheat called
+ * "Infinite health" that somebody retypes the name of comes back as "INFINITE HEALTH", and an
+ * exact compare would leave both in the list -- the original and the edit, side by side, which is
+ * the thing overriding exists to avoid.
+ */
+static bool same_name (const char *a, const char *b) {
+    for (; *a != '\0' && *b != '\0'; a++, b++) {
+        char ca = (*a >= 'a' && *a <= 'z') ? (char)(*a - 32) : *a;
+        char cb = (*b >= 'a' && *b <= 'z') ? (char)(*b - 32) : *b;
+        if (ca != cb) {
+            return false;
+        }
+    }
+    return *a == *b;
+}
+
+/** @brief Index of the group in @p set called @p name, or -1. */
+static int find_group (const cheatset_t *set, const char *name) {
+    for (int i = 0; i < set->group_count; i++) {
+        if (same_name(set->groups[i].name, name)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 /** @brief Bytes the user groups' names currently occupy in @p set->user_strtab. */
 static size_t user_chars (const cheatset_t *set) {
     size_t n = 0;
@@ -142,6 +171,14 @@ static size_t user_chars (const cheatset_t *set) {
  * unrelated allocations to tell them apart is not something C promises to answer.
  */
 static bool grow_set (cheatset_t *set, int groups, int codes, int chars, size_t *free_off) {
+    /* `cheat_group_t::first` is a uint16_t index into codes[], so the array cannot be allowed past
+     * 65,535 entries -- past it the truncation is silent and the group points at the wrong codes.
+     * Reachable only in principle (the largest game in the corpus is four figures of cheats, a few
+     * lines each) but the failure would be a cheat that patches an address nobody chose. */
+    if (set->code_count + codes > 65535) {
+        return false;
+    }
+
     size_t old_chars = (set->user_strtab != NULL) ? user_chars(set) : 0;
 
     cheat_group_t *g = realloc(set->groups, (size_t)(set->group_count + groups) * sizeof(*g));
@@ -156,16 +193,22 @@ static bool grow_set (cheatset_t *set, int groups, int codes, int chars, size_t 
     }
     set->codes = c;
 
-    char *s = realloc(set->user_strtab, old_chars + (size_t)chars);
-    if (s == NULL) {
-        return false;
+    /* Skipped entirely when there is nothing to hold, because overriding a shipped cheat asks for
+     * zero name bytes and realloc(NULL, 0) is allowed to hand back NULL -- which this function
+     * cannot tell from being out of memory, and would report as a failed edit. */
+    size_t want = old_chars + (size_t)chars;
+    if (want > 0) {
+        char *s = realloc(set->user_strtab, want);
+        if (s == NULL) {
+            return false;
+        }
+        size_t off = 0;
+        for (int i = set->user_first; i < set->group_count; i++) {
+            set->groups[i].name = &s[off];
+            off += strlen(&s[off]) + 1;
+        }
+        set->user_strtab = s;
     }
-    size_t off = 0;
-    for (int i = set->user_first; i < set->group_count; i++) {
-        set->groups[i].name = &s[off];
-        off += strlen(&s[off]) + 1;
-    }
-    set->user_strtab = s;
     *free_off = old_chars;
     return true;
 }
@@ -188,6 +231,26 @@ static void append_group (cheatset_t *set, const uc_record_t *r, size_t *off) {
     set->code_count += r->line_count;
 }
 
+/**
+ * @brief Point an existing group at @p r's lines instead of the ones it shipped with.
+ *
+ * The replaced codes are left where they are rather than compacted out. Nothing walks codes[]
+ * except through a group's first/count, so orphaned entries are invisible; compacting them would
+ * mean renumbering `first` on every later group for a handful of bytes.
+ */
+static void override_group (cheatset_t *set, const uc_record_t *r, int gi) {
+    set->groups[gi].first = (uint16_t)set->code_count;
+    set->groups[gi].count = r->line_count;
+    for (int j = 0; j < r->line_count; j++) {
+        set->codes[set->code_count + j].address = r->lines[j].address;
+        set->codes[set->code_count + j].value   = r->lines[j].value;
+    }
+    set->code_count += r->line_count;
+    /* The NAME is deliberately left pointing at the database's string table. It is what the list
+     * draws and what cheatstate hashes, so keeping it means an edited cheat is still remembered as
+     * the same cheat -- and it is why the editor can be entered on a shipped group at all. */
+}
+
 int usercheats_apply (cheatset_t *set, uint64_t game_key) {
     int mine = 0, chars = 0, lines = 0;
     for (int i = 0; i < count; i++) {
@@ -201,12 +264,21 @@ int usercheats_apply (cheatset_t *set, uint64_t game_key) {
         return 0;
     }
 
+    /* Sized as if every record were new. Overrides need the codes but neither a group slot nor
+     * name bytes, so this over-allocates by a few dozen bytes when a game has edited cheats --
+     * cheaper than a second pass that has to model the appends it has not made yet. */
     size_t off = 0;
     if (!grow_set(set, mine, lines, chars, &off)) {
         return 0;
     }
     for (int i = 0; i < count; i++) {
-        if (table[i].key == game_key) {
+        if (table[i].key != game_key) {
+            continue;
+        }
+        int gi = find_group(set, table[i].name);
+        if (gi >= 0) {
+            override_group(set, &table[i], gi);
+        } else {
             append_group(set, &table[i], &off);
         }
     }
@@ -218,9 +290,6 @@ bool usercheats_add (cheatset_t *set, uint64_t game_key, const char *name,
     if (line_count <= 0 || line_count > USERCHEAT_MAX_LINES || name == NULL || lines == NULL) {
         return false;
     }
-    if (count >= UC_MAX) {
-        return false;
-    }
 
     if (table == NULL) {
         table = calloc(UC_MAX, sizeof(uc_record_t));
@@ -229,26 +298,61 @@ bool usercheats_add (cheatset_t *set, uint64_t game_key, const char *name,
         }
     }
 
-    uc_record_t *r = &table[count];
+    /* Truncated first, because the truncated form is what gets stored and therefore what has to
+     * be matched against -- otherwise a long name would file a second record every time it was
+     * edited, each one indistinguishable from the last on disk. */
+    char stored[USERCHEAT_NAME_CAP];
+    snprintf(stored, sizeof(stored), "%s", name);
+
+    /* Saving over a cheat of the same name replaces it rather than filing a second one. Without
+     * this, editing the same cheat twice leaves two records; usercheats_apply() would apply both,
+     * the second silently winning, and the first would be invisible and impossible to remove. */
+    int slot = -1;
+    for (int i = 0; i < count; i++) {
+        if (table[i].key == game_key && same_name(table[i].name, stored)) {
+            slot = i;
+            break;
+        }
+    }
+    bool fresh = (slot < 0);
+    if (fresh) {
+        if (count >= UC_MAX) {
+            return false;
+        }
+        slot = count;
+    }
+
+    /* The live set is grown before the record is written, so a failed allocation leaves the table
+     * as it was rather than holding an edit the list does not show. */
+    int gi = find_group(set, stored);
+    size_t off = 0;
+    if (!grow_set(set, gi >= 0 ? 0 : 1, line_count,
+                  gi >= 0 ? 0 : (int)strlen(stored) + 1, &off)) {
+        return false;
+    }
+
+    uc_record_t *r = &table[slot];
     memset(r, 0, sizeof(*r));
     r->key = game_key;
-    strncpy(r->name, name, USERCHEAT_NAME_CAP - 1);
+    memcpy(r->name, stored, strlen(stored) + 1);
     r->line_count = (uint16_t)line_count;
     for (int i = 0; i < line_count; i++) {
         r->lines[i].address = lines[i].address;
         r->lines[i].value   = lines[i].value;
     }
 
-    /* Into the live set as well, so the list the user is looking at gains the row now. Rebuilding
-     * from cheatdb_load() instead would be simpler and would throw away every tick they have made
-     * since the sheet opened. */
-    size_t off = 0;
-    if (!grow_set(set, 1, line_count, (int)strlen(r->name) + 1, &off)) {
-        return false;
+    /* Into the live set as well, so the list the user is looking at changes now. Rebuilding from
+     * cheatdb_load() instead would be simpler and would throw away every tick they have made since
+     * the sheet opened. */
+    if (gi >= 0) {
+        override_group(set, r, gi);
+    } else {
+        append_group(set, r, &off);
     }
-    append_group(set, r, &off);
 
-    count++;
+    if (fresh) {
+        count++;
+    }
     dirty = true;
     return true;
 }

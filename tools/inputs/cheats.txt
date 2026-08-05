@@ -1,13 +1,24 @@
-# Open a game's detail sheet, then its cheat list, toggle two, and come back.
+# Open a game's detail sheet, then its cheat list, toggle two, scroll, and come back.
 #
 # The thing worth catching here is that the sheet's "N of M enabled" and the list agree, and
 # that leaving the list and returning does not discard what was ticked -- the set is loaded once
 # per game, not once per visit, and getting that wrong is invisible until you try it.
+#
+# The opening wait is 140 rather than 90 for a reason worth keeping. At 90 the boot plate is still
+# up, so every press below was swallowed before it reached the grid and all five frames were the
+# same picture of the grid -- a script named for the cheats screen that never once drew it, and it
+# passed its hash check the whole time. See AUDIT.md 2c.
+#
+# It also needs a real build/cheats.db staged into the fixture, or the list is empty and this
+# measures the empty-list message instead.
 
-wait 90
-press right         # AeroGauge: 43 cheats in the database
-press a
-wait 25
+wait 140
+
+press r x2          # Recent -> Favourites -> N64
+wait 150            # the tiles have to decode before A means a particular game
+
+press a             # AeroGauge, which the database has 43 cheats for
+wait 40
 fbdump              # 1: detail sheet with a Cheats row
 
 press z             # into the cheat list
@@ -20,9 +31,10 @@ press a             # and the second
 wait 15
 fbdump              # 3: two ticked, header count agrees
 
-press r             # page down
+press down x12      # past the bottom of the visible window. L pages back up; there is no page
+                    # down any more, because R became Add when the editor needed a button.
 wait 15
-fbdump              # 4: paged, position bar moved
+fbdump              # 4: scrolled, position bar moved
 
 press b             # back to the sheet
 wait 25

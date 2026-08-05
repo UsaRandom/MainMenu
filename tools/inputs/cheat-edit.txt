@@ -1,0 +1,40 @@
+# Edit a cheat the database shipped, and watch it replace the original rather than join it.
+#
+# This is the case usercheats.h calls the reason Z exists: a published cheat is often only useful
+# once a value is changed, cheats.db is read-only, and the alternative to replacing is the original
+# and the edit sitting next to each other under one name.
+#
+# The count in the header is the assertion. If saving APPENDED, the list would grow by one and the
+# header would say so; it does not, because the group is taken over by name.
+#
+# Needs a real build/cheats.db staged into the fixture. Without one the N64 titles have no cheats,
+# the list is empty, and every frame below is the empty-list message -- which is exactly what this
+# script looked like before anyone noticed.
+
+wait 140            # past the boot plate
+
+press r x2          # Recent -> Favourites -> N64
+wait 150            # the tiles have to decode before A means a particular game
+
+press a             # the first N64 title
+wait 40
+
+press z             # its cheats
+wait 25
+fbdump              # 1: the list as it shipped
+
+press z             # edit the cheat under the cursor
+wait 30
+fbdump              # 2: the editor, filled in from the shipped group
+
+press r             # jump to the first line
+press right x11     # last nibble of the value
+press up x5
+wait 15
+fbdump              # 3: the value changed
+
+press start         # save
+wait 30
+fbdump              # 4: the list, same length, same name, different codes
+
+exit

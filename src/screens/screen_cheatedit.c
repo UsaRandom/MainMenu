@@ -3,9 +3,16 @@
  * @brief Typing in a cheat with a controller.
  * @ingroup screens
  *
- * Reached with R from the cheats list. The shipped database covers a few hundred N64 titles and
- * nothing else, so for a homebrew ROM, an emulated-system title, or a code published after the
- * corpus was built, this is the only way in.
+ * Reached with R from the cheats list for a new cheat, or with Z to edit the one under the cursor.
+ * The shipped database covers a few hundred N64 titles and nothing else, so for a homebrew ROM, an
+ * emulated-system title, or a code published after the corpus was built, this is the only way in.
+ *
+ * **Editing works on shipped cheats too**, which is the reason Z exists: a published cheat is
+ * often only useful once a value is changed, and `cheats.db` is read-only. Saving always writes a
+ * user cheat, and a user cheat takes over any group of the same name rather than appearing beside
+ * it. See usercheats.h. What cannot be represented here -- more than USERCHEAT_MAX_LINES lines, or
+ * a name longer than the store holds -- is refused by the list rather than truncated by this
+ * screen; see screen_cheatedit_can_edit().
  *
  * ## One mode, not two
  *
@@ -50,41 +57,91 @@
 #define LINES_Y     176
 #define ROW_H       32
 #define CELL_W      20                       /**< one editable cell, wide enough to box a glyph */
-#define NAME_CELLS  16                       /**< characters offered for the name */
+/* How many characters can be TYPED, which is a screen-width question and nothing else: 23 cells
+ * is 460 px against SAFE_W's 608. It is deliberately not USERCHEAT_NAME_CAP, which is how long a
+ * name can be STORED. Measured against the libretro corpus, only 80.5% of cheat names fit in 23
+ * characters but 99.4% fit in 63, and a cheat that cannot be opened is worse than one whose name
+ * cannot be retyped -- so a longer name is shown as a label and only its codes are editable. */
+#define NAME_CELLS  23
 #define HEX_CELLS   12                       /**< 8 address nibbles + 4 value nibbles */
 
 /** The name alphabet, in the order up/down walks it. Space first so a short name is the default. */
 static const char ALPHABET[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'!";
 #define ALPHA_N ((int)(sizeof(ALPHABET) - 1))
 
-static char    name[NAME_CELLS + 1];
+static char    name[USERCHEAT_NAME_CAP];
 static uint8_t nibbles[USERCHEAT_MAX_LINES][HEX_CELLS];
 static int     line_count;
-static int     cursor;                       /**< 0..NAME_CELLS-1 is the name, then 12 per line */
+static int     cursor;                       /**< 0..name_cells-1 is the name, then 12 per line */
+static int     name_cells;                   /**< NAME_CELLS, or 0 when the name is a label */
 static const char *error;
+static bool    editing;                      /**< opened on an existing cheat rather than a blank */
+
+/** Armed by screen_cheatedit_open() and consumed by enter(). See screens.h. */
+static const cheat_group_t *pending_group;
+static const cheat_code_t  *pending_codes;
+
+bool screen_cheatedit_can_edit (const cheat_group_t *g) {
+    /* The name has to survive being stored, because storing it under a different name is what
+     * turns an edit into a duplicate. Everything else about it is presentation. */
+    return g != NULL
+        && g->count >= 1 && g->count <= USERCHEAT_MAX_LINES
+        && strlen(g->name) < USERCHEAT_NAME_CAP;
+}
+
+void screen_cheatedit_open (const cheat_group_t *g, const cheat_code_t *codes) {
+    pending_group = g;
+    pending_codes = codes;
+}
 
 /** @brief Which row the cursor is on: -1 for the name, otherwise the line index. */
 static int cursor_row (void) {
-    return (cursor < NAME_CELLS) ? -1 : (cursor - NAME_CELLS) / HEX_CELLS;
+    return (cursor < name_cells) ? -1 : (cursor - name_cells) / HEX_CELLS;
 }
 
 static int cursor_cell (void) {
-    return (cursor < NAME_CELLS) ? cursor : (cursor - NAME_CELLS) % HEX_CELLS;
+    return (cursor < name_cells) ? cursor : (cursor - name_cells) % HEX_CELLS;
 }
 
 static int total_cells (void) {
-    return NAME_CELLS + line_count * HEX_CELLS;
+    return name_cells + line_count * HEX_CELLS;
 }
 
 static void cheatedit_enter (app_t *app) {
     (void)app;
-    /* A default name rather than an empty one. An unnamed group would draw as a blank row in the
-     * cheats list, and the user has to press up sixteen times from space to reach A. */
-    snprintf(name, sizeof(name), "NEW CHEAT");
     memset(nibbles, 0, sizeof(nibbles));
-    line_count = 1;
     cursor = 0;
     error = NULL;
+    editing = (pending_group != NULL);
+
+    if (editing) {
+        snprintf(name, sizeof(name), "%s", pending_group->name);
+        /* A name that will not fit the cell strip becomes a label. Truncating it to fit would
+         * change it, and a changed name is a new cheat rather than a replacement -- the list would
+         * end up holding the original and the edit under two nearly identical names. */
+        name_cells = ((int)strlen(name) <= NAME_CELLS) ? NAME_CELLS : 0;
+        line_count = pending_group->count;
+        for (int r = 0; r < line_count; r++) {
+            const cheat_code_t *c = &pending_codes[pending_group->first + r];
+            for (int i = 0; i < 8; i++) {
+                nibbles[r][i] = (uint8_t)((c->address >> (28 - 4 * i)) & 0xF);
+            }
+            for (int i = 0; i < 4; i++) {
+                nibbles[r][8 + i] = (uint8_t)((c->value >> (12 - 4 * i)) & 0xF);
+            }
+        }
+    } else {
+        /* A default name rather than an empty one. An unnamed group would draw as a blank row in
+         * the cheats list, and the user has to press up sixteen times from space to reach A. */
+        snprintf(name, sizeof(name), "NEW CHEAT");
+        name_cells = NAME_CELLS;
+        line_count = 1;
+    }
+
+    /* Consumed, so a later entry that forgets to arm gets a blank cheat rather than the last one
+     * edited -- and so nothing holds a pointer into groups[] across a realloc. */
+    pending_group = NULL;
+    pending_codes = NULL;
 }
 
 static int alpha_index (char c) {
@@ -134,7 +191,7 @@ static void save (app_t *app) {
 
     /* Trailing spaces would survive into the list and into the cheatstate name hash, so a name
      * that gained a space on the way past would be remembered as a different cheat. */
-    char trimmed[NAME_CELLS + 1];
+    char trimmed[USERCHEAT_NAME_CAP];
     snprintf(trimmed, sizeof(trimmed), "%s", name);
     int end = (int)strlen(trimmed);
     while (end > 0 && trimmed[end - 1] == ' ') {
@@ -216,26 +273,26 @@ static void cheatedit_update (app_t *app, float dt) {
         sound_play_effect(SFX_CURSOR);
     }
     if (input_pressed(in, BTN_R)) {
-        cursor = (cursor < NAME_CELLS) ? NAME_CELLS
-               : NAME_CELLS + ((cursor_row() + 1) % line_count) * HEX_CELLS;
+        cursor = (cursor < name_cells) ? name_cells
+               : name_cells + ((cursor_row() + 1) % line_count) * HEX_CELLS;
         sound_play_effect(SFX_CURSOR);
     }
     if (input_pressed(in, BTN_L)) {
-        cursor = (cursor < NAME_CELLS) ? NAME_CELLS + (line_count - 1) * HEX_CELLS : 0;
+        cursor = (cursor < name_cells) ? name_cells + (line_count - 1) * HEX_CELLS : 0;
         sound_play_effect(SFX_CURSOR);
     }
 
     int step = (in->up ? 1 : 0) - (in->down ? 1 : 0);
     if (step != 0) {
         error = NULL;
-        if (cursor < NAME_CELLS) {
+        if (cursor < name_cells) {
             /* The name is padded to full width so every cell is editable; without this, moving
              * right past the end of "NEW CHEAT" would land on a NUL and typing there would leave
              * a hole in the middle of the string. */
-            for (int i = (int)strlen(name); i < NAME_CELLS; i++) {
+            for (int i = (int)strlen(name); i < name_cells; i++) {
                 name[i] = ' ';
             }
-            name[NAME_CELLS] = '\0';
+            name[name_cells] = '\0';
             int idx = (alpha_index(name[cursor]) + step + ALPHA_N) % ALPHA_N;
             name[cursor] = ALPHABET[idx];
         } else {
@@ -271,15 +328,31 @@ static void cheatedit_render (app_t *app, surface_t *fb) {
 
     ui_fill(0, 0, SCREEN_W, 64, th->panel);
     ui_fill(0, 64 - ACCENT_BAR, SCREEN_W, ACCENT_BAR, th->tab_underline);
-    ui_label(SAFE_X, 36, SAFE_W, ALIGN_LEFT, STL_DEFAULT, "New cheat");
-    snprintf(buf, sizeof(buf), "%d of %d lines", line_count, USERCHEAT_MAX_LINES);
-    ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_GRAY, buf);
+    ui_label(SAFE_X, 36, SAFE_W, ALIGN_LEFT, STL_DEFAULT, editing ? "Edit cheat" : "New cheat");
+
+    /* The message shares the header's right-hand slot with the line counter rather than sitting
+     * under the rows. It used to be drawn at LINES_Y + 8*ROW_H + 8 = y 440, which is inside the
+     * footer -- and the footer is filled afterwards, so every refusal to save was painted over
+     * before it reached the screen. */
+    if (error != NULL) {
+        ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_YELLOW, error);
+    } else {
+        snprintf(buf, sizeof(buf), "%d of %d lines", line_count, USERCHEAT_MAX_LINES);
+        ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_GRAY, buf);
+    }
 
     ui_label(LIST_X, NAME_Y - 26, SAFE_W, ALIGN_LEFT, STL_GRAY, "Name");
-    char padded[NAME_CELLS + 1];
-    snprintf(padded, sizeof(padded), "%-*s", NAME_CELLS, name);
-    draw_cells(th, LIST_X, NAME_Y, padded, NAME_CELLS,
-               cursor < NAME_CELLS ? cursor : -1, -1);
+    if (name_cells > 0) {
+        char padded[NAME_CELLS + 1];
+        snprintf(padded, sizeof(padded), "%-*s", NAME_CELLS, name);
+        draw_cells(th, LIST_X, NAME_Y, padded, NAME_CELLS,
+                   cursor < NAME_CELLS ? cursor : -1, -1);
+    } else {
+        /* Too long for the strip, so it is shown rather than offered. Drawn dim to say that,
+         * without a second sentence explaining it. */
+        ui_label(LIST_X, NAME_Y, SAFE_W, ALIGN_LEFT, STL_GRAY, name);
+        ui_fill(LIST_X, NAME_Y + 6, NAME_CELLS * CELL_W, HAIRLINE, th->panel_alt);
+    }
 
     ui_label(LIST_X, LINES_Y - 26, SAFE_W, ALIGN_LEFT, STL_GRAY, "Address     Value");
     for (int r = 0; r < line_count; r++) {
@@ -289,11 +362,6 @@ static void cheatedit_render (app_t *app, surface_t *fb) {
         glyphs[HEX_CELLS] = '\0';
         int sel = (cursor_row() == r) ? cursor_cell() : -1;
         draw_cells(th, LIST_X, LINES_Y + r * ROW_H, glyphs, HEX_CELLS, sel, 8);
-    }
-
-    if (error != NULL) {
-        ui_label(LIST_X, LINES_Y + USERCHEAT_MAX_LINES * ROW_H + 8, SAFE_W, ALIGN_LEFT,
-                 STL_YELLOW, error);
     }
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);

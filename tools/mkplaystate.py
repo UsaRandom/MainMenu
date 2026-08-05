@@ -24,12 +24,34 @@ Byte order is BIG-ENDIAN throughout: the file is written and read by an N64 and 
 
 import argparse
 import os
+import re
 import struct
 import zlib
 
 MAGIC = 0x4D363450          # 'M64P'
-FORMAT_VER = 1              # must equal MENU_CACHE_FORMAT_VER in src/library/cache.h
 LIBF_FAVORITE = 1 << 0
+
+
+def cache_format_ver() -> int:
+    """Read MENU_CACHE_FORMAT_VER out of cache.h rather than keeping a copy of it.
+
+    It used to be a literal here with a comment saying it must match. It stopped matching, and the
+    symptom was not an error: the menu rejected the fixture's playstate.dat, Recent and Favourites
+    became empty and therefore hidden, the grid opened on N64 instead, and every script that steps
+    right through the tabs silently visited different games. Nothing failed -- the pictures just
+    quietly stopped being of what the script names.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    header = os.path.join(here, os.pardir, "src", "library", "cache.h")
+    with open(header) as fh:
+        for line in fh:
+            m = re.match(r"\s*#define\s+MENU_CACHE_FORMAT_VER\s+(\d+)", line)
+            if m:
+                return int(m.group(1))
+    raise SystemExit("MENU_CACHE_FORMAT_VER not found in %s" % header)
+
+
+FORMAT_VER = cache_format_ver()
 
 
 def fnv1a64(s: str) -> int:

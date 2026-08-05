@@ -50,7 +50,11 @@
  * check codes the index computed -- so a version scheme that lets them disagree is a scheme that
  * eventually lets a stale one be believed. One number, everything rebuilds together.
  */
-#define MENU_CACHE_FORMAT_VER   1
+#define MENU_CACHE_FORMAT_VER   2
+/* 1 -> 2: usercheats.dat's record grew from 108 to 140 bytes when the name field went from 24 to
+ * 64 characters. Only that file changed layout, and only that file's readers could be confused --
+ * but the rule above is one number for all of them, and the cost of honouring it is currently
+ * zero, because nothing has ever written a cache file to a real card. */
 
 /** @brief Header on every cache file. 16 bytes, so the payload stays 8-byte aligned. */
 typedef struct __attribute__((packed)) {

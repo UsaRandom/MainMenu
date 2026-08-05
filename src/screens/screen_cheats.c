@@ -18,6 +18,7 @@
 
 #include "app.h"
 #include "cheats/cheatdb.h"
+#include "cheats/usercheats.h"
 #include "menu/fonts.h"
 #include "menu/sound.h"
 #include "screens.h"
@@ -35,11 +36,13 @@
 
 static int cursor;
 static int top;                             /**< first visible row */
+static const char *notice;                  /**< why the last Z did nothing; cleared by any move */
 
 static void cheats_enter (app_t *app) {
     (void)app;
     cursor = 0;
     top = 0;
+    notice = NULL;
 }
 
 static void cheats_update (app_t *app, float dt) {
@@ -57,11 +60,33 @@ static void cheats_update (app_t *app, float dt) {
      * somebody wants to add one to, and it is the only screen that reaches the editor. */
     if (input_pressed(in, BTN_R)) {
         sound_play_effect(SFX_ENTER);
+        screen_cheatedit_open(NULL, NULL);
         app_goto(app, SCREEN_CHEATEDIT);
         return;
     }
 
     if (set->group_count == 0) {
+        return;
+    }
+
+    /* Z edits whichever cheat is under the cursor, shipped or not. Plenty of published codes are
+     * only useful once a value is changed -- "give item in slot" and anything else parameterised
+     * -- and the database is read-only, so saving files a user cheat that takes the group over by
+     * name. See usercheats.h. */
+    if (input_pressed(in, BTN_Z)) {
+        const cheat_group_t *g = &set->groups[cursor];
+        if (screen_cheatedit_can_edit(g)) {
+            sound_play_effect(SFX_ENTER);
+            screen_cheatedit_open(g, set->codes);
+            app_goto(app, SCREEN_CHEATEDIT);
+            return;
+        }
+        /* Refused rather than truncated. A cheat opened with half its lines would save as a cheat
+         * with half its lines, replacing the working original with a broken one under the same
+         * name -- and the list would look no different afterwards. */
+        notice = (g->count > USERCHEAT_MAX_LINES) ? "Too many lines to edit"
+                                                  : "Name too long to edit";
+        sound_play_effect(SFX_ERROR);
         return;
     }
 
@@ -71,7 +96,8 @@ static void cheats_update (app_t *app, float dt) {
 
     /* L pages, because a four-figure list is not navigable one row at a time. R used to page the
      * other way and is now Add: paging in one direction only is a small loss against having no
-     * button left for the editor, and Z is taken on the sheet this screen is reached from. */
+     * button left for the editor. Z is Edit here; it is free on this screen even though the sheet
+     * this screen is reached from uses it to get here. */
     if (input_pressed(in, BTN_L)) cursor -= VISIBLE;
     if (cursor < 0)                 cursor = 0;
     if (cursor >= set->group_count) cursor = set->group_count - 1;
@@ -83,6 +109,7 @@ static void cheats_update (app_t *app, float dt) {
 
     if (cursor != prev) {
         sound_play_effect(SFX_CURSOR);
+        notice = NULL;
     }
 
     /* Scroll only enough to keep the cursor on screen, so paging does not recentre the list and
@@ -120,8 +147,12 @@ static void cheats_render (app_t *app, surface_t *fb) {
     ui_fill(0, 64 - ACCENT_BAR, SCREEN_W, ACCENT_BAR, th->tab_underline);
     ui_label(SAFE_X, 36, SAFE_W, ALIGN_LEFT, STL_DEFAULT, "Cheats");
 
-    snprintf(buf, sizeof(buf), "%d of %d enabled", enabled_count(set), set->group_count);
-    ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_GRAY, buf);
+    if (notice != NULL) {
+        ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_YELLOW, notice);
+    } else {
+        snprintf(buf, sizeof(buf), "%d of %d enabled", enabled_count(set), set->group_count);
+        ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_GRAY, buf);
+    }
 
     if (set->group_count == 0) {
         ui_label(LIST_X, LIST_Y + 40, LIST_W, ALIGN_CENTER, STL_GRAY,
@@ -172,6 +203,7 @@ static void cheats_render (app_t *app, surface_t *fb) {
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
     int hx = ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Toggle");
+    hx = ui_hint(hx, FOOTER_Y + 14, "Z", BTN_Z_COLOR, UI_BTN_TALL, "Edit");
     (void)ui_hint(hx, FOOTER_Y + 14, "R", BTN_Z_COLOR, UI_BTN_TALL, "Add");
     ui_button(SAFE_X + SAFE_W - UI_BTN_D, FOOTER_Y + 14, "B", BTN_B_COLOR, UI_BTN_DISC);
     ui_label(SAFE_X, FOOTER_Y + 14 + UI_BTN_D - 5, SAFE_W - UI_BTN_D - 6, ALIGN_RIGHT,

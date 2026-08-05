@@ -17,10 +17,10 @@
  *
  * ## Why fixed-size records
  *
- * 108 bytes each, with the name and the lines inline. Variable-length records would pack better
+ * 140 bytes each, with the name and the lines inline. Variable-length records would pack better
  * and would need a parser, and every on-disk format in this project is instead a fixed row with a
  * compile-time size assertion -- because the one failure this family of files cannot survive is a
- * silent layout change that still passes its own magic and CRC. Sixty-four user cheats is 6.9 KB.
+ * silent layout change that still passes its own magic and CRC. The full table of 256 is 35 KB.
  *
  * ## Where they live in the set
  *
@@ -31,6 +31,18 @@
  *
  * Their names cannot point into the database's string table, so `cheatset_t` carries a second
  * `user_strtab` that `cheatdb_free()` releases with the rest.
+ *
+ * ## A matching name replaces, it does not add
+ *
+ * **A user cheat whose name matches one already in the set takes that group over** -- the group
+ * keeps its name and its place in the list, and its codes become the user's. This is what makes
+ * the shipped corpus editable: plenty of published cheats are only useful once a value is changed
+ * ("give item in slot"), the database is read-only, and the alternative is the original and the
+ * edit sitting next to each other under the same name with nothing to tell them apart.
+ *
+ * Matching ignores case, because the editor's alphabet is uppercase only. Keeping the group's
+ * original name is what lets `cheatstate` go on remembering the tick -- renaming an edited cheat
+ * does forget it, which is the honest consequence of keying on the name.
  */
 
 #ifndef CHEATS_USERCHEATS_H__
@@ -47,8 +59,16 @@
 /** @brief Lines in one user cheat. Four is a long published code; eight is room to be wrong. */
 #define USERCHEAT_MAX_LINES 8
 
-/** @brief Characters in a user cheat's name, NUL included. */
-#define USERCHEAT_NAME_CAP 24
+/**
+ * @brief Characters in a user cheat's name, NUL included.
+ *
+ * Sized by the corpus rather than by the screen. Cheat names in libretro's collection run to 197
+ * characters; 63 covers 99.4% of the 228,209 of them, where 23 -- the widest the editor's cell
+ * strip can show -- covers only 80.5%. Since a stored name that does not match the group it came
+ * from turns an edit into a duplicate, the STORE has to hold the whole thing even when the editor
+ * can only display it. See screen_cheatedit.c.
+ */
+#define USERCHEAT_NAME_CAP 64
 
 /** @brief Read usercheats.dat into memory. Called once at boot; absent is normal. */
 void usercheats_load (void);

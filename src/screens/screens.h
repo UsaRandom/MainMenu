@@ -40,4 +40,21 @@ typedef enum {
  */
 void screen_code_ask (code_ask_t what, const char *prompt, screen_id_t ok, screen_id_t cancel);
 
+/**
+ * @brief Arm the cheat editor, then `app_goto(app, SCREEN_CHEATEDIT)`.
+ *
+ * @p g NULL starts an empty cheat. Otherwise the editor opens filled in from that group, whether
+ * it came from the shipped database or from a previous edit; saving it writes a user cheat, which
+ * takes the group over by name. See usercheats.h.
+ *
+ * @p codes is the set's codes array, which @p g's `first` indexes into.
+ *
+ * Same reasoning as screen_code_ask(): the request is the caller's business for as long as the
+ * editor is up, so it lives in that screen's statics rather than in app_t.
+ */
+void screen_cheatedit_open (const cheat_group_t *g, const cheat_code_t *codes);
+
+/** @brief Can @p g be represented in the editor at all? See screen_cheats.c for what happens if not. */
+bool screen_cheatedit_can_edit (const cheat_group_t *g);
+
 #endif /* SCREENS_H__ */
