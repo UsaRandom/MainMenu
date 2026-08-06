@@ -29,20 +29,6 @@ int cheats_ipl3_patch_offset (cic_type_t cic_type);
 bool cheats_ipl3_layout_ok (cic_type_t cic_type, uint32_t word_at_offset);
 
 /**
- * @brief Assemble the patcher and engine into RDRAM without touching the IPL3.
- *
- * Everything cheats_install() does except the one-word IPL3 patch that arms it. Split out so the
- * dev harness can execute the emitted patcher against a synthetic game image and prove the
- * preamble hook end-to-end under ares -- the IPL3 patch is the single step that cannot happen
- * inside the menu, because the menu's own IPL3 is libdragon's and the layout check refuses it.
- *
- * @param cheat_list The cheat list, terminated by a zero pair.
- * @return The patcher's entry point (jump here with $t1 holding the game entry point), or NULL
- *         if the list was NULL or would overflow the engine or patcher regions.
- */
-uint32_t *cheats_emit(uint32_t *cheat_list);
-
-/**
  * @brief Installs cheats based on the CIC type.
  *
  * This function installs the cheats provided in the cheat list based on the

@@ -53,17 +53,6 @@
  * else, so that should not happen -- but "should not" is not a thing to gamble somebody's evening
  * on, so the test leaves a marker file on the card while it runs and removes it afterwards. If the
  * marker is still there at the next boot the test did not finish, and it is never attempted again.
- *
- * ## What the verdict means since the preamble hook
- *
- * Less than it used to. Both machines this project could ask -- ares, and the ModRetro M64 on
- * the second hardware run -- hold the watch register and never deliver the trap, so the patcher
- * grew a second way in (cheats.c): it scans the loaded game for libultra's own
- * __osExceptionPreamble and rewrites it, which needs no watch and is tried first. A no-watch
- * verdict here now costs only games not built on libultra, for which the Datel hook remains the
- * fallback. The verdict is still worth measuring and showing: it is a fact about the CPU core, it
- * decides whether that fallback exists, and it is the record that will say whether any M64
- * revision ever ships the trap.
  */
 
 #ifndef MENU_ENGINETEST_H__
