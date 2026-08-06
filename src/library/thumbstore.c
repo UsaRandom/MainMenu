@@ -257,6 +257,13 @@ static bool slot_io (uint32_t slot, surface_t *surf, bool write) {
     return true;
 }
 
+bool thumbstore_has (const char *src_path, int64_t src_size) {
+    if (pak == NULL || src_path == NULL || src_size <= 0) {
+        return false;
+    }
+    return find_row(cache_hash64(src_path), (uint32_t)src_size) != NULL;
+}
+
 bool thumbstore_fetch (const char *src_path, int64_t src_size, surface_t *dst, uint16_t *dominant) {
     if (pak == NULL || src_path == NULL || src_size <= 0 || dst == NULL) {
         return false;

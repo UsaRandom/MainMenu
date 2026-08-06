@@ -158,6 +158,17 @@ int main (void) {
     check(!thumbstore_fetch("sd:/art/beta.png", 12345, &got, &dom),
           "a different source path misses");
 
+    /* thumbstore_has() must agree with thumbstore_fetch() on every one of those, because the
+     * caller uses it to decide whether to allocate a 27,440-byte surface at all. A has() that
+     * says yes where fetch() says no puts the allocate-and-free back; one that says no where
+     * fetch() would have said yes loses the tile silently and the grid draws a placeholder over
+     * art that is sitting on the card. Same three keys, same three answers. */
+    check(thumbstore_has("sd:/art/alpha.png", 12345), "has() agrees the tile is there");
+    check(!thumbstore_has("sd:/art/alpha.png", 999), "has() agrees a resized source misses");
+    check(!thumbstore_has("sd:/art/beta.png", 12345), "has() agrees a different path misses");
+    check(!thumbstore_has(NULL, 12345), "has() survives a NULL path");
+    check(!thumbstore_has("sd:/art/alpha.png", 0), "has() refuses a zero size");
+
     /* -------------------------------------------------- more slots, then a cold reopen */
     printf("\nmulti-slot\n");
     surface_t b = make_tile(2, TILE_W * 2);
@@ -237,6 +248,7 @@ int main (void) {
         thumbstore_put("sd:/art/delta.png", 5555, &d, 0x4444);   /* must not fault */
         check(thumbstore_count() == 0, "put is refused rather than attempted");
         check(!thumbstore_fetch("sd:/art/delta.png", 5555, &got, &dom), "fetch is a quiet miss");
+        check(!thumbstore_has("sd:/art/delta.png", 5555), "has() is a quiet miss with no pak");
         thumbstore_flush();                                       /* must not fault */
         thumbstore_close();
         free(d.buffer);

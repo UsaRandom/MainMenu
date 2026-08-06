@@ -477,18 +477,29 @@ static bool no_slot (thumbcache_t *tc, bool may_go_idle, uint32_t scan_t0) {
  */
 static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool cached_only) {
     if (tc->decoding_slot >= 0) {
-        /* A decode in flight is the one thing cached mode must not touch: advancing it is what
-         * costs the frame. Falling through instead is safe -- an atlas fetch goes nowhere near
-         * the decoder -- so a scroll that begins mid-decode still fills from thumbs.pak while the
-         * half-finished PNG waits for the cursor to settle. */
-        if (!cached_only) {
-            uint32_t t0 = TICKS_READ();
-            image_decoder_poll_budget(budget_us);
-            uint32_t took = TIMER_MICROS(TICKS_SINCE(t0));
-            tc->decoded_us += took;
-            thumb_rows_us += took;
-            return true;
+        /* Cached mode does NOT advance the decode -- that is the work it exists to avoid -- and
+         * it does not walk either. It returns, and the walk is the reason.
+         *
+         * The first version fell through here, on the reasoning that an atlas fetch goes nowhere
+         * near the decoder so a scroll beginning mid-decode could still fill from thumbs.pak.
+         * True, and ruinous: this early-out is what kept the four-pass walk from running during a
+         * cold fill, and a cold fill is a decode in flight almost continuously. Removing it put a
+         * full walk -- a filesystem probe per candidate -- into every background() call, and
+         * background() runs once per frame plus once per spin iteration, of which AUDIT.md 1l
+         * measured 208 per displayed frame. The card came back visibly slower at everything:
+         * music, input, scrolling. See 1ae.
+         *
+         * Nothing is lost that was ever gained. A decode is in flight only while the cache is
+         * cold, and a cold cache has nothing in the atlas to fetch. */
+        if (cached_only) {
+            return false;
         }
+        uint32_t t0 = TICKS_READ();
+        image_decoder_poll_budget(budget_us);
+        uint32_t took = TIMER_MICROS(TICKS_SINCE(t0));
+        tc->decoded_us += took;
+        thumb_rows_us += took;
+        return true;
     }
     /* Nothing pending anywhere: skip the walk entirely.
      *
@@ -527,6 +538,14 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
          * went off to prefetch art the user could not see, leaving eight visible tiles blank. */
         bool visible_only = (pass < 2);
         bool allow_costly = ((pass & 1) != 0);
+        /* Cached mode never leaves the wanted list. The two whole-library passes exist to decode
+         * ahead of the screen, and this mode does not decode -- so on a large card they would be
+         * a walk of every record, and the stat inside art_resolve() on each, to reach a decision
+         * that was already made. The rows either side of the window are in wanted[] already;
+         * screen_grid asks for them. */
+        if (cached_only && !visible_only) {
+            continue;
+        }
         int n = visible_only ? tc->wanted_n : lib->count;
         for (int k = 0; k < n; k++) {
             int i = visible_only ? (int)tc->wanted[k] : k;
@@ -544,6 +563,16 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
                 continue;
             }
 
+            /* Cached mode only takes records whose art has already been located. art_resolve()
+             * falls back to a five-rule search with up to three filesystem probes, and paying
+             * that during a scroll -- for a record that by definition has never been decoded, so
+             * cannot be in the atlas -- is the expensive half of a question whose answer is
+             * always no. A warm card has every path in library.idx, which is the case this mode
+             * is for. */
+            if (cached_only && rec->art_file == NULL) {
+                continue;
+            }
+
             char path[512];
             int64_t art_bytes = art_resolve(tc, lib, rec, path, sizeof(path));
             if (art_bytes < 0) {
@@ -556,7 +585,18 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
              * so the 2118 x 1457 card that monopolises the decoder for 38 seconds becomes an
              * ordinary tile the moment it has been decoded once. Deferring a cached tile to the
              * costly pass would throw that away for no reason. */
-            if (thumbstore_available()) {
+            /* Ask the index BEFORE claiming a slot or allocating anything.
+             *
+             * This block used to claim a slot, malloc a surface_t, surface_alloc 27,440 bytes,
+             * attempt the fetch, and unwind all of it on a miss -- per candidate, per pass, per
+             * call. On a cold card every candidate misses, so a walk of a screenful was a dozen
+             * whole-tile allocations and frees that could never succeed. Worse, claim_slot() may
+             * EVICT to hand back a slot, so a full pool would destroy a resident tile in order to
+             * fail to fill the space with a tile that was never in the atlas.
+             *
+             * thumbstore_has() is a hash and a scan of the resident index. It answers the same
+             * question for nothing. See AUDIT.md 1ae. */
+            if (thumbstore_available() && thumbstore_has(path, art_bytes)) {
                 int slot = claim_slot(tc, lib, (uint16_t)i, visible_only);
                 if (slot < 0) {
                     return no_slot(tc, !visible_only && !cached_only, scan_t0);

@@ -58,6 +58,17 @@ void thumbstore_close (void);
 bool thumbstore_available (void);
 
 /**
+ * @brief Is there a tile for @p src_path, without reading it?
+ *
+ * An index lookup and nothing else -- the index is resident, so this costs a hash and a scan of a
+ * few hundred rows. It exists so a caller can find out before committing to the 27,440-byte
+ * surface a fetch needs: thumbcache.c used to allocate one, attempt the fetch, and free it again
+ * on every miss, which on a cold card is an allocate-and-free of a whole tile per candidate per
+ * pass. See AUDIT.md 1ae.
+ */
+bool thumbstore_has (const char *src_path, int64_t src_size);
+
+/**
  * @brief Read the tile for @p src_path into @p dst, if one is cached and still matches.
  *
  * @p dst must already be a TILE_W x TILE_H FMT_RGBA16 surface.

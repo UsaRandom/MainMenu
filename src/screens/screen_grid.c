@@ -833,13 +833,10 @@ static void grid_background (app_t *app, uint32_t budget_ticks) {
      * boot_plate_working() excludes the rise and the curtain, so the two animated stretches keep
      * the whole field and only the static hold is spent working. */
     if (boot_plate_working(&boot_anim)) {
-        /* Cached tiles first, and on a warm card that is all of them: the plate's release gate is
-         * "is the first row settled", so filling that row from the atlas rather than decoding it
-         * is the difference between a plate that holds for its measured 1,998 ms and one that
-         * lifts almost at once. */
-        if (!thumbcache_run_cached(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US)) {
-            thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
-        }
+        /* The full run, which already prefers the atlas within its own walk. On a warm card the
+         * first row therefore comes out of thumbs.pak and the plate lifts almost at once; on a
+         * cold one it decodes, which is what the plate's hold is for. */
+        thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
         return;
     }
     if (!boot_anim.done) {
@@ -868,11 +865,10 @@ static void grid_background (app_t *app, uint32_t budget_ticks) {
         thumbcache_run_cached(app->thumbs, app->lib, FETCH_BUDGET_MOVING_US);
         return;
     }
-    /* Cached tiles first when settled as well, so the cheap answers all land before the decoder
-     * takes the frame for a single expensive one. */
-    if (thumbcache_run_cached(app->thumbs, app->lib, FETCH_BUDGET_IDLE_US)) {
-        return;
-    }
+    /* Not preceded by a cached pass, which is what the first version did. thumbcache_run's own
+     * walk already checks the atlas before the cost gate, so calling the cached variant first
+     * repeated the entire four-pass walk -- including a filesystem probe per candidate -- to
+     * reach the same answer twice per background() call. */
     thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_IDLE_US);
 }
 

@@ -3042,6 +3042,94 @@ detected.
 
 ---
 
+## 1ae. The cached-tile path made the whole console slow, and ares cannot see it
+
+The card came back from 1ad reported as laggy at everything — music, input, scrolling — against a
+run of the previous build that had felt fine. Two of the three causes were mine.
+
+### Removing an early-out put a full library walk in the spin loop
+
+`run_once()` opens with "is a decode in flight? then poll it and return". 1ad made cached mode
+**fall through** that, on the reasoning that an atlas fetch goes nowhere near the decoder, so a
+scroll beginning mid-decode could still fill from `thumbs.pak`.
+
+The reasoning is true and the consequence was not thought through. That early-out is what kept
+the four-pass walk from running during a **cold fill**, and a cold fill has a decode in flight
+almost continuously. So every `thumbcache_run_cached()` call did a full walk instead of returning
+in three instructions — and `background()` is called once per displayed frame **plus once per
+spin iteration**, which `scroll-stress` measures at `spin=117880` over 600 frames: **196 walks per
+displayed frame** where there had been none.
+
+Nothing was lost by putting it back. A decode is in flight only while the cache is cold, and a
+cold cache has nothing in the atlas to fetch.
+
+### Every miss allocated a whole tile and threw it away
+
+This one predates 1ad and had simply never been reachable often enough to matter. The atlas block
+claimed a slot, `malloc`'d a `surface_t`, `surface_alloc`'d **27,440 bytes**, attempted the fetch,
+and unwound all of it on a miss — per candidate, per pass, per call. On a cold card every
+candidate misses.
+
+Worse, `claim_slot()` may **evict** to produce a slot. So a full pool would destroy a resident
+tile in order to fail to fill the space with a tile that was never in the atlas.
+
+`thumbstore_has()` asks the resident index instead: a hash and a scan of a few hundred rows, no
+allocation. Checked before anything is claimed.
+
+Combined with the walk regression, the arithmetic on the reported run is roughly **196 walks per
+frame × ~40 candidates = 8,000 whole-tile allocate-and-frees per displayed frame**, each with a
+filesystem probe beside it. That is the lag. It is arithmetic from a measured call count, not a
+measured result — see below.
+
+### The redundant pass
+
+1ad also called `thumbcache_run_cached()` before `thumbcache_run()` on settled frames. That is
+pure duplication: `thumbcache_run`'s own walk already checks the atlas before the cost gate, which
+is a deliberate ordering recorded in the source. So the entire four-pass walk ran twice per
+`background()` call to reach the same answer. Removed.
+
+### ares reports no difference, and that is the finding
+
+`scroll-stress`, same script, same fixture, regressed build against fixed build:
+
+| | before | after |
+|---|---|---|
+| `scanus` (walk, µs/frame) | 1,276 | 1,287 |
+| `bg_us` (µs/frame) | 7,731 | 7,857 |
+| `stats` (filesystem probes) | 4 | 4 |
+
+Identical inside noise. **ares cannot execute the path at all**: the storage prefix there is the
+ROM's read-only DFS, so `cache_writable()` is false, no pak is created, `thumbstore_available()`
+returns false, and the whole atlas block — the allocate-and-free, the eviction, the probe — is
+skipped by its own guard. The one machine that could have caught this before hardware is
+structurally unable to.
+
+This is section 5's known limit arriving with teeth. It previously read as "the streaming budget
+is the one number ares cannot validate"; it is broader than that. **Any bug that lives inside
+`if (thumbstore_available())` is invisible to every regression script in this repo.** The host
+suite is the only instrument that reaches that code, and it tests `thumbstore.c`, not its caller.
+
+So the fix here is a code-reading argument backed by a call count, and it is recorded as such. The
+part that *is* verified is the new function: `thumbstore_has()` must agree with
+`thumbstore_fetch()` on every key, or it either puts the allocation back or hides art that is
+sitting on the card. Six checks in the atlas suite, which is now 37 and still goes red on the
+slot-offset mutation.
+
+### What was kept
+
+`THUMB_SLOTS` stays at 36 and the ±2-row prefetch stays. Neither is implicated: the slots are
+allocated lazily, and the prefetch only adds entries to a list that was already being walked. On
+a cold card the larger pool does mean more of the library gets decoded before the cache goes
+quiet, which is more work up front and a fully populated `thumbs.pak` at the end of it.
+
+Cached mode is also now narrowed to what it is for: it never leaves the wanted list (the two
+whole-library passes exist to decode ahead, and it does not decode), and it skips any record whose
+`art_file` is still NULL, because `art_resolve()`'s five-rule search with up to three probes is
+the expensive half of a question whose answer, for a record that has never been decoded, is always
+no.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
@@ -3197,5 +3285,13 @@ already have. See 2a. What remains open is throughput, not capability.
   lower-latency than FatFs over SC64. **The thumbnail streaming budget is therefore the one number
   ares cannot validate.** Plan: an artificial `--sd-delay-us` knob under `DEV_HARNESS` to test
   against a pessimistic 1.5 MB/s, and a real measurement on hardware.
+- **Worse than that: ares cannot execute the atlas read path at all.** `cache_writable()` is false
+  under the read-only DFS, so no pak is created, `thumbstore_available()` returns false, and every
+  line inside `if (thumbstore_available())` in thumbcache.c is skipped by its own guard. A
+  regression that lives in there produces byte-identical hashes and identical frame times on every
+  script in the suite — 1ae is one that did, and it made the console visibly slow at everything.
+  The host suite reaches `thumbstore.c` but not its caller, so **thumbcache.c's cached branch is
+  currently verified by nothing.** Nothing here is a plan yet; it is the largest hole in the
+  instrumentation and it should be named as one.
 - **ares is not cycle-accurate for RDP/RDRAM contention**, so `rdp_us` from the frame-time
   instrumentation is indicative, not predictive.
