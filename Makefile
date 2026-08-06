@@ -96,7 +96,7 @@ FLAGS += $(TUNE)
 
 ifdef DEV_HARNESS
 FLAGS += -DDEV_HARNESS
-DEV_SRCS = dev/debug_emux.c dev/inputscript.c dev/allocwatch.c
+DEV_SRCS = dev/debug_emux.c dev/inputscript.c dev/allocwatch.c dev/hooktest.c
 # --wrap catches allocations inside libdragon and libspng too. A hook installed from our own code
 # would only see our own calls, and the interesting ones are not ours.
 N64_LDFLAGS += --wrap=malloc --wrap=calloc --wrap=realloc --wrap=free

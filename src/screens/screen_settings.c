@@ -362,16 +362,21 @@ static void settings_render (app_t *app, surface_t *fb) {
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
     y += 22;
 
-    /* Whether the cheat engine actually runs on this console, which is the one thing about cheats
-     * that cannot be established from the menu side and the one thing the first hardware run left
-     * open -- everything observable said "will hook" and no cheat did anything in game.
+    /* Whether this console delivers the watch exception, which decides how the cheat engine
+     * hooks in. It stopped deciding WHETHER cheats work when the patcher learned to rewrite the
+     * game's own handler template instead (see cheats.c) -- a missing watch now costs only the
+     * games that aren't built on libultra, so it draws in the default style rather than yellow.
+     * Yellow is reserved for the verdicts that mean the test itself did not run clean.
      *
      * A line rather than a row, deliberately. It is a diagnostic, it is read and not changed, and
      * making it selectable would renumber every row above it for the fourth time and move thirteen
      * input scripts with them. See enginetest.h for what to do with the code it prints. */
+    watchtest_t wt = enginetest_watch();
+    bool wt_clean = (wt == WATCH_WORKING) || (wt == WATCH_NO_EXCEPTION) ||
+                    (wt == WATCH_UNCACHED_ONLY) || (wt == WATCH_NO_REGISTER);
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Cheat engine");
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT,
-             (enginetest_watch() == WATCH_WORKING) ? STL_DEFAULT : STL_YELLOW,
+             wt_clean ? STL_DEFAULT : STL_YELLOW,
              enginetest_text());
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);

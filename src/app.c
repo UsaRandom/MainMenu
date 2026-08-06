@@ -22,6 +22,7 @@
 #include "menu/image_decoder.h"
 #include "dev/allocwatch.h"
 #include "dev/debug_emux.h"
+#include "dev/hooktest.h"
 #include "dev/inputscript.h"
 #include "flashcart/flashcart.h"
 #include "menu/fonts.h"
@@ -202,6 +203,11 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * for the interlock, and for why this replaced a cheat-based test that could never have
      * worked -- the menu is a libdragon ROM and the engine cannot patch a libdragon IPL3. */
     enginetest_run(app->storage);
+
+    /* Harness builds only: execute the emitted cheat patcher against a synthetic game image and
+     * prove the preamble hook end-to-end, which no launch under ares can do -- ares has no cart
+     * to launch into. Costs one boot-time megabyte scan; compiles to nothing in release. */
+    hooktest_run();
 
     if (!libindex_load(app->lib, app->storage, SCAN_ROOT)) {
         library_scan(app->lib, app->storage, SCAN_ROOT);

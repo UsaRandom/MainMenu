@@ -3213,6 +3213,106 @@ next boot means the last attempt did not return, and the test is never attempted
 
 ---
 
+## 1ag. The engine no longer needs the watch exception, and for the first time it has run
+
+1af ended with the engine hooked on a CPU feature that no machine available to this project
+delivers: ares and the M64 both hold the watch register and neither fires the trap. The watch
+existed to solve exactly one problem — the game overwrites 0x80000180 with its own handler, and
+Datel trapped that store to survive it. There is another way to survive it, and it needs nothing
+exotic.
+
+### Rewrite the source, not the destination
+
+By the time the patcher runs, the game's first megabyte is already in RDRAM — copying it there is
+the one thing IPL3 does before `jr $t1`. Somewhere in that megabyte sits libultra's
+`__osExceptionPreamble`, the four instructions `osInitialize` copies onto every exception vector:
+
+```
+lui   $k0, %hi(__osException)
+addiu $k0, $k0, %lo(__osException)
+jr    $k0
+nop
+```
+
+Only the two address halves vary between games, so the pattern is findable by a masked scan: fixed
+top halves on the first two words, all thirty-two bits on the last two. The patcher now scans
+`[$t1, $t1 + 1 MB)` for it, saves the original `lui`/`addiu` pair into the engine's tail, and
+rewrites the pair in place to compute the engine's address instead. When the game later installs
+"its" handler, it installs the hook itself; the engine runs on every exception and hands off to
+the real `__osException` by replaying the two words it displaced. No watch, no relocation dance,
+no COP0 anything — loads, stores and a jump. The Datel hook is kept verbatim as the fallback when
+the scan finds nothing: a game not built on libultra, or a kernel outside the first megabyte.
+
+The engine tail changed shape for this — `j 0x80000120; nop` became `lui $k0 / addiu $k0 / jr $k0
+/ nop`, which is the watch path's same destination spelled patchably — and `cheats_install()` now
+emits before patching the IPL3. The old order left a live trap: an overflowing cheat list
+returned false *after* the IPL3 in DMEM had been pointed at a half-built patcher, and boot.c's
+false meant the RDRAM holding that patcher was about to be wiped. An IPL3 jumping into zeroed
+memory, instead of a game booting without cheats.
+
+### For the first time, the emitted code has been executed and watched working
+
+The scan runs after boot(), where nothing can report. So `src/dev/hooktest.c` (DEV_HARNESS only)
+runs the production `cheats_emit()` — split from `cheats_install()` precisely so the one step the
+menu cannot host, the IPL3 patch, is the only step skipped — and then **executes the emitted
+patcher** with `$t1` aimed at a synthetic game image: a megabyte of zeroed `.bss` holding a
+planted preamble aimed at a fake `__osException`. Then it executes the patched preamble the way a
+vector would. Under ares:
+
+```
+HOOKTEST fallback full-window scan: 53304 us
+HOOKTEST 14/14 ok
+```
+
+The found scenario proves: preamble rewritten in place; an 8-bit, a 16-bit and a conditional
+write all landed; control came out the far side through the fake `__osException` with `$k0`
+holding its exact address (delivered by the tail replaying the original words — a flag that
+merely went non-zero would not distinguish that from a lucky wild jump); 0x80000180 untouched;
+watch never armed. The fallback scenario (`jr $k1` where the preamble says `jr $k0`) proves the
+scan rejects a near-miss 262,144 times, writes `j engine` over 0x80000180, arms WatchLo (reads
+back 0x181), and never runs the engine.
+
+The arena is a full megabyte because the scan window is: a smaller buffer puts live heap inside
+the window, and one pattern-shaped coincidence in a decoded PNG would flake the fallback scenario
+red.
+
+**The test can fail, and its first failure mode was wrong.** Mutating the scan's first compare
+(`PREAMBLE_LUI_K0_HI16 + 1`) initially hung the whole menu: the found scenario fell back, aimed
+libdragon's live exception vector at an engine whose tail leads to 0x80000120, and the next
+interrupt wedged the console — a red result reported as a timeout, which reports nothing. The
+test now captures and restores the vector and the watch unconditionally before re-enabling
+interrupts; the same mutation then reads `HOOKTEST 8/14 ok` with six named FAILs, and the run
+completes. Mutation reverted, 14/14, boot hashes byte-identical to the pre-mutation run.
+
+### What this does and does not claim
+
+- The mechanism is now verified end-to-end on ares — the machine that could never run the watch
+  engine runs this one. The same instructions on the M64 are ordinary loads and stores, but that
+  is an expectation, not a measurement; the next hardware run is the measurement, and it needs no
+  new tooling — tick a cheat, boot a game.
+- The IPL3 layout gate is unchanged: a game whose IPL3 fails `cheats_ipl3_layout_ok()` (Star
+  Fox 64, measured in 1ac) still gets no patcher at all, preamble or otherwise.
+- A false scan match — sixteen bytes of data that imitate the preamble, earlier in the image than
+  the real one — would hijack those bytes. Accepted as unlikely rather than impossible: eight of
+  the sixteen bytes and half the rest are fixed, and real preambles live in libultra `.text` near
+  the front of the image, ahead of the data segments that could imitate them.
+- Non-libultra retail titles fall back to the watch hook and are therefore still dead on the M64
+  and ares. That set is small (the Factor 5 engines are the usual suspects) and no game on the
+  card today is in it.
+- The fallback's full-window miss costs one megabyte scanned at boot — 53.3 ms of ares time, same
+  order expected at 93 MHz. Paid only by games whose cheats were not going to work anyway.
+
+### Sizes and hashes
+
+Release `.text` 572,088 (+768 over 1af: the tail, the scan, both hook paths, and the reworded
+verdict strings), `.data` 108,268, `.bss` 75,944 — the megabyte arena is DEV_HARNESS-only (dev
+`.bss` 1,124,576). Settings now reads
+"No watch, handler hook" in the default style rather than yellow, so the four scripts that dump
+the settings list (clock, clock-locked, parental, profiles) re-hash; clock.txt was re-run at full
+resolution and the line fits its row. `tools/inputs/boot.txt` hashes are unchanged.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
@@ -3348,13 +3448,16 @@ Unverified. No M64 hardware or documentation has been consulted for this repo.
 5. **Does the built-in Controller Pak present as a standard joybus mempak?**
 6. **What firmware is on the cart?** Not an M64 question, and the cheapest one to answer. The menu
    refuses anything below 2.17.0 and lands on the fault screen — see 2a.
-7. **Does the M64's CPU implement the watch exception?** The cheat engine hooks by arming
-   WatchLo on physical 0x180 and trapping the game's write of its own exception handler. If the
-   core does not implement it, no cheat can ever run and everything the menu can observe still
-   says "will hook" — which is exactly what the first two hardware runs reported. **Answerable
-   now, without a debug link**: the Settings screen prints a Datel line aimed at a probe in the
-   menu's own `.data`, and a copy of the menu booted with that cheat ticked reports whether the
-   engine wrote it. See 1ad and `src/menu/enginetest.h`.
+7. ~~**Does the M64's CPU implement the watch exception?**~~ — answered on the console itself:
+   the register holds, the trap never fires, cached or uncached, with the `break` control green
+   (see 1af and the Settings line the user read back: "Not supported by this console"). What
+   replaced the question is not a question — the engine no longer needs the watch for libultra
+   games (1ag) — but the hardware measurement that remains open is in 8.
+8. **Does the preamble hook deliver cheats on the M64?** The mechanism is proven end-to-end
+   under ares (1ag: HOOKTEST 14/14, executed emitted code, all three write kinds landed), and it
+   uses nothing but loads, stores and jumps. What no emulator can prove is this console running
+   it against a real game. Needs no tooling: tick a cheat, boot the game, look. If it works, the
+   cartridge was never the reason cheats failed — nothing in either hook touches the cart.
 
 ~~**Can the menu write to the SD card at all?**~~ — answered by reading the SC64 firmware and
 libcart rather than by testing: yes, and the write path needs nothing the read path does not
@@ -3371,9 +3474,11 @@ already have. See 2a. What remains open is throughput, not capability.
 - **ares does not implement the VR4300 watch exception.** Verified in 1af with a positive control:
   WatchLo reads back what is written, a `break` in the same window traps and returns through the
   handler, and neither a cached nor an uncached store to the watched address fires. **The Datel
-  cheat engine hooks with that exception, so the engine has never once run on any machine
-  available to this project.** Everything measured about cheats here is about what is handed *to*
-  the engine. Nothing verifies the engine.
+  watch hook — now the fallback path — has therefore still never run on any machine available to
+  this project, and cannot be exercised by any test here beyond "it was armed".** The primary
+  path no longer shares this limit: since 1ag the preamble hook is executed end-to-end under ares
+  by src/dev/hooktest.c, emitted code and all. What remains unverifiable is the watch fallback's
+  behaviour *when the trap fires*, and the whole chain on a real game on real hardware.
 - **Worse than that: ares cannot execute the atlas read path at all.** `cache_writable()` is false
   under the read-only DFS, so no pak is created, `thumbstore_available()` returns false, and every
   line inside `if (thumbstore_available())` in thumbcache.c is skipped by its own guard. A

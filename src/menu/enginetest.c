@@ -193,12 +193,18 @@ const char *enginetest_text (void) {
     /* Kept short because it is right-aligned in a row that already carries a label: the first
      * version read "Store did not trap -- cheats cannot run", which at 12 px a glyph is wider
      * than the space left over and drew straight through the word "engine". The reasoning that
-     * did not fit lives in enginetest.h, and the raw evidence goes to launch.log. */
+     * did not fit lives in enginetest.h, and the raw evidence goes to launch.log.
+     *
+     * "handler hook" in the no-watch verdicts, because a missing watch stopped being fatal when
+     * the patcher learned to rewrite the game's own exception preamble (cheats.c): those consoles
+     * run cheats in every libultra game and lose only the handful that are not. The old text
+     * here -- "Not supported by this console" -- was the true verdict for one engine design, not
+     * for the console. */
     switch (result) {
         case WATCH_WORKING:       return "Working";
-        case WATCH_NO_EXCEPTION:  return "Not supported by this console";
-        case WATCH_UNCACHED_ONLY: return "Uncached stores only";
-        case WATCH_NO_REGISTER:   return "No watch register";
+        case WATCH_NO_EXCEPTION:  return "No watch, handler hook";
+        case WATCH_UNCACHED_ONLY: return "Uncached watch, handler hook";
+        case WATCH_NO_REGISTER:   return "No register, handler hook";
         case WATCH_NO_HANDLER:    return "Inconclusive, control failed";
         case WATCH_SKIPPED:       return "Skipped after a bad attempt";
         default:                  return "Not tested";
