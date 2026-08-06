@@ -3213,6 +3213,79 @@ next boot means the last attempt did not return, and the test is never attempted
 
 ---
 
+## 1ag. The libultra preamble hook — proven under ares, dead on hardware, reverted
+
+Written, verified end-to-end under ares, deployed, and **it did not work on the M64**. Reverted at
+the user's direction in favour of upstream's Datel watch hook. Kept here because the mechanism was
+sound, the ares evidence was real, and the next person to have this idea should find out what it
+cost before spending the day again.
+
+### What it did
+
+1af left the engine hooked on a CPU feature no available machine delivers. The watch exception
+solves exactly one problem — the game overwrites 0x80000180 with its own handler — so the patcher
+was taught to survive that from the other side. By the time it runs, IPL3 has already copied the
+game's first megabyte into RDRAM, and somewhere in it is libultra's `__osExceptionPreamble`, the
+four instructions `osInitialize` copies onto every vector:
+
+```
+lui   $k0, %hi(__osException)
+addiu $k0, $k0, %lo(__osException)
+jr    $k0
+nop
+```
+
+Only the two address halves vary between games, so it is findable by a masked scan. The patcher
+scanned `[$t1, $t1 + 1 MB)`, saved the original `lui`/`addiu` into the engine's tail, and rewrote
+the pair in place to compute the engine's address — letting the game install our hook for us. The
+engine's tail replayed the displaced words to reach the real `__osException`. Loads, stores and a
+jump; no COP0 anything. The Datel hook stayed as the fallback when the scan missed.
+
+### The ares evidence, which was not wrong
+
+`src/dev/hooktest.c` ran the production emitter and then **executed the emitted patcher** with
+`$t1` aimed at a synthetic megabyte of `.bss` holding a planted preamble, then executed the
+patched preamble the way a vector would:
+
+```
+HOOKTEST fallback full-window scan: 53304 us
+HOOKTEST 14/14 ok
+```
+
+8-bit, 16-bit and conditional writes all landed; control chained out through the fake
+`__osException` with `$k0` holding its exact address; 0x80000180 and WatchLo untouched on the
+found path; the one-word near-miss (`jr $k1`) rejected across all 262,144 words before arming the
+fallback. The test could go red — mutating the first scan compare produced 8/14 with six named
+FAILs, after a first attempt at that mutation wedged the console instead of reporting (the test
+was fixed to restore the vector and watch before re-enabling interrupts).
+
+### And none of that predicted the console
+
+On the M64 the Settings line read "No watch, handler hook" — the intended state, hook armed — and
+**cheats still did nothing in game.** The failure mode was not characterised: nothing distinguishes
+"the scan matched the wrong sixteen bytes", "it matched nothing and fell back to the dead watch",
+"it matched and the game does not route exceptions through the preamble we found", or "the writes
+landed and the addresses are wrong for this ROM revision". `/mainmenu/launch.log` records the hook
+*order*, not which branch the patcher actually took, because that decision happens after the menu
+is gone.
+
+**That is the finding worth keeping: an end-to-end green under ares, on executed emitted code, with
+a working mutation control, still did not predict hardware.** It is the strongest form of evidence
+this harness can produce and it was not sufficient. The gap is not in the test — the test proved
+what it claimed. It is that the synthetic image is a preamble we planted, and a retail game is not.
+
+Anything resuming this needs the patcher to leave a breadcrumb the menu can read on the next boot
+— a word written to a known RDRAM address recording which branch it took and what it matched —
+because without that, a failure here is indistinguishable from four different failures.
+
+### Reverted
+
+`git revert` of the whole change; `.text` back to 571,320 / `.data` 108,196 / `.bss` 75,944,
+identical to 1af. `src/dev/hooktest.c` and `.h` are gone with it. The boot layer is upstream's
+again, and §2.6 records exactly how far from upstream it now sits.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
@@ -3291,6 +3364,43 @@ Not yet measured in µs — do that before claiming a win from removing it.
 
 `LICENSE.md:1`. Rules out aggregating a GPLv2-only cheat corpus (notably mupen64plus'
 `mupencheat.txt`) into the build. See the cheat-database plan for the MIT alternative.
+
+### 2.6 How far the cheat path sits from upstream, measured
+
+Asked directly after 1ag was reverted: are we running upstream's cheat mechanism? **Yes.** Diffed
+against the fork point `6407ab15`, and the result is narrow enough to state exhaustively.
+
+**Byte-identical to upstream:** `src/boot/boot.c`, `src/boot/reboot.S`, `src/boot/cic.c`,
+`src/boot/cic.h`, `src/boot/vr4300_asm.h`. Every instruction the engine and patcher emit, the
+watch arming, the IPL3 patch offsets, the x106 descrambling, the handoff registers — untouched.
+
+**Three deltas in `src/boot/cheats.c`, and nothing else in the boot layer:**
+
+1. **Bound checks** (`ENGINE_WORST_ENTRY_WORDS`, `PATCHER_MAX_WORDS`). Upstream's `*engine_p++`
+   had no bound: a `0x50` repeater emits 3 instructions per iteration with a count up to 255, so
+   a handful ran off the end and wrote through whatever followed (2.3). Refuses to install rather
+   than corrupting memory. Cannot change behaviour for a list that fits — and every list here fits.
+2. **`cheats_ipl3_patch_offset()` / `cheats_ipl3_layout_ok()` split out of the static
+   `cheats_patch_ipl3()`.** Pure refactor, same values, exposed so `cheatcheck.c` can answer "will
+   this hook?" while the display still exists.
+3. **The layout-mismatch return value.** Upstream returns `false` when the IPL3 word is not
+   `jr $t1` — and `false` is what its caller reads as *success*, so an unrecognised IPL3 was
+   reported as patched, the jump was never written, and `cheats_install()` went on to return true
+   and have `boot.c` set `skip_rdram_reset` on the strength of it. Engine assembled, never hooked,
+   cheats silently dead. We return `true` (abort). Of 23 retail ROMs measured with
+   `test_cheatinstall.c`, **22 take the identical path either way**; only Star Fox 64 (CIC 6101)
+   differs, and there upstream's behaviour is the broken one.
+
+**The feed is equivalent, not identical.** Upstream's `generate_enabled_cheats_array()` walks a
+flat array of independently-toggleable lines; `cheatdb_emit()` walks named groups and writes each
+enabled group's lines contiguously. Both produce the same thing the engine reads: `{address,
+value}` pairs with the full raw 32-bit word (type byte intact) followed by two zero words. The
+group model exists because per-line toggling separates a `D0` from the write it guards (2.2). For
+any selection where whole groups are enabled — which is the only selection our UI can express —
+the emitted array is what upstream would emit.
+
+**So a normal retail game takes upstream's code path exactly.** If cheats do not work here, they
+would not have worked on upstream's menu either, on this console.
 
 ---
 
