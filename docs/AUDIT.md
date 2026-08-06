@@ -3130,6 +3130,89 @@ no.
 
 ---
 
+## 1af. The self-test could never have worked, and the replacement found something
+
+The cheat-based engine self-test shipped in 1ad was wrong, and the console said so within minutes:
+open the menu's own copy in the menu, and the detail sheet reads **"Not supported for this game"**.
+
+That message is correct and it is the pre-flight doing exactly its job. **The one ROM whose insides
+we control is the one ROM the engine cannot patch.** This is a libdragon ROM and libdragon ships
+its own IPL3 rather than a retail libultra one; `cheats_ipl3_layout_ok()` looks for `jr $t1` at the
+CIC's patch offset and refuses anything else. Measured with the production `cic_detect()` through
+tools/hosttest/test_cheatinstall.c:
+
+```
+sc64menu.n64          CIC 6102/7101 word[475]=27bd0050  != jr $t1 -> engine would NOT hook
+Super Mario 64.z64    CIC 6102/7101 word[475]=01200008  == jr $t1 -> engine WOULD hook
+Ocarina of Time.z64   CIC 6105/7105 word[499]=01200008  == jr $t1 -> engine WOULD hook
+```
+
+`27bd0050` is `addiu $sp, $sp, 0x50`. libdragon's IPL3 is brute-force signed to pass as CIC 6102
+but is not the retail boot code, and the layout check catches that -- which is the whole reason
+that check exists. The design assumed a self-hosted test was possible without checking whether the
+host qualified. It did not.
+
+### Ask the CPU instead
+
+No cheat, no second ROM, no launch. `src/menu/enginetest.c` arms a watch on eight bytes of its own
+`.data`, stores to them, and reports whether the exception fired -- the same mechanism the engine
+depends on, exercised while the menu is still alive to say what happened. Four outcomes, and they
+mean four different things: the register does not hold, it holds but a cached store does not trap,
+only an *uncached* store traps, or it works.
+
+The uncached case is separated because it is a real possibility rather than a hypothetical: a watch
+compares physical addresses in the pipeline, so on real silicon a cache hit traps like a miss, but
+an implementation that only checks the memory bus would trap one and not the other. Reporting
+"cannot run cheats" when the truth is "traps, but not the way the engine needs" would send someone
+hunting the wrong fault.
+
+### The positive control, and why the verdict would be worthless without it
+
+"The store did not trap" has two explanations that look identical from inside the test: the CPU has
+no watch exception, or the handler is never reached and no exception of any kind would be seen.
+
+So the test raises a `break` first. Every VR4300 and every emulator of one implements it, and
+stepping over it -- `ex->regs->epc += 4`, which libdragon documents as the supported way to correct
+a synchronous fault -- proves the handler is wired up. If the control does not come back the
+verdict is **"Inconclusive, control failed"** rather than the alarming and possibly wrong thing.
+
+**Verified under ares before shipping**, which is the only place it could be verified:
+
+```
+WATCHTEST Not supported by this console
+          (target 0x800a6a28, wrote 000a6a29, read 000a6a29, break=1, fired=0)
+```
+
+`break=1`: the handler ran and EPC+4 resumed cleanly, so the plumbing works and the menu boots
+through it. The armed value read back **exactly**, so the register holds and the physical-address
+arithmetic is right. And `fired=0` for both the cached and the uncached store.
+
+### ares does not implement the watch exception
+
+That is the finding, and it is bigger than the test. **The Datel cheat engine has never once run
+under ares, and could not have.** Every cheat measurement in this file up to 1ad -- the group
+model, the emitter, the IPL3 pre-flight, `test_cheatinstall.c` -- verifies what is handed *to* the
+engine. Nothing has ever verified the engine itself, on any machine, because the one machine
+available lacks the CPU feature it hooks with. That belongs beside section 5's other harness
+limits and it is the more serious of the two found today.
+
+It also means the verdict this test returns on the M64 is genuinely new information, whichever way
+it goes.
+
+### The interlock
+
+A watch exception that fires and cannot be disarmed is an infinite exception loop on a boot path --
+a console that will not start. The handler clears WatchLo before it does anything else, so it
+should not happen; "should not" is not something to gamble a stranger's evening on, so the test
+drops `/mainmenu/watchtest.busy` before it runs and removes it after. A marker still present at the
+next boot means the last attempt did not return, and the test is never attempted again.
+
+### Sizes
+
+`.text` 571,320 (+800 over 1ae), `.data` 108,196, `.bss` 75,944.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
@@ -3285,6 +3368,12 @@ already have. See 2a. What remains open is throughput, not capability.
   lower-latency than FatFs over SC64. **The thumbnail streaming budget is therefore the one number
   ares cannot validate.** Plan: an artificial `--sd-delay-us` knob under `DEV_HARNESS` to test
   against a pessimistic 1.5 MB/s, and a real measurement on hardware.
+- **ares does not implement the VR4300 watch exception.** Verified in 1af with a positive control:
+  WatchLo reads back what is written, a `break` in the same window traps and returns through the
+  handler, and neither a cached nor an uncached store to the watched address fires. **The Datel
+  cheat engine hooks with that exception, so the engine has never once run on any machine
+  available to this project.** Everything measured about cheats here is about what is handed *to*
+  the engine. Nothing verifies the engine.
 - **Worse than that: ares cannot execute the atlas read path at all.** `cache_writable()` is false
   under the read-only DFS, so no pak is created, `thumbstore_available()` returns false, and every
   line inside `if (thumbstore_available())` in thumbcache.c is skipped by its own guard. A

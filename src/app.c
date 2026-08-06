@@ -193,6 +193,16 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * scan is 5.75 s, which is the single largest fixed cost in the product; libindex_load()
      * answers the same question with a directory enumeration and no file opens at all. */
     cache_init(app->storage);
+
+    /* Does this console's CPU implement the watch exception the cheat engine hooks with?
+     *
+     * After cache_init() and not one line earlier: the test leaves an interlock file on the card
+     * while it runs, and cache_writable() is what cache_init() decides. Before the scan, because
+     * everything below this is seconds and this is two COP0 writes and a store. See enginetest.h
+     * for the interlock, and for why this replaced a cheat-based test that could never have
+     * worked -- the menu is a libdragon ROM and the engine cannot patch a libdragon IPL3. */
+    enginetest_run(app->storage);
+
     if (!libindex_load(app->lib, app->storage, SCAN_ROOT)) {
         library_scan(app->lib, app->storage, SCAN_ROOT);
         /* Between the scan and the save, and it has to be between them. The scan is the only
@@ -449,11 +459,6 @@ void app_run (boot_params_t *boot_params) {
             app->bg_us += TIMER_MICROS(TICKS_DISTANCE(t3, TICKS_READ()));
             app->bg_calls++;
         }
-
-        /* One load and a compare. It has to be per frame rather than per visit to the settings
-         * screen, because the thing it is watching for is written by an exception handler and a
-         * screen nobody has opened observes nothing. See enginetest.h. */
-        enginetest_poll();
 
         app->frame++;
         if ((app->frame % 60) == 0) {

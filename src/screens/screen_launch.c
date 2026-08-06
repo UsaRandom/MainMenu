@@ -342,15 +342,13 @@ static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
      * false here would be the single most surprising thing this file could ever say. */
     launchlog_line("memory   %d bytes, expansion pak %s",
                    get_memory_size(), is_memory_expanded() ? "present" : "ABSENT");
-    /* Recorded here as well as shown on the Settings screen, because the log is what survives a
-     * launch and the screen is not. If a run of this menu is booted with the self-test cheat
-     * ticked, this is the line that says which address it should have been aimed at. */
+    /* Recorded here as well as shown on Settings, because the log is what survives a launch and
+     * the screen is not. If this says the watch exception does not fire, no cheat below can run
+     * however correct the rest of the log looks. See enginetest.h. */
     {
-        char probe[32];
-        enginetest_code(probe, sizeof(probe));
-        launchlog_line("selftest %s -- %s", probe,
-                       enginetest_seen() ? "the engine wrote the probe in THIS session"
-                                         : "probe untouched this session");
+        char wd[96];
+        enginetest_detail(wd, sizeof(wd));
+        launchlog_line("watch    %s (%s)", enginetest_text(), wd);
     }
     launchlog_line("database %d games; %d groups from the database, %d hand-entered",
                    cheatdb_game_count(),

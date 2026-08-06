@@ -369,16 +369,10 @@ static void settings_render (app_t *app, surface_t *fb) {
      * A line rather than a row, deliberately. It is a diagnostic, it is read and not changed, and
      * making it selectable would renumber every row above it for the fourth time and move thirteen
      * input scripts with them. See enginetest.h for what to do with the code it prints. */
-    if (enginetest_seen()) {
-        ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Cheat engine");
-        ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_DEFAULT, "Confirmed running");
-    } else {
-        char code[32];
-        enginetest_code(code, sizeof(code));
-        snprintf(buf, sizeof(buf), "Untested, try %s", code);
-        ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Cheat engine");
-        ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
-    }
+    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Cheat engine");
+    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT,
+             (enginetest_watch() == WATCH_WORKING) ? STL_DEFAULT : STL_YELLOW,
+             enginetest_text());
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
     (void)ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Change");
