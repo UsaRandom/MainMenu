@@ -4434,7 +4434,19 @@ purpose was to be a background for that text. `STUDIOS` and the per-title column
 went with it, as did `wrap()` and `fit_font()`.
 
 The pictures are unchanged: `draw_card()` still seeds its RNG from the title, so every game draws
-the scene it always drew. Eight README screenshots regenerated; four of them differ.
+the scene it always drew.
+
+What did change is the shape they are drawn at, and that is a separate correction. Every cover in
+the demo tree was portrait, so the README led with five columns of 109 x 155 -- a layout no real
+card produces. The one real corpus measured here is 28 covers and all 28 are landscape (1am), so
+mkdemo now scrapes its systems the way art actually arrives: N64 and Master System landscape at
+140 x 98, NES and SNES portrait at 109 x 155, the handhelds square at 140 x 140. All three shapes
+therefore appear in one tree, which is also the only way a demo can show a mechanism whose whole
+job is reading the shape off the file.
+
+Eight README screenshots regenerated. The grid and the detail sheet moved twice -- once for the
+lettering and once for the shapes -- the credits shot for the new notices, and the settings shot
+because the clock in it reads a different day. The four with no box art on them did not move.
 
 ---
 

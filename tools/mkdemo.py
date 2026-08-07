@@ -62,15 +62,32 @@ except ImportError:
 # filter made of it afterwards. A card drawn to be looked at should not go through a resampler
 # twice.
 #
-# It was a single 140 x 98 landscape pair, which was the shape of the old tile and of no box that
-# has ever existed. The scenes are all drawn against img.size, so nothing below had to change to
-# turn them portrait -- or to widen the square one when square art moved to the wide column.
-CART_SIZE = (109, 155)              # NTSC cartridge box, 127 x 181 mm -- narrow column
-SQUARE_SIZE = (140, 140)            # Game Boy and Game Boy Color, 126 x 126 mm -- wide column
+# All three shapes appear, and which system gets which is the point rather than an accident. The
+# menu reads a tile's shape off its own art -- that is the whole mechanism -- and a demo tree
+# where every cover is the same shape cannot show it. A real card genuinely is mixed, because the
+# art on it comes from wherever its owner got it.
+#
+# N64 and Master System are LANDSCAPE, and that is not a guess about boxes. The one real corpus
+# this project has measured is the SD card it is developed against: 28 covers, every single one
+# between 1.369 and 1.469, most of them 256 x 187. Scraper output is title cards and screenshots
+# far more often than it is box scans, so the tab the README leads with shows what a real card
+# actually looks like. NES and SNES stay portrait, which is what a box scan gives you, and the
+# handhelds stay square.
+#
+# The scenes are all drawn against img.size, so none of them had to change for any of this.
+PORTRAIT_SIZE = (109, 155)          # a box scan -- 127 x 181 mm, the narrow column
+SQUARE_SIZE = (140, 140)            # Game Boy and Game Boy Color, 126 x 126 mm -- the wide column
+LANDSCAPE_SIZE = (140, 98)          # a title card or a screenshot -- also the wide column
+
+ART_SHAPE = {
+    "n64": LANDSCAPE_SIZE, "sms": LANDSCAPE_SIZE,
+    "nes": PORTRAIT_SIZE,  "snes": PORTRAIT_SIZE,
+    "gb": SQUARE_SIZE,     "gbc": SQUARE_SIZE,
+}
 
 def art_size(system):
-    """The tile shape for a folder name, matching boxart.c's built-in table."""
-    return SQUARE_SIZE if system in ("gb", "gbc") else CART_SIZE
+    """The shape this system's covers were scraped at. See ART_SHAPE."""
+    return ART_SHAPE[system]
 
 # Drawn at 6x and reduced once with Lanczos. Circles and the diagonals in the perspective
 # scenes alias badly at 140 px, and the menu's own quantiser then spends palette entries on
@@ -568,7 +585,7 @@ def draw_card(title, scene, palette, size=None):
 
     @p title still seeds the RNG, so a given game draws the same picture it always did.
     """
-    aw, ah = size if size else CART_SIZE
+    aw, ah = size if size else PORTRAIT_SIZE
     W, H = aw * SS, ah * SS
     pal = PALETTES[palette % len(PALETTES)]
     rng = Rng(seed_of(title))
@@ -640,7 +657,7 @@ def main():
         # rom_config_load reads exactly one header and a scan never looks past it.
         emit(root, os.path.join("roms", "n64", "%s.z64" % title),
              build_header(codes[title], "", 0, ipl3))
-        draw_card(title, scene, pal).save(
+        draw_card(title, scene, pal, art_size("n64")).save(
             os.path.join(root, "roms", "n64", "%s.png" % title))
         # A sidecar .ini so the detail sheet has a save type to show. Without it every invented
         # game reports Automatic, which is correct -- these are not in the database -- but says

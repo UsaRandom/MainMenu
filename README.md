@@ -16,7 +16,7 @@ written on the covers; the menu is what puts a name under one.*
 - **Finds the covers itself**, PNG or JPEG, at whatever size and aspect the scan happens to be,
   and caches the decoded art on the card so the next boot is warm.
 - **Fits the grid to the covers.** A tile is the shape of the art in it, and a tab of wide covers
-  lays out four across where a tab of tall ones lays out five. Nothing is cropped to fit.
+  lays out four across (above) where a tab of tall ones lays out five. Nothing is cropped to fit.
 - **Tabs per system** — N64, NES, SNES, GB, GBC, SMS — plus Recent, Most Played and Favourites.
   Empty tabs do not appear.
 - **Remembers what you played** and for how long, and offers it back at the top.

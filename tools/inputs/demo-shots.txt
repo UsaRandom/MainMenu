@@ -19,7 +19,9 @@ press a              # play as ANA -> the grid
 # The boot plate swallows input while it is up, so a press too early is a press that never
 # happened -- two seconds, not one, or the rail never leaves RECENT and the shot is four games.
 wait 150
-press r x2           # RECENT -> FAVORITES -> N64, which is the tab with 24 covers in it
+press r x2           # RECENT -> FAVORITES -> N64, which is the tab with 24 covers in it and
+                     # the one the README leads with: four columns of 140 x 98, because mkdemo
+                     # scrapes N64 art landscape the way a real card's art arrives
 wait 40
 press down x2
 press right x2
@@ -28,8 +30,10 @@ fbdump               # 2: the grid, with ANA's face at the left of the rail
 
 press a              # -> the detail sheet for Moth and Marrow
 wait 90
-fbdump               # 3: the sheet. Its art panel is the cached tile at 2x, so it is the box
-                     #    shape too -- 218 x 310 where it used to be a 280 x 196 letterbox
+fbdump               # 3: the sheet. Its art panel is a fixed 218 px column and the cached tile
+                     #    is fitted to it, so a landscape cover lands at 218 x 153 and a portrait
+                     #    one at 218 x 310. Short art leaves the lower sheet empty; that is the
+                     #    cost of not narrowing the info column, which clips -- see AUDIT 1am
 
 press z              # -> the cheats screen, which the sheet's own footer offers
 wait 60
