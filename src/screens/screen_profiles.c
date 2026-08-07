@@ -473,6 +473,12 @@ static void draw_header (app_t *app) {
  * last dash to what was left put a two-pixel stub in the corner of a 158 px edge with a six-pixel
  * hole in front of it -- so the bottom of every empty card read as unfinished, which is exactly
  * what it looked like.
+ *
+ * Horizontal dashes are #HAIRLINE tall and vertical ones one pixel wide, and the asymmetry is not
+ * a slip. The VI scans two framebuffer rows per scanline and shows only the even ones, so a
+ * one-pixel horizontal dash is invisible half the time -- see the note on HAIRLINE. Columns are
+ * not decimated: the output area is 640 px wide against a 640 px framebuffer, so a vertical
+ * hairline is a hairline.
  */
 static void dashed_edge (int origin, int len, int fixed, bool vertical, uint16_t c) {
     const int DASH = 6, STEP = 12;
@@ -485,18 +491,21 @@ static void dashed_edge (int origin, int len, int fixed, bool vertical, uint16_t
         if (vertical) {
             ui_fill(fixed, at, 1, DASH, c);
         } else {
-            ui_fill(at, fixed, DASH, 1, c);
+            ui_fill(at, fixed, DASH, HAIRLINE, c);
         }
     }
 }
 
 /** A dashed rectangle, for an empty slot. Drawn from dashes rather than as a solid border because
- *  a solid one reads as a card that is there and merely blank. */
+ *  a solid one reads as a card that is there and merely blank.
+ *
+ *  The bottom edge hangs from y + h - HAIRLINE rather than y + h - 1, so a thicker hairline grows
+ *  inwards and the card keeps the height its neighbours were laid out against. */
 static void dashed_rect (int x, int y, int w, int h, uint16_t c) {
-    dashed_edge(x, w, y,         false, c);
-    dashed_edge(x, w, y + h - 1, false, c);
-    dashed_edge(y, h, x,         true,  c);
-    dashed_edge(y, h, x + w - 1, true,  c);
+    dashed_edge(x, w, y,                false, c);
+    dashed_edge(x, w, y + h - HAIRLINE, false, c);
+    dashed_edge(y, h, x,                true,  c);
+    dashed_edge(y, h, x + w - 1,        true,  c);
 }
 
 static void draw_card (app_t *app, int slot, bool selected) {

@@ -14,6 +14,14 @@ RDP produced and not what a window manager or a scaler made of it.
 
   tools/fbdump2png.py build/run/ares.log -o build/run/frames
   tools/fbdump2png.py build/run/ares.log --hashes        # one sha256 prefix per frame
+  tools/fbdump2png.py build/run/ares.log --vi -o out     # only the rows the VI scans out
+
+--vi is the answer to a class of bug the dump cannot otherwise show. The framebuffer is 480 rows
+and the VI output area is 240 lines, so VI_Y_SCALE is 2048/1024 -- two framebuffer rows per
+scanline -- and with interlacing off the offset never alternates, so the odd rows are never
+displayed. A dump reads RDRAM, so it shows every row and hashes a line nobody can see as though
+it were on screen. --vi keeps the even rows only, which is what the console shows. It is opt-in
+precisely so it does not silently rewrite every regression hash in the suite.
 """
 
 import argparse
@@ -126,12 +134,27 @@ def main():
     ap.add_argument("-o", "--output", default="frames", help="output directory")
     ap.add_argument("--hashes", action="store_true",
                     help="print one hash per frame instead of writing PNGs")
+    ap.add_argument("--vi", action="store_true",
+                    help="keep only the even rows, which is all the VI scans out")
     args = ap.parse_args()
 
     frames = extract(args.log)
     if not frames:
         print("no framebuffer dump found in %s" % args.log, file=sys.stderr)
         return 1
+
+    if args.vi:
+        for fr in frames:
+            if fr.scale != 1:
+                # Decimating an already-decimated dump answers a question nobody asked. Refuse
+                # rather than produce a plausible picture of nothing in particular.
+                print("--vi needs a full-resolution dump; this one is scale=%d "
+                      "(build with FBSCALE=1)" % fr.scale, file=sys.stderr)
+                return 1
+            stride = fr.width * 2
+            fr.data = bytearray(b"".join(bytes(fr.data[y * stride:(y + 1) * stride])
+                                         for y in range(0, fr.height, 2)))
+            fr.height = (fr.height + 1) // 2
 
     if args.hashes:
         # Hash the raw RGBA5551, not the PNG: zlib output can vary between Python builds and
