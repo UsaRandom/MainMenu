@@ -1,0 +1,32 @@
+# A category page that is not full, and the colour rows below it.
+#
+# Down used to test the cursor's ROW against the grid's five, and a separate clamp pulled any
+# cursor that had landed past the end of a short page back to the last real cell. On a page that is
+# not exactly 45 cells the two fought each other: Treasure page 2 holds 32, so Down from cell 27
+# moved to 36, found it empty, and got dragged back to 31 -- sideways along the same row -- and
+# every Down after that did nothing. The Icon and Plate rows could not be reached at all.
+#
+# Treasure page 2 is not an unusual case to have picked. It is where the editor opens for a fresh
+# profile 1, because that is the page holding slot 1's starter sprite, so this was the first thing
+# anybody saw.
+
+wait 150
+press l x8          # into the picker
+press z             # the edit menu
+press down
+press a             # -> the appearance editor, on the page holding this profile's own icon
+wait 60
+fbdump              # 1: a short page -- four rows and a bit, not five
+
+# Four presses, not five: the page is 32 cells, so three of them cross the grid -- 0, 9, 18, 27 --
+# and the fourth leaves it. Under the old rule the fourth slid sideways to 31 and the fifth,
+# sixth and every one after did nothing.
+press down x4
+wait 30
+fbdump              # 2: the Icon row live, which is what used to be impossible
+
+press down
+wait 30
+fbdump              # 3: and the Plate row below it
+
+exit

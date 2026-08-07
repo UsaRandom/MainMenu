@@ -163,6 +163,15 @@ static int row, col;
 static bool on_action;
 static int action;              /**< 0 space, 1 done */
 
+/**
+ * The x the cursor is trying to stay under while it moves up and down.
+ *
+ * Set whenever the cursor moves sideways, and *not* when it moves vertically, which is what makes
+ * a column survive a detour through a short row: P down to L down to M and back up returns to P
+ * rather than drifting to O. Same rule a text editor uses for a line shorter than the one above.
+ */
+static int want_x;
+
 static float caret_t;
 /** Seconds left of the rejection flash. The field goes red rather than the screen doing
  *  anything, because the thing being refused is the field's contents. */
@@ -222,12 +231,57 @@ static int row_len (int r) {
     return (int)strlen(rows()[r].glyphs);
 }
 
+/** Centre of key @p c in row @p r. */
+static int key_cx (int r, int c) {
+    return rows()[r].x + c * (KEY_W + KEY_GAP) + KEY_W / 2;
+}
+
+/** Centre of an action key. SPACE and DONE are wide, so their centres are far apart. */
+static int action_cx (int a) {
+    return (a == 0) ? (ACTION_X + WIDE_SPACE / 2)
+                    : (ACTION_X + WIDE_SPACE + KEY_GAP + WIDE_DONE / 2);
+}
+
+/**
+ * @brief The key in row @p r physically nearest @p x.
+ *
+ * Up and Down used to carry the column *index* across, which is only the same thing as carrying
+ * the position when every row starts at the same place and holds the same number of keys. Neither
+ * is true here: ASDFGHJKL is inset 30 px from QWERTYUIOP and ZXCVBNM is inset 88, so the index
+ * drifts right by half a key per row. Counted over the letter rows, 16 of the 26 downward moves
+ * landed on a key that was not the one underneath -- W went to S with A sitting under it, J went
+ * to M with N underneath -- and the three keys past the end of a short row all piled onto its last
+ * one. It reads as a cursor that slides sideways while you are pressing down.
+ */
+static int nearest_col (int r, int x) {
+    int n = row_len(r);
+    int best = 0, best_d = 1 << 30;
+    for (int c = 0; c < n; c++) {
+        int d = key_cx(r, c) - x;
+        if (d < 0) {
+            d = -d;
+        }
+        if (d < best_d) {
+            best_d = d;
+            best = c;
+        }
+    }
+    return best;
+}
+
+/** The action key nearest @p x. Two of them, so it is one comparison against the gap between. */
+static int nearest_action (int x) {
+    int mid = (action_cx(0) + action_cx(1)) / 2;
+    return (x < mid) ? 0 : 1;
+}
+
 static void kb_enter (app_t *app) {
     (void)app;
     row = 0;
     col = 0;
     on_action = false;
     action = 0;
+    want_x = key_cx(0, 0);
     caret_t = 0.0f;
     flash_t = 0.0f;
 }
@@ -304,46 +358,56 @@ static void kb_update (app_t *app, float dt) {
     int last = row_count() - 1;
     bool moved = false;
 
+    /* Vertical moves land on whatever is physically nearest #want_x in the row being entered, and
+     * leave want_x alone. Horizontal moves set it. See nearest_col(). */
     if (in->up) {
         if (on_action) {
             on_action = false;
             row = last;
+            col = nearest_col(row, want_x);
             moved = true;
         } else if (row > 0) {
             row--;
+            col = nearest_col(row, want_x);
             moved = true;
         }
     }
-    if (in->down) {
-        if (!on_action && row < last) {
+    if (in->down && !on_action) {
+        if (row < last) {
             row++;
-            moved = true;
-        } else if (!on_action) {
+            col = nearest_col(row, want_x);
+        } else {
             on_action = true;
-            moved = true;
+            action = nearest_action(want_x);
         }
+        moved = true;
     }
     if (in->left) {
         if (on_action && action > 0) {
             action--;
+            want_x = action_cx(action);
             moved = true;
         } else if (!on_action && col > 0) {
             col--;
+            want_x = key_cx(row, col);
             moved = true;
         }
     }
     if (in->right) {
         if (on_action && action < ACTION_N - 1) {
             action++;
+            want_x = action_cx(action);
             moved = true;
         } else if (!on_action && col < row_len(row) - 1) {
             col++;
+            want_x = key_cx(row, col);
             moved = true;
         }
     }
 
-    /* A shorter row under a longer one leaves the column past its end. Clamped rather than
-     * remembered, so moving down and back up lands where the eye expects. */
+    /* Belt and braces. nearest_col() cannot return an out-of-range column, but the charset can
+     * change under the cursor -- screen_keyboard_ask() picks the row table -- and a stale column
+     * indexes off the end of a string. */
     if (!on_action && col >= row_len(row)) {
         col = row_len(row) - 1;
     }

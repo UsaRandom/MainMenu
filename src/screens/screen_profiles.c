@@ -58,6 +58,7 @@
 #include "menu/profile.h"
 #include "menu/sound.h"
 #include "screens.h"
+#include "screens/boot_plate.h"
 #include "ui/draw.h"
 #include "ui/icon.h"
 #include "ui/theme.h"
@@ -147,9 +148,43 @@ static int card_y (int slot) {
     return GRID_ORG_Y + (slot / COLS) * (CARD_H + ROW_GAP);
 }
 
+/**
+ * @brief Are the faces on the cards drawn yet?
+ *
+ * What the boot plate waits for when it is covering this screen, the way it waits for the first
+ * row of covers when it is covering the grid. Slots whose sprite cannot resolve are skipped rather
+ * than waited on: icon_get() answers NULL both for "not decoded yet" and for "no such icon in this
+ * pack", and a capped build would otherwise hold the plate to its three-second ceiling every boot.
+ */
+static bool picker_worth_revealing (void) {
+    if (icon_count() == 0) {
+        return true;
+    }
+    for (int i = 0; i < PROFILE_MAX; i++) {
+        uint16_t idx = profile_icon(i);
+        if (!profile_slot_used(i) || idx == ICON_NONE || idx >= icon_count()) {
+            continue;
+        }
+        if (icon_get(idx, ICON_SMALL, profile_colour_fill(profile_ink(i)),
+                     profile_colour_fill(profile_plate(i))) == NULL) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void profiles_enter (app_t *app) {
     (void)app;
     mode = MODE_GRID;
+
+    /* The boot plate, when this is the first screen there is. A card with several players used to
+     * show these ten cards cold and unannounced, and only played the boot animation afterwards,
+     * over the grid -- so the loading screen came *after* the thing it was supposed to be loading
+     * for. Armed here instead; boot_plate_arm() is a no-op if the grid got there first, which is
+     * what happens on a card with one player. */
+    if (picking) {
+        boot_plate_arm();
+    }
 
     /* A name may have come back from the keyboard. Applied here rather than by the keyboard,
      * which does not know what it was typing for -- it writes a buffer and returns. */
@@ -365,7 +400,12 @@ static void update_confirm (app_t *app) {
 }
 
 static void profiles_update (app_t *app, float dt) {
-    (void)dt;
+    /* The plate swallows input while it is up, so a button pressed during boot does not answer a
+     * question the user cannot see yet. Same contract the grid has: the screen underneath goes on
+     * updating, which is what makes the curtain a reveal rather than a cut. */
+    if (boot_plate_step(dt, picker_worth_revealing())) {
+        return;
+    }
     switch (mode) {
         case MODE_EDIT:           update_edit(app);    break;
         case MODE_CONFIRM_REMOVE: update_confirm(app); break;
@@ -379,7 +419,16 @@ static void profiles_update (app_t *app, float dt) {
  *  than the cursor's one arriving and the rest staying blank. */
 static void profiles_background (app_t *app, uint32_t budget) {
     (void)budget;
-    (void)app;
+    /* The plate's hold is the boot budget, and it has to be spent here now rather than in the grid.
+     * It was the grid that held the plate and therefore the grid that got a second of free
+     * decoding out of it; with the plate moved in front of the picker, that second would have gone
+     * nowhere and the grid would have arrived cold behind a curtain that had already lifted --
+     * which is precisely the failure the plate exists to prevent, just relocated. So the covers
+     * decode under the picker instead, and by the time somebody has answered "who's playing" the
+     * first rows are painted. */
+    if (boot_plate_working() && app->thumbs != NULL && app->lib != NULL) {
+        thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
+    }
     for (int i = 0; i < PROFILE_MAX; i++) {
         if (!profile_slot_used(i)) {
             continue;
@@ -656,6 +705,10 @@ static void profiles_render (app_t *app, surface_t *fb) {
     } else if (mode == MODE_CONFIRM_REMOVE) {
         draw_confirm(app);
     }
+
+    /* Last, and inside the attach: render() owns the framebuffer from attach to detach, so there
+     * is no later moment for anything to draw over this screen. */
+    boot_plate_draw(MENU_VERSION, app->lib != NULL ? app->lib->count : 0);
 
     rdpq_detach_show();
 }

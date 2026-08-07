@@ -337,16 +337,27 @@ static void appearance_update (app_t *app, float dt) {
             }
             if (in->right && col < GRID_COLS2 - 1) { cell++; moved = true; }
             if (in->up && row > 0)                 { cell -= GRID_COLS2; moved = true; }
+            /* Down leaves the grid when there is nothing below the cursor -- which is not the same
+             * as being on the fifth row.
+             *
+             * It used to test the row alone, and then a clamp further down pulled any cursor that
+             * had landed past the end of a short page back to the last real cell. On a page that
+             * is not exactly 45 those two fought: Treasure page 2 holds 32, so Down from cell 27
+             * moved to 36, found it empty, and got dragged back to 31 -- sideways along the same
+             * row -- and every Down after that did nothing at all. The colour rows were
+             * unreachable, and since a fresh profile 1 opens on exactly that page, that was the
+             * first thing anybody saw. */
             if (in->down) {
-                if (row < GRID_ROWS2 - 1) {
-                    cell += GRID_COLS2;
+                int below = cell + GRID_COLS2;
+                if (row < GRID_ROWS2 - 1 && page * PER_PAGE + below < n) {
+                    cell = below;
                 } else {
                     pane = PANE_INK;
                 }
                 moved = true;
             }
-            /* A short last page leaves the cursor past the end. Clamped to the last real cell
-             * rather than allowed to sit on empty space, so A always has something to apply. */
+            /* Right can still walk onto empty space at the end of a short last row, so the clamp
+             * stays. It is no longer load-bearing for Down. */
             int here = page * PER_PAGE + cell;
             if (here >= n && n > 0) {
                 cell = (n - 1) - page * PER_PAGE;

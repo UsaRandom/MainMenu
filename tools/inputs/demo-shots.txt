@@ -1,0 +1,64 @@
+# The README's screenshots, against tools/mkdemo.py's tree of invented games.
+#
+# Run with DEMO=1 FBSCALE=1, which is the only combination whose frames may go in the README:
+# mkfixture harvests real game codes and titles out of rom_info.c, so its frames carry other
+# people's product names. mkdemo invents every title and draws its own box art.
+#
+# The sprites on the player cards are the one thing here that is not ours. They are game-icons.net
+# artwork under CC BY, which is why docs/CREDITS.md names all 36 authors and the cartridge carries
+# the credits screen -- and why the README says so under the pictures rather than claiming the page
+# owes nobody anything.
+#
+# The demo card has four players, so the menu boots into the picker rather than the grid. That is
+# what a card with four players does, and it is the first shot.
+
+wait 220             # boot plate, scan, then the picker
+fbdump               # 1: who's playing
+
+press a              # play as ANA -> the grid
+# The boot plate swallows input while it is up, so a press too early is a press that never
+# happened -- two seconds, not one, or the rail never leaves RECENT and the shot is four games.
+wait 150
+press r x2           # RECENT -> FAVORITES -> N64, which is the tab with 24 covers in it
+wait 40
+press down x2
+press right x2
+wait 120             # let the covers decode
+fbdump               # 2: the grid, with ANA's face at the left of the rail
+
+press l x3           # back along the rail and off its left end, into the picker
+wait 40
+press z              # the edit menu
+press down
+press a              # -> the appearance editor
+# It opens on the page holding ANA's own sprite, which is the short last page of Treasure. L backs
+# up to a full one: 45 drawings reads as a corpus, 32 reads as a screen that failed to finish.
+press l
+wait 420             # 45 sprites at about one a frame, plus the preview
+fbdump               # 3: choosing a face and two colours
+
+press b              # keeps the appearance, back to the cards
+wait 40
+press z              # the edit menu again
+press a              # -> the keyboard, pre-filled with ANA
+wait 40
+fbdump               # 4: the keyboard
+
+press b x4           # empty the field, then leave
+wait 30
+press r              # back onto the rail
+wait 40
+press start              # settings
+wait 40
+press down x6        # down the list, far enough that the window has scrolled
+wait 30
+fbdump               # 5: settings
+
+press down x4        # to the Credits row
+press a
+wait 60
+press down x5        # into the licence text
+wait 40
+fbdump               # 6: credits and licences
+
+exit

@@ -1,0 +1,34 @@
+# Up and Down on the keyboard, which used to slide the cursor sideways.
+#
+# The rows are staggered like a real keyboard -- ASDFGHJKL is inset 30 px from QWERTYUIOP and
+# ZXCVBNM is inset 88 -- so carrying the column *index* across a row change drifts the cursor right
+# by half a key per row. Counted over the letter rows, 16 of the 26 downward moves landed on a key
+# that was not underneath: W went to S with A sitting under it, J went to M with N underneath, and
+# the three keys past the end of a short row all piled onto its last one.
+#
+# The cursor moves to whatever is physically nearest now, against a remembered x that only sideways
+# moves update -- so a detour through a short row does not lose the column.
+
+wait 150
+press l x8          # into the picker
+press start         # a new player, which opens the keyboard on their name
+wait 40
+
+press down x3       # 1 -> Q -> A -> Z, straight down the left edge
+wait 20
+fbdump              # 1: the cursor on Z, not on X and not on C
+
+press right x5      # -> N
+press up x2         # N -> J -> I, each the key above the last
+wait 20
+fbdump              # 2: the cursor on I
+
+press up            # -> 8, the digit row
+wait 20
+fbdump              # 3: the cursor on 8
+
+press down x4       # 8 -> I -> J -> N, and off the bottom onto an action key
+wait 20
+fbdump              # 4: N is at x=436, past the midpoint between SPACE and DONE, so DONE
+
+exit

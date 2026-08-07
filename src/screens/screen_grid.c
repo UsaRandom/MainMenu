@@ -45,8 +45,6 @@ static int cursor;              /**< index into view[] */
 static float scroll_y;          /**< pixels, content space; always rounded before use */
 static float scroll_target;
 static float pulse_phase;
-static boot_plate_t boot_anim;   /* not `boot`: boot/boot.h already has a function by that name */
-static bool boot_armed;
 static tween_t grow;
 
 /** Frames of stillness before the decode budget opens up. ~0.25 s at 60 Hz. */
@@ -408,17 +406,20 @@ void screen_grid_draw_rail (app_t *app, bool chip_selected) {
         const char *label = library_tab_label((tab_t)t);
         int w = icon_only ? TAB_ICON : (int)strlen(label) * TAB_GLYPH_W;
 
-        if (active) {
+        /* Nothing but the chip looks selected while the chip is selected.
+         *
+         * This took two goes. The tab kept both its plate and its accent bar first, which put two
+         * gold bars side by side -- the chip sits immediately left of the first tab, so they merged
+         * into one 108 px stripe spanning both. Dropping only the bar was not enough either: a
+         * lit plate is still a lit plate, and the tab went on reading as the selected thing on a
+         * screen where the cursor was somewhere else.
+         *
+         * So the tab gives up both, and keeps only its brighter label -- which is a legible "this
+         * is where R goes back to" and is not a selection. */
+        if (active && !chip_selected) {
             ui_fill(x - TAB_PAD / 2, TABRAIL_Y, w + TAB_PAD, TABRAIL_H, th->panel_alt);
-            /* The plate says "this is the tab you are on"; the accent bar says "the rail cursor is
-             * here". They are the same thing on the grid and two different things on the picker,
-             * where the cursor is on the chip -- and the chip sits immediately left of the first
-             * tab, so two accent bars merge into one 108 px stripe that reads as a single
-             * selection spanning both. The tab keeps its plate and gives up the bar. */
-            if (!chip_selected) {
-                ui_fill(x - TAB_PAD / 2, TABRAIL_Y + TABRAIL_H - ACCENT_BAR, w + TAB_PAD,
-                        ACCENT_BAR, th->tab_underline);
-            }
+            ui_fill(x - TAB_PAD / 2, TABRAIL_Y + TABRAIL_H - ACCENT_BAR, w + TAB_PAD,
+                    ACCENT_BAR, th->tab_underline);
         }
 
         if (icon_only) {
@@ -553,10 +554,16 @@ static tab_t pick_opening_tab (app_t *app) {
 static void grid_enter (app_t *app) {
     /* Armed once per power-on, not once per visit: coming back from the detail sheet must not
      * replay the boot animation -- nor silently move the user to another tab, which is why the
-     * opening tab is chosen here and not on every entry. */
-    if (!boot_armed) {
-        boot_armed = true;
-        boot_plate_reset(&boot_anim);
+     * opening tab is chosen here and not on every entry.
+     *
+     * boot_plate_arm() is a no-op when the picker already armed it, which is what happens on a
+     * card with more than one player: the plate lifted off the picker and the grid is arriving
+     * behind a screen the user has already been looking at. The opening tab still has to be
+     * chosen exactly once, so that keeps its own flag. */
+    static bool opened;
+    if (!opened) {
+        opened = true;
+        boot_plate_arm();
         tab = pick_opening_tab(app);
         debugf("GRID opening on %s\n", library_tab_label(tab));
     }
@@ -617,7 +624,7 @@ static void grid_update (app_t *app, float dt) {
     /* The plate swallows input while it is up, so a button pressed during boot does not land on
      * a grid the user cannot see yet. It does NOT stop the grid updating -- scrolling, decoding
      * and the selection tween all run underneath, which is what makes the reveal a reveal. */
-    if (boot_plate_step(&boot_anim, dt, grid_worth_revealing(app))) {
+    if (boot_plate_step(dt, grid_worth_revealing(app))) {
         return;
     }
     int prev = cursor;
@@ -896,7 +903,7 @@ static void grid_render (app_t *app, surface_t *fb) {
      * immediately covered for the first 1.3 s -- deliberately. It costs one screen of fill on
      * ~78 frames of a boot and it is what makes the curtain reveal a grid that is already alive
      * rather than one that starts when the curtain lifts. */
-    boot_plate_draw(&boot_anim, MENU_VERSION, app->lib != NULL ? app->lib->count : 0);
+    boot_plate_draw(MENU_VERSION, app->lib != NULL ? app->lib->count : 0);
 
     rdpq_detach_show();
 }
@@ -916,14 +923,6 @@ static void grid_render (app_t *app, surface_t *fb) {
 #endif
 #ifndef DECODE_BUDGET_MOVING_US
 #define DECODE_BUDGET_MOVING_US 1200
-#endif
-
-/* During the plate's hold there is nothing to protect: the plate is one fill and one sprite, no
- * input is accepted, and the only thing the frame rate governs is a mark that is standing still.
- * So the budget is most of a field, and it is the one place in the program where dropping frames
- * is free. */
-#ifndef DECODE_BUDGET_BOOT_US
-#define DECODE_BUDGET_BOOT_US   14000
 #endif
 
 /* Atlas fetches are budgeted separately from decodes, because they are a different size of thing:
@@ -958,14 +957,14 @@ static void grid_background (app_t *app, uint32_t budget_ticks) {
      *
      * boot_plate_working() excludes the rise and the curtain, so the two animated stretches keep
      * the whole field and only the static hold is spent working. */
-    if (boot_plate_working(&boot_anim)) {
+    if (boot_plate_working()) {
         /* The full run, which already prefers the atlas within its own walk. On a warm card the
          * first row therefore comes out of thumbs.pak and the plate lifts almost at once; on a
          * cold one it decodes, which is what the plate's hold is for. */
         thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
         return;
     }
-    if (!boot_anim.done) {
+    if (!boot_plate_done()) {
         return;
     }
 

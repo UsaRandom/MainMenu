@@ -181,6 +181,12 @@ DEMO_CHEATS = {
 
 # --------------------------------------------------------------------------- helpers
 
+# The two neutrals in src/menu/profile.c's SWATCH, by index. Named here rather than written as 7
+# and 8 because the palette lost a duplicate white and shifted once already -- see AUDIT 1ah.
+PROFILE_BLACK = 7
+PROFILE_WHITE = 8
+
+
 def seed_of(title):
     return zlib.crc32(title.encode()) & 0xFFFFFFFF
 
@@ -740,6 +746,28 @@ def main():
             "--favorite", "Pocket Aurora.sfc",
         ], stdout=subprocess.DEVNULL)
 
+    # A household, for the same reason as the play history above and with the same caveat: the
+    # DFS is read-only under ares so the menu can never write a roster, but it reads one perfectly
+    # well. Without it the picker is one card and nine dashed rectangles, which is a screenshot of
+    # a feature nobody is using.
+    #
+    # No `icon` key on purpose. The index would have to name a sprite in whatever pack was built,
+    # and a capped or re-excluded corpus would make it point at the wrong drawing or at nothing;
+    # profile_load() falls back to icon_starter(), which mkiconmeta.py bakes against the pack that
+    # actually shipped. The colours are set, because those are a closed palette that cannot drift.
+    #
+    # Skipped for --no-playstate, which is the fresh-card tree: a card nobody has used has one
+    # nameless player, and that is exactly the state the boot picker is supposed to stay out of.
+    if not args.no_playstate:
+        who = [("ANA", 0, PROFILE_WHITE), ("BEN", 1, PROFILE_BLACK),
+               ("CASS", 4, PROFILE_WHITE), ("DIYA", 2, PROFILE_BLACK)]
+        ini = ["[profiles]", "version=2", "count=%d" % len(who), "active=0"]
+        for i, (name, plate, ink) in enumerate(who):
+            ini += ["[p%d]" % (i + 1), "used=1", "name=%s" % name, "theme=",
+                    "colour=%d" % plate, "ink=%d" % ink]
+        emit(root, os.path.join("mainmenu", "profiles.ini"),
+             ("\n".join(ini) + "\n").encode())
+
     n_cheats = 0
     if not args.no_cheats:
         cht_dir, key_path = write_cheat_corpus(args.build_dir, codes)
@@ -754,9 +782,9 @@ def main():
     total = sum(os.path.getsize(os.path.join(d, f))
                 for d, _, fs in os.walk(root) for f in fs)
     print("demo: %d N64 titles, %d emulated-system titles, %d cards, %d cheats in %d games, "
-          "%.1f KB -> %s"
+          "%d players, %.1f KB -> %s"
           % (len(N64_GAMES), n_emu, len(N64_GAMES) + n_emu, n_cheats, len(DEMO_CHEATS),
-             total / 1024.0, root))
+             0 if args.no_playstate else 4, total / 1024.0, root))
     return 0
 
 

@@ -1,0 +1,27 @@
+# The loading screen comes before the question, not after it.
+#
+# The plate is deliberately an overlay rather than a screen of its own -- boot_plate.c argues that
+# a SCREEN_BOOT would have to hand over at t=1.64 to something arriving cold, which is the second
+# fade-in the spec rules out. That reasoning is intact; what was wrong was the assumption that the
+# thing underneath is always the grid. A card with several players showed ten cards cold and
+# unannounced, and only played the boot animation afterwards, over the grid -- so the loading
+# screen came after the thing it was loading for.
+#
+# One plate now, armed by whichever screen is first. Frames 1 and 2 are what that looks like: the
+# mark holding over the picker, then the picker with the curtain gone.
+
+wait 40
+fbdump               # 1: the SC64 mark, before anything has asked who is playing
+
+wait 130
+fbdump               # 2: still the plate, holding while the covers decode underneath
+
+wait 200
+fbdump               # 3: the curtain has lifted on the picker -- and it is a picker with faces
+                     #    already on it, which is what the hold bought
+
+press a              # answer it
+wait 90
+fbdump               # 4: the grid, arriving with no second plate and no second fade
+
+exit

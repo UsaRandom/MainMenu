@@ -78,34 +78,60 @@ static void mark_load (void) {
     }
 }
 
-void boot_plate_reset (boot_plate_t *bp) {
+/**
+ * @brief The one plate, and whether anybody has armed it.
+ *
+ * File scope rather than a caller's struct, because there is exactly one boot and it is no longer
+ * obvious in advance which screen it lands on: a card with one player boots to the grid and a card
+ * with several boots to the picker. Both call boot_plate_arm(); the first one wins and the second
+ * is a no-op, so nothing can replay it.
+ */
+static struct {
+    float t;
+    float curtain_at;   /**< t at which the hold was released; meaningless until released */
+    bool  released;
+    bool  done;
+    bool  armed;
+} plate = { .done = true };     /* done until armed, so boot_plate_done() is honest before boot */
+
+void boot_plate_arm (void) {
+    if (plate.armed) {
+        return;
+    }
+    plate.armed = true;
     mark_load();
-    bp->t = 0.0f;
-    bp->curtain_at = 0.0f;
-    bp->released = false;
-    bp->done = false;
+    plate.t = 0.0f;
+    plate.curtain_at = 0.0f;
+    plate.released = false;
+    plate.done = false;
 }
 
-bool boot_plate_working (const boot_plate_t *bp) {
-    return !bp->done && !bp->released && bp->t >= T_RISE_END;
+bool boot_plate_working (void) {
+    return !plate.done && !plate.released && plate.t >= T_RISE_END;
 }
 
-bool boot_plate_step (boot_plate_t *bp, float dt, bool ready) {
-    if (bp->done) {
+bool boot_plate_done (void) {
+    return plate.done;
+}
+
+bool boot_plate_step (float dt, bool ready) {
+    if (plate.done) {
         return false;
     }
-    bp->t += dt;
+    plate.t += dt;
 
-    if (!bp->released && bp->t >= T_HOLD_MIN && (ready || bp->t >= T_HOLD_MAX)) {
-        bp->released = true;
-        bp->curtain_at = bp->t;
+    if (!plate.released && plate.t >= T_HOLD_MIN && (ready || plate.t >= T_HOLD_MAX)) {
+        plate.released = true;
+        plate.curtain_at = plate.t;
         /* One line per boot, kept because the hold is now a negotiation rather than a constant
          * and "why was the plate up that long" is otherwise unanswerable from a log. */
-        debugf("BOOT plate held %d ms, released by %s\n", (int)(bp->t * 1000.0f),
-               ready ? "the grid" : "the ceiling");
+        /* "the screen", not "the grid". It was the grid when the grid was the only thing this
+         * could be covering; on a card with more than one player it is the picker. */
+        debugf("BOOT plate held %d ms, released by %s\n", (int)(plate.t * 1000.0f),
+               ready ? "the screen" : "the ceiling");
     }
-    if (bp->released && bp->t >= bp->curtain_at + DUR_BOOT_CURTAIN) {
-        bp->done = true;
+    if (plate.released && plate.t >= plate.curtain_at + DUR_BOOT_CURTAIN) {
+        plate.done = true;
         return false;
     }
     return true;
@@ -128,18 +154,18 @@ static void draw_mark (int x, int y, float scale, uint8_t lum) {
     rdpq_sprite_blit(mark, x, y, &(rdpq_blitparms_t){ .scale_x = scale, .scale_y = scale });
 }
 
-void boot_plate_draw (const boot_plate_t *bp, const char *version, int title_count) {
-    if (bp->done) {
+void boot_plate_draw (const char *version, int title_count) {
+    if (plate.done) {
         return;
     }
 
-    float t = bp->t;
+    float t = plate.t;
 
     /* Curtain: the WHOLE plate translates, mark and type together, so it reads as one object
      * leaving rather than as elements animating out separately. */
     int dy = 0;
-    if (bp->released) {
-        float k = (t - bp->curtain_at) / DUR_BOOT_CURTAIN;
+    if (plate.released) {
+        float k = (t - plate.curtain_at) / DUR_BOOT_CURTAIN;
         if (k > 1.0f) {
             k = 1.0f;
         }

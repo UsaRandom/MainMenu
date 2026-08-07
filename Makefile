@@ -451,6 +451,11 @@ fixture:
 $(BUILD_DIR)/app.o: .FORCE
 $(BUILD_DIR)/screens/screen_grid.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\"
 $(BUILD_DIR)/screens/screen_grid.o: .FORCE
+# The picker draws the boot plate too, on a card with more than one player -- it is the first
+# screen there is, so it is the one the plate lifts off. Both it and the grid therefore need the
+# version string the plate prints along its bottom edge.
+$(BUILD_DIR)/screens/screen_profiles.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\"
+$(BUILD_DIR)/screens/screen_profiles.o: .FORCE
 $(BUILD_DIR)/screens/screen_settings.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\" -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
 $(BUILD_DIR)/screens/screen_settings.o: .FORCE
 $(BUILD_DIR)/app.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\" -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
