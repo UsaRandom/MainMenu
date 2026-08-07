@@ -383,5 +383,11 @@ once this month, during the preamble-hook revert.
   renders nothing and looks like a corrupt spec.
 - **Motion in seconds, never frames.** The 1 Hz blink, the 3 px lift, the 0.66 brightness ramp.
   The repo rule exists because the frame rate is still an open question.
-- **`ICON_DIR` points outside the repo on purpose.** Do not vendor `svgicons/`; `git` keeps blobs
-  forever and that is 17 MB of CC BY artwork that cannot be removed later.
+- ~~**`ICON_DIR` points outside the repo on purpose.** Do not vendor `svgicons/`; `git` keeps blobs
+  forever and that is 17 MB of CC BY artwork that cannot be removed later.~~ **Superseded.** The
+  corpus is vendored, in `assets/icons`, and `ICON_DIR` points at it. Two things in the ruling were
+  wrong: 17 MB was the du figure at a 4 KB block size, and the corpus is 6.87 MB of actual bytes;
+  and the 286 IP-flagged icons were never the ones at risk of being permanent, because they were
+  not copied in at all. What is permanent is 3,894 CC BY icons with their licence and their 36
+  authors attached, which is what the licence asks for. `git` keeping blobs forever remains true
+  and is now a property being relied on rather than avoided.

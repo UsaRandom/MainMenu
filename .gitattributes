@@ -3,4 +3,16 @@
 *.sh text eol=lf
 *.yml text eol=lf
 
+# The icon corpus goes in and out of git byte for byte. Under the eol=crlf rule above git would
+# see 3,894 text files, store them with LF and check them out with CRLF -- and mkpack.py copies an
+# .svg into the pack verbatim, so a clone would build a pack that differs from this one by however
+# many bytes got rewritten, and every icon offset after the first of them would move. It is 12 of
+# the 3,894 that contain a newline at all, which is exactly the sort of margin that makes a bug
+# like this survive: the pack would be 12 bytes off and 3,882 icons would look fine.
+# LICENSE.txt is the authors' own licence statement and is kept as they wrote it for the same
+# reason. README.md is ours and follows the repo convention.
+assets/icons/**/*.svg -text
+assets/icons/LICENSE.txt -text
+
 src/libs/** linguist-vendored
+assets/icons/** linguist-vendored

@@ -51,23 +51,37 @@ DFS_ROOT_DIR = $(BUILD_DIR)/dfsroot
 # ------------------------------------------------------------------- icon corpus --
 #
 # The faces a profile can wear: SVG text in the cartridge, rasterised on the console by
-# src/libs/svg64. Deliberately NOT vendored -- ICON_DIR points outside the repository, so a
-# clone does not ship 17 MB of CC BY artwork that git would then keep forever. Point it anywhere
-# else and everything still works; point it at nothing and the build still succeeds with no
-# picker, which is what a clone without the corpus gets.
+# src/libs/svg64. Vendored, in assets/icons -- 3,894 CC BY 3.0 SVGs from game-icons.net, 6.87 MB
+# of source text by 36 authors, who are named in assets/icons/README.md beside the artwork and in
+# docs/CREDITS.md, which is the copy the credits screen shows a player. A clone builds the same
+# ROM as this tree does, with no corpus to fetch first.
 #
-# Get the corpus from https://game-icons.net. Attribution is an obligation and is discharged in
-# docs/CREDITS.md, which the credits screen renders -- see section 4 of docs/GOTCHAS-PROFILES.md
-# for why excluding icons does not reduce it.
-ICON_DIR ?= ../svgicons
+# It was outside the repository until it wasn't. The argument for keeping it out was that git
+# keeps a blob forever; the argument that won is that a licence which requires attribution is
+# better served by shipping the artwork with the attribution attached than by a build that
+# silently produces no picker when a corpus is missing. See assets/icons/README.md.
+#
+# Point ICON_DIR anywhere else and everything still works -- any tree of <author>/<name>.svg
+# packs. Point it at nothing and the build still succeeds with no picker.
+ICON_DIR ?= assets/icons
 
-# Icons flagged as possible third-party IP, excluded by default; 286 of 4180. Every icon was
-# reviewed individually -- see svg64's docs/ICON-IP-REVIEW.md. Exclusions apply BEFORE the limit
-# below, so capping the count for a quick build cannot reintroduce one. To pack the full set:
+# The IP exclusions -- 286 of the corpus's 4180 icons whose subject is recognisably someone
+# else's property, each reviewed individually; see tools/ip-blocklist.txt and svg64's
+# docs/ICON-IP-REVIEW.md.
 #
-#   make ICON_EXCLUDE=
+# They are already applied to assets/icons: the 286 were never copied in, so they are absent from
+# this repository rather than filtered out of it on the way past. Running the exclusion pass over
+# the vendored tree would drop 0 icons and print 286 "matched nothing" warnings, so the default is
+# empty when ICON_DIR is the vendored tree and the blocklist when it is not -- which keeps the
+# exclusions live for anyone pointing this at an unfiltered corpus of their own.
 #
-ICON_EXCLUDE ?= tools/ip-blocklist.txt
+# `make ICON_EXCLUDE=` therefore no longer packs the full 4180 against the vendored tree; nothing
+# can, because the other 286 are not here. tools/iconcheck.py, in the host suite, is what keeps
+# the tree and the blocklist from drifting apart now that no build re-applies them.
+#
+# Exclusions apply BEFORE the limit below, so capping the count for a quick build cannot
+# reintroduce one.
+ICON_EXCLUDE ?= $(if $(filter assets/icons,$(ICON_DIR)),,tools/ip-blocklist.txt)
 
 # The full pack is 6,561,304 bytes and takes the ROM from 1.6 MB to about 7.8. That is fine for a
 # cartridge and slow for a regression run, which rebuilds the ROM once per input script -- so a
@@ -78,9 +92,13 @@ ICON_LIMIT ?= $(if $(FIXTURE),200,0)
 ICON_PACK  = $(FILESYSTEM_DIR)/icons.pack
 ICON_META  = $(FILESYSTEM_DIR)/icons.meta
 # Named after the settings that decide the contents, so changing any of them rebuilds and
-# changing none of them does not. The corpus tree itself is not a prerequisite: it is four
-# thousand files and it does not change.
-ICON_STAMP = $(BUILD_DIR)/.icons-$(ICON_LIMIT)-$(if $(ICON_EXCLUDE),excl,all)-$(shell echo '$(ICON_DIR)' | cksum | cut -d' ' -f1)
+# changing none of them does not. The corpus tree itself is not a prerequisite: it is nearly four
+# thousand files to stat on every build and it changes about never. Now that it is in the
+# repository a branch switch can move it under a stamp that says nothing moved -- `make
+# clean-icons` if a checkout ever touches assets/icons.
+# 'noexcl' rather than the 'all' this said before: with the vendored tree, not running the
+# exclusion pass no longer means packing all 4180, it means packing the 3,894 that are here.
+ICON_STAMP = $(BUILD_DIR)/.icons-$(ICON_LIMIT)-$(if $(ICON_EXCLUDE),excl,noexcl)-$(shell echo '$(ICON_DIR)' | cksum | cut -d' ' -f1)
 HAVE_ICONS = $(wildcard $(ICON_DIR))
 
 # PLAIN_ART=1 builds the fixture from mkfixture's own procedural cards instead of the real corpus,
@@ -520,6 +538,15 @@ clean:
 			$(foreach k,$(CLEAN_KEEP),! -name '$(k)') -exec rm -rf {} + ; \
 	fi
 .PHONY: clean
+
+# Repack the icons without rebuilding anything else. The pack is keyed on a stamp named after the
+# settings that decide its contents, not on the 3,894 files themselves -- statting those on every
+# build costs more than it catches, given the tree changes about never. It does change when a
+# branch switch moves assets/icons under a stamp that says nothing moved, which is the one case
+# this exists for.
+clean-icons:
+	@rm -f $(BUILD_DIR)/.icons-* $(ICON_PACK) $(ICON_META)
+.PHONY: clean-icons
 
 # The old behaviour, when it really is wanted. Named so nobody reaches it by reflex.
 distclean:

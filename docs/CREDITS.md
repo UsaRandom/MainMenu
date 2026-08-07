@@ -106,10 +106,13 @@ postdate the corpus's own license.txt and are not listed in it, so they are cred
 labelled upstream. Inventing a person's name for an attribution file would be worse than an
 imprecise one.
 
-A few of the corpus's icons are not packed into this build. That is a decision about the subjects
-some of them depict and it changes nothing here: leaving artwork out does not reduce what is owed
-for the artwork kept, which is why the list above is the whole corpus rather than the part that
+A few of the corpus's icons are not in this cartridge. That is a decision about the subjects some
+of them depict and it changes nothing here: leaving artwork out does not reduce what is owed for
+the artwork kept, which is why the list above is the whole corpus rather than the part that
 shipped.
+
+The artwork is carried in this repository, under assets/icons, with the authors' own licence
+statement beside it and a count of how many icons each of them drew.
 
 ## Rendered by
 

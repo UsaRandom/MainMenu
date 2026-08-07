@@ -85,7 +85,10 @@ def main():
     doc = open(DOC).read()
     section = doc.split("## Categories", 1)[-1].split("\n## ", 1)[0]
     cats = set(re.findall(r"^\| `([a-z-]+)` \|", section, re.M))
-    icon_dir = os.environ.get("ICON_DIR", os.path.join(ROOT, "..", "svgicons"))
+    # assets/icons since the corpus was vendored. The old default was ../svgicons, which meant
+    # this check silently skipped for anyone who had not fetched a corpus by hand -- printing
+    # "corpus check skipped" among a screen of green and being read as a pass.
+    icon_dir = os.environ.get("ICON_DIR", os.path.join(ROOT, "assets", "icons"))
 
     print(f"{len(recs)} records, {len(cats)} categories in the taxonomy")
     if bad:

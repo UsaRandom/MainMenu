@@ -7,18 +7,30 @@ plumbing and replace the entire presentation layer with a box-art grid.
 Read [`docs/AUDIT.md`](docs/AUDIT.md) before changing anything. Layout numbers live in
 [`docs/DESIGN.md`](docs/DESIGN.md).
 
-## Corpora (never committed)
+## Corpora
+
+The cheat corpus is not committed and is refetched:
 
 ```sh
 tools/mkcheatdb.py --fetch                 # libretro cheats -> build/cheats.db
 tools/mkcheatkeys.py -i build/cht          # -> tools/data/n64_keys.tsv (this one IS committed)
 ```
 
-**The icon corpus is outside the repo too.** `ICON_DIR ?= ../svgicons`, 4,180 CC BY SVGs from
-game-icons.net, of which 286 are excluded by `tools/ip-blocklist.txt` and 3,894 ship. Never vendor
-it: git keeps blobs forever. A build with no corpus still succeeds -- there is simply no picker.
-Attribution is a separate obligation from the exclusions and is discharged in `docs/CREDITS.md`,
-which `tools/mkcredits.py` bakes into the cartridge and the credits screen renders.
+**The icon corpus IS committed.** `ICON_DIR ?= assets/icons`, 3,894 CC BY 3.0 SVGs from
+game-icons.net by 36 authors, 6.87 MB of source text. This reverses an earlier ruling that it must
+never be vendored; that ruling is struck through in `docs/GOTCHAS-PROFILES.md` and
+`docs/NEXT-PROFILES.md` rather than deleted. A clone builds the same ROM this tree does.
+
+The 286 icons excluded by `tools/ip-blocklist.txt` were **never copied in** — they are absent from
+this repository, not filtered out of it on the way past. So `make ICON_EXCLUDE=` no longer packs
+4,180 and nothing can; `ICON_EXCLUDE` defaults to empty against the vendored tree and to the
+blocklist against any other `ICON_DIR`. `tools/iconcheck.py`, in the host suite, is what keeps the
+tree and the blocklist from drifting now that no build re-applies them.
+
+Attribution is a separate obligation from the exclusions. It is discharged twice: in
+`assets/icons/README.md` beside the artwork, and in `docs/CREDITS.md`, which `tools/mkcredits.py`
+bakes into the cartridge and the credits screen renders. Both name all 36 authors regardless of
+how many icons a build packs. `iconcheck.py` fails if an author directory appears in neither.
 
 `build/` is gitignored in full. The cheat corpus is someone else's work and does not belong in
 this history. `n64_keys.tsv` is committed because it is a table of pure facts -- a filename and

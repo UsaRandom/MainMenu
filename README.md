@@ -80,7 +80,14 @@ The 3,894 icons players choose from are from [game-icons.net](https://game-icons
 attribution licence and the cartridge is what redistributes, so all 36 authors are named in
 [CREDITS.md](docs/CREDITS.md) and on the menu's own credits screen. They ride in the cartridge as
 SVG text and are turned into pixels when one is needed, which is why there can be thousands of
-them and why they follow whatever colours a player picks. The artwork is never committed here.
+them and why they follow whatever colours a player picks.
+
+The artwork is in [`assets/icons/`](assets/icons/), by author, with the corpus's own licence and
+a per-author count beside it — a clone builds the same ROM this tree does. 286 of the corpus's
+4,180 icons are not here at all: their subject is recognisably someone else's property, and they
+were left out one at a time rather than filtered out on the way past. Leaving them out reduces
+nothing that is owed for the rest, which is why the credits name all 36 authors regardless of how
+many icons a given build packs.
 
 ## Data
 The database that recognises a cartridge and knows how it saves is derived from

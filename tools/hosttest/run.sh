@@ -62,6 +62,14 @@ echo "== fonts: every literal drawn in a restricted charset"
 python3 tools/charsetcheck.py --self-test
 
 echo
+echo "== icons: nothing blocked is vendored, and every author is credited"
+# assets/icons is 3,894 SVGs of somebody else's CC BY artwork. The IP exclusions used to be
+# re-applied on every build by mkpack --exclude; vendoring applied them once, so this is what
+# keeps them applied. --self-test proves it can say no. Pass ICON_FULL_DIR to additionally check
+# the blocklist has not rotted against an unfiltered corpus -- see the tool's docstring.
+python3 tools/iconcheck.py --self-test
+
+echo
 echo "== profiles, paths and the shared lock list"
 rm -rf "$OUT/profiledir"
 $CC $CFLAGS tools/hosttest/test_profile.c src/library/cache.c src/library/locks.c src/library/playstate.c \

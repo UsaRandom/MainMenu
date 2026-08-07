@@ -179,6 +179,8 @@ What is missing from the tree entirely:
 1. Vendor svg64 as `src/libs/svg64/` (3 `.c`, 1 public header, MIT, `+14,552` text / `525` bss).
    Sources unmodified; SPDX headers intact. Add to `SRCS` and to README's licence list.
 2. Add `ICON_DIR ?= ../svgicons` and `ICON_EXCLUDE ?= tools/ip-blocklist.txt` to the Makefile,
+   *(as built; both defaults have since changed — the corpus is vendored at `assets/icons` and
+   `ICON_EXCLUDE` is empty against it. See §7.)*
    copying svg64's `Makefile:31,41,61-63` verbatim including the exclusions-before-`--limit`
    ordering. Copy `tools/mkpack.py`, `tools/ip-blocklist.txt`, `tools/icon-meta.jsonl`,
    `tools/metacheck.py`.
@@ -350,8 +352,10 @@ Order matters, cheapest disqualifier first:
 - **Do not implement frame `1a · EDIT · APPEARANCE`.** The spec keeps it for history and says so.
 - **Do not build search.** Out of scope for this release; no Z affordance on P2.
 - **Do not add avatars, photos, free colour picking, per-profile themes.** Spec §1 excludes them.
-- **Do not vendor the icon corpus into the repo.** `ICON_DIR` points outside it, deliberately, so
-  `git clone` does not ship CC BY artwork.
+- ~~**Do not vendor the icon corpus into the repo.** `ICON_DIR` points outside it, deliberately, so
+  `git clone` does not ship CC BY artwork.~~ **Superseded** — `git clone` does ship it now, from
+  `assets/icons`, with the licence and the 36 authors beside it. See the struck entry in
+  GOTCHAS-PROFILES.md §7 for what the original ruling got wrong.
 - **Do not let the swatch exception (§0.6) spread.** Eight colours in `profile.h` and nothing else
   leaves `theme_t`.
 - **Do not pre-render icons to a cache file on the card.** Fourth versioned cache, no benefit.
