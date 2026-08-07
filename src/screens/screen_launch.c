@@ -308,6 +308,62 @@ static int enabled_group_count (const cheatset_t *set) {
  * alive is to record what was decided -- which ROM, which CIC, whether the engine can hook it,
  * and how many cheat words were emitted. See launchlog.h.
  */
+
+/**
+ * @brief Prove the beacon can paint on THIS console, before trusting a launch that says it did not.
+ *
+ * The first hardware run came back "no bar", and that was not a result. The beacon had never
+ * executed on an M64 -- only under ares, which is the exact mistake AUDIT 1ag is about -- so "the
+ * engine never ran" and "the instrument does not work here" produced identical evidence. This is
+ * the positive control that separates them, and it is the same shape as the `break` control in
+ * enginetest.c and for the same reason.
+ *
+ * Does what the emitted beacon does, in C, against the menu's own live framebuffer: read
+ * VI_ORIGIN, convert to KSEG1, store the colour at the beacon's own offset, read it back
+ * uncached, then put the original pixels back so nothing flashes. If this says PAINTED, then
+ * VI_ORIGIN is sane on this hardware, an uncached store to it lands, and a later launch reporting
+ * no bar is reporting the engine and not the instrument.
+ *
+ * What it still cannot prove is that those pixels reach the screen -- only that the write lands
+ * where VI_ORIGIN points. A game whose displayed buffer is not the one VI_ORIGIN names would
+ * defeat it, and nothing here can see that.
+ */
+static void beacon_selftest (void) {
+    volatile uint32_t *vi_origin = (volatile uint32_t *)VI_ORIGIN_ADDRESS;
+    uint32_t origin = *vi_origin;
+
+    if ((origin >> BEACON_MIN_ORIGIN_SHIFT) == 0) {
+        launchlog_line("beacon   SELF-TEST SKIPPED: VI_ORIGIN=%08lx is under the floor",
+                       (unsigned long)origin);
+        return;
+    }
+
+    volatile uint32_t *fb = (volatile uint32_t *)(0xA0000000u | origin);
+    const uint32_t at = BEACON_OFFSET_BYTES / 4;
+    uint32_t saved[8];
+    bool painted = true;
+
+    for (int i = 0; i < 8; i++) {
+        saved[i] = fb[at + i];
+    }
+    for (int i = 0; i < 8; i++) {
+        fb[at + i] = BEACON_GREEN;
+    }
+    for (int i = 0; i < 8; i++) {
+        if (fb[at + i] != BEACON_GREEN) {
+            painted = false;
+        }
+    }
+    for (int i = 0; i < 8; i++) {
+        fb[at + i] = saved[i];      /* the menu is still on screen; leave no mark */
+    }
+
+    launchlog_line("beacon   self-test %s (VI_ORIGIN=%08lx, wrote %08lx at +%lu, read %08lx)",
+                   painted ? "PAINTED" : "DID NOT PAINT",
+                   (unsigned long)origin, (unsigned long)BEACON_GREEN,
+                   (unsigned long)BEACON_OFFSET_BYTES, (unsigned long)fb[at]);
+}
+
 static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
     const char *path = (app->launch.rom_path != NULL) ? path_get(app->launch.rom_path) : "?";
     const lib_record_t *rec = (app->launch.rom_id >= 0 && app->launch.rom_id < app->lib->count)
@@ -359,6 +415,9 @@ static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
         launchlog_line("beacon   %s", app->settings.cheat_beacon
                        ? "armed -- green bar = handler hook, red bar = watch fired, none = engine never ran"
                        : "off ([menu] cheat_beacon in config.ini)");
+        if (app->settings.cheat_beacon) {
+            beacon_selftest();
+        }
     }
     launchlog_line("database %d games; %d groups from the database, %d hand-entered",
                    cheatdb_game_count(),

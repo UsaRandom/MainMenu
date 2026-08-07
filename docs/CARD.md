@@ -43,12 +43,18 @@ an existing card needs no rearranging.
 cheat_beacon = true
 ```
 
-The cheat engine will then paint a bar across the top of whatever you are playing, every frame it
-runs. **Green** means the engine is running and hooked itself through the game's own exception
+The cheat engine will then paint a band across the middle of whatever you are playing, every frame
+it runs. It was across the top to begin with, where overscan hid it and the first run told us
+nothing. **Green** means the engine is running and hooked itself through the game's own exception
 handler. **Red** means it hooked through the Datel watch trap instead, which this console is not
 supposed to support, so red is a surprise worth reporting. **No bar at all** means the engine never
 executed, which is the failure being chased. It draws over the game on purpose and it is off by
 default; take the line back out when you are done.
+
+The launch log at `/mainmenu/launch.log` gains a `beacon self-test` line. **PAINTED** means the
+menu proved on this console that it can write to the screen the way the engine does, so a launch
+that shows no band is telling you about the engine. **DID NOT PAINT** means the instrument itself
+is broken here and no band means nothing -- report that instead.
 
 ## Players
 

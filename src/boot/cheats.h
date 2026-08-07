@@ -50,7 +50,8 @@ bool cheats_ipl3_layout_ok (cic_type_t cic_type, uint32_t word_at_offset);
  *   green   the preamble scan found libultra's handler and the game installed our hook
  *   red     the scan missed and the Datel watch hook was armed instead -- so a red bar means the
  *           watch DID fire, which on this console would itself be news
- *   none    the engine never executed
+ *   none    the engine never executed -- but only trust that once the launch log's beacon
+ *           self-test says PAINTED, which is the positive control for the instrument itself
  *
  * Off unless `[menu] cheat_beacon = true` is in config.ini on the card. It draws over the game,
  * which is the point, and nobody should meet it by accident.
@@ -58,10 +59,22 @@ bool cheats_ipl3_layout_ok (cic_type_t cic_type, uint32_t word_at_offset);
 #define VI_ORIGIN_ADDRESS   (0xA4400004)
 
 
-/* One kilobyte, which is 512 pixels at 16 bpp -- most of one row on a 320-wide game and half a
- * row on a 640-wide one. Doubled into a 32-bit word so it reads as the same colour whether the
- * game's framebuffer is 16 or 32 bits per pixel. */
-#define BEACON_WORDS        256
+/* Where in the framebuffer the bar goes, and how much of it there is.
+ *
+ * The first version put 1 KB at offset zero and the console reported no bar. That result was
+ * worthless, because 1 KB at offset zero is **0.8 to 1.6 pixel rows at the very top of the
+ * buffer** -- 320x240 at 16 bpp has 640-byte rows, 640x480 has 1,280 -- and the top rows of an N64
+ * framebuffer are exactly what overscan eats. A bar nobody can see and a bar that was never drawn
+ * look identical, which is the one thing an instrument may not do.
+ *
+ * 64,000 bytes in lands in the middle of every geometry a game plausibly uses: row 100 of 240 at
+ * 320x240x16, row 50 of 480 at 640x480x16, row 50 of 240 at 320x240x32. 8 KB covers 12 rows of the
+ * first, 6 of the second. Nothing that size in the middle of the screen is subtle.
+ *
+ * The cost is real and is accepted: 2,048 uncached stores run on every exception the engine sees.
+ * If that visibly slows the game down, that is another signal and not a problem. */
+#define BEACON_OFFSET_BYTES 64000
+#define BEACON_WORDS        2048
 #define BEACON_GREEN        0x07C107C1u     /* RGBA5551 (0,31,0) twice */
 #define BEACON_RED          0xF801F801u     /* RGBA5551 (31,0,0) twice */
 

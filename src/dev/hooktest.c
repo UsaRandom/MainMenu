@@ -234,7 +234,15 @@ void hooktest_run (void) {
     {
         volatile uint32_t *vi_origin = (volatile uint32_t *)VI_ORIGIN_ADDRESS;
         uint32_t origin_before = *vi_origin;
-        uint32_t arena_phys = (uint32_t)(arena) & 0x1FFFFFFF;
+
+        /* The pretend framebuffer starts half a megabyte into the arena, not at the top of it.
+         * The fake game entry, the fake __osException and the planted preamble live in arena[0..8],
+         * and a beacon aimed at offset zero would paint straight over them -- which is what the
+         * first attempt at this did: the mutation that put the offset back to 0 destroyed the
+         * fixture and hung the console instead of turning the overscan check red. A test whose
+         * failure mode is a wedge reports nothing, so the two regions are now disjoint and the
+         * mutation reports. */
+        uint32_t arena_phys = ((uint32_t)(arena) & 0x1FFFFFFF) + 0x80000;
 
         /* The engine refuses to paint below BEACON_MIN_ORIGIN_SHIFT, on the reasoning that
          * VI_ORIGIN that low is VI_ORIGIN unset. If .bss ever moves under that line the beacon
@@ -244,7 +252,10 @@ void hooktest_run (void) {
         check((arena_phys >> BEACON_MIN_ORIGIN_SHIFT) != 0,
               "the arena is above the beacon's origin floor");
 
-        memset(arena, 0, 4096);
+        /* Clear the band the beacon aims at, plus a word past its end, so "it painted" and "it
+         * stopped where it should" are both claims about memory this test zeroed. arena[8] holds
+         * the planted preamble and BEACON_OFFSET_BYTES is 64,000 in, so the two never overlap. */
+        memset((uint8_t *)arena + 0x80000, 0, BEACON_OFFSET_BYTES + BEACON_WORDS * 4 + 64);
         plant(I_JR(REG_K0));
 
         cheats_set_beacon(true);
@@ -273,7 +284,8 @@ void hooktest_run (void) {
             /* Read uncached: the engine wrote through KSEG1 and this core's data cache has no
              * reason to know. Reading it cached would compare against whatever was there before
              * and fail for the wrong reason. */
-            volatile uint32_t *painted = (volatile uint32_t *)(0xA0000000u | arena_phys);
+            volatile uint32_t *painted =
+                (volatile uint32_t *)(0xA0000000u | (arena_phys + BEACON_OFFSET_BYTES));
             bool all_green = true;
             for (int i = 0; i < BEACON_WORDS; i++) {
                 if (painted[i] != BEACON_GREEN) {
@@ -282,6 +294,10 @@ void hooktest_run (void) {
             }
             check(all_green, "the beacon painted every word of its bar");
             check(painted[BEACON_WORDS] == 0, "and stopped at the end of it");
+            /* The offset is the whole reason the first hardware run was unreadable, so it is
+             * checked rather than assumed: nothing may land at the top of the buffer. */
+            check(*(volatile uint32_t *)(0xA0000000u | arena_phys) != BEACON_GREEN,
+                  "and nothing landed at the top of the buffer, where overscan hides it");
             check(got0 == vec0 && got1 == vec1, "the beacon did not disturb 0x80000180");
             check(armed == watch_before, "the beacon did not arm the watch");
             check(osexc_hit == (uint32_t)(&arena[4]),

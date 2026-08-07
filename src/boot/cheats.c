@@ -341,6 +341,11 @@ uint32_t *cheats_emit (uint32_t *cheat_list) {
         *engine_p++ = I_LUI(REG_K0, 0xA000);
         *engine_p++ = I_OR(REG_K1, REG_K1, REG_K0);
 
+        /* Into the middle of the buffer. Two addiu because 64,000 does not fit the signed 16-bit
+         * immediate, and the store offsets below then stay inside it too. */
+        *engine_p++ = I_ADDIU(REG_K1, REG_K1, BEACON_OFFSET_BYTES / 2);
+        *engine_p++ = I_ADDIU(REG_K1, REG_K1, BEACON_OFFSET_BYTES / 2);
+
         *engine_p++ = I_LUI(REG_K0, A_BASE(BEACON_STATE_ADDRESS));
         *engine_p++ = I_LW(REG_K0, A_OFFSET(BEACON_STATE_ADDRESS), REG_K0);
 

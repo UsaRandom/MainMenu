@@ -4514,13 +4514,66 @@ nothing.
 Scenario 3 also asserts what the beacon must *not* disturb: `0x80000180` unchanged, the watch
 unarmed, and control still reaching the fake `__osException` with `$k0` exact. 21/21 under ares.
 
+### The first hardware run, and why its answer was worthless
+
+Deployed, `cheat_beacon = true`, Ocarina of Time with Infinite Rupees ticked. The log confirms the
+instrument was armed and the mechanism reached:
+
+```
+engine   CIC 6105/7105 word[499]=01200008 ok -- will hook
+hook     preamble scan first, Datel watch hook as fallback
+watch    No watch, handler hook (wrote 000b6f91 read 000b6f91 control=1 trapped=0)
+beacon   armed -- green bar = handler hook, red bar = watch fired, none = engine never ran
+```
+
+Reported: **no bar.**
+
+That is not the finding it looks like, and the fault is the instrument's. 1 KB at offset zero is
+**0.8 to 1.6 pixel rows at the very top of the framebuffer** -- a 320x240 16 bpp row is 640 bytes,
+a 640x480 one is 1,280 -- and the top rows of an N64 framebuffer are exactly what overscan eats.
+
+So the beacon committed the one sin an instrument may not: **a bar nobody can see and a bar that
+was never drawn produced identical evidence.** The reasoning that put it there was "the top-left
+corner is a place every framebuffer has", which is true and which never once asked whether that
+place is on the screen.
+
+Two changes, and the second matters more than the first.
+
+**The bar moved to the middle and grew.** 64,000 bytes in and 8 KB long, which lands at row 100 of
+240 at 320x240x16, row 50 of 480 at 640x480x16, and row 50 of 240 at 320x240x32 -- the middle of
+every geometry a game plausibly uses, twelve rows deep on the commonest. `hooktest` now asserts
+that nothing lands at offset zero, so the mistake cannot come back quietly.
+
+That check took two tries to become a check. Mutating the offset back to 0 first **hung the
+console** rather than reporting: the scenario used the arena's own base as its pretend
+framebuffer, and arena[0..8] is where the fake game entry, the fake `__osException` and the
+planted preamble live -- so a beacon aimed at offset zero painted over the fixture and the test
+jumped into magenta. The pretend framebuffer now starts half a megabyte in, disjoint from the
+fixture, and the mutation produces exactly one red naming the overscan. That is the third
+harness-measures-itself failure in this feature and the second one that wedged instead of
+reporting.
+
+**The beacon got a positive control, which it should have had first.** `beacon_selftest()` does
+what the emitted code does, in C, against the menu's own live framebuffer -- reads VI_ORIGIN,
+converts to KSEG1, stores the colour at the beacon's own offset, reads it back uncached, restores
+the original pixels -- and writes PAINTED or DID NOT PAINT into the launch log along with the raw
+VI_ORIGIN value. Same shape as the `break` control in enginetest.c and for the same reason: until
+something proves the instrument works on this console, "no bar" has two explanations and the
+harness cannot say which.
+
+This is the second time in one feature that the harness measured itself before it measured the
+thing, and both times it was the harness that was wrong -- the one-megabyte floor (above) and now
+the offset. Neither would have been visible in the answer. Both would have read as "the engine
+never ran".
+
 ### What this does not do
 
 It does not make cheats work, and it is not evidence that they will. It makes the next hardware
-launch produce a fact instead of a shrug. The mechanism it will be measuring is 1ag's, restored
-unchanged on the `cheats` branch, still believed exactly as much as 1ag left it.
+launch produce a fact instead of a shrug -- and only once the self-test line says PAINTED. The
+mechanism it will be measuring is 1ag's, restored unchanged on the `cheats` branch, still believed
+exactly as much as 1ag left it.
 
-Sizes: text 635,352 against main's 634,232. Host suite 4,001 checks, no failures.
+Sizes: text 635,704 against main's 634,232. Host suite 4,001 checks, no failures. hooktest 22/22, and the overscan mutation turns exactly one of them red.
 
 ---
 
