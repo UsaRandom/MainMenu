@@ -40,10 +40,22 @@
 #define SHEET_H         (SCREEN_H - SHEET_TOP)
 
 #define ART_X           (SHEET_X + 24)
-/* 2x the cached tile, an exact integer scale. The width is fixed because every tile is one
- * column wide; the height is the record's own box shape doubled, so the info column beside it
- * never moves between a portrait N64 cover and a square Game Boy one. */
-#define ART_W           (TILE_W * 2)
+/* The art column, and it is fixed: the info column beside it must not move between one game and
+ * the next, and it must not narrow either, because ui_label clips rather than ellipsising and
+ * this sheet has already lost the tail of two strings that way.
+ *
+ * Two of the NARROW tile across. A tile has two possible widths now -- a landscape cover is
+ * cached 140 x 98 where a portrait one is 109 x 155 -- so reserving two of the wider one would
+ * have been the tidy answer: exactly 2x for every shape, an integer scale, no resampling. It
+ * costs 62 px, and the info column is 318 px of a sheet that cannot grow. Measured rather than
+ * argued: at the 256 px that leaves, the cheat row draws as "Not supported for thi" and any title
+ * over 21 characters loses its tail. Sharper art is not worth a truncated title.
+ *
+ * So a wide tile is fitted to this column instead, at 1.557x rather than 2x. That is still more
+ * source pixels than the sheet had before the wide column existed -- 140 x 98 upscaled 1.557x,
+ * where it used to be 109 x 76 upscaled 2x -- so the art got better here as well, just not by as
+ * much as it could have. */
+#define ART_W           (TILE_W_NARROW * 2)
 #define ART_H_MAX       (TILE_H_MAX * 2)
 #define ART_Y_OFF       28                       /**< from the sheet's own top edge */
 
@@ -289,17 +301,21 @@ static void detail_render (app_t *app, surface_t *fb) {
     ui_fill(SHEET_X, sheet_y, SHEET_W, SCREEN_H - sheet_y, th->panel);
     ui_fill(SHEET_X, sheet_y, SHEET_W, ACCENT_BAR, th->tab_underline);
 
-    /* Art, 2x the cached thumbnail. An exact integer scale, so nearest-neighbour upscaling
-     * doubles pixels cleanly instead of shimmering along a fractional edge. */
+    /* The cached tile blown up to fill the art column. Derived from the tile the cache actually
+     * holds, so the sheet cannot disagree with the grid about what shape this cover is. */
     int art_y = sheet_y + ART_Y_OFF;
-    /* Twice the tile the cache actually holds, so the sheet cannot disagree with the grid about
-     * what shape this cover is. */
-    int art_h = 2 * (rec != NULL ? thumbcache_record_shape(rec).h : boxart_shape(SYS_N64).h);
+    art_shape_t sh = (rec != NULL) ? thumbcache_record_shape(rec) : boxart_shape(SYS_N64);
+    float scale = (float)ART_W / (float)sh.w;
+    int art_h = (int)((float)sh.h * scale + 0.5f);
     surface_t *art = (rec != NULL)
                    ? thumbcache_get(app->thumbs, app->lib, (uint16_t)app->launch.rom_id) : NULL;
     if (art != NULL) {
-        rdpq_set_mode_copy(false);
-        rdpq_tex_blit(art, ART_X, art_y, &(rdpq_blitparms_t){ .scale_x = 2.0f, .scale_y = 2.0f });
+        /* Standard mode, not copy: copy mode cannot scale by anything but 1, and the scale here
+         * is 2.0 for a narrow tile and 1.557 for a wide one. */
+        rdpq_set_mode_standard();
+        rdpq_mode_combiner(RDPQ_COMBINER_TEX);
+        rdpq_tex_blit(art, ART_X, art_y,
+                      &(rdpq_blitparms_t){ .scale_x = scale, .scale_y = scale });
     } else {
         ui_fill(ART_X, art_y, ART_W, art_h, th->bg_alt);
         ui_border(ART_X, art_y, ART_W, art_h, 2, th->panel_alt);

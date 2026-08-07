@@ -19,14 +19,15 @@
  * cluster boundary (`ff.c:3978`). A slot that is an exact multiple of the cluster therefore never
  * straddles one, so a tile is one seek and one contiguous run instead of two reads with a FAT
  * walk between them. Three clusters rather than two because a tile is a box shape now and the
- * tallest is 109 × 176 = 38,368 bytes; the biggest actually in use, an N64 cover at 109 × 155, is
- * 33,790. So 31 % of a slot is padding -- 24.6 MB across 500 titles, on a card with 29 GB free --
- * where it used to be 16 %. The header occupies slot 0's space for the same alignment reason.
+ * largest allowed is 140 × 162 = 45,360 bytes; the biggest actually in use, a square cover at
+ * 140 × 140, is 39,200 and a landscape one at 140 × 98 is 27,440. So between 8 % and 44 % of a
+ * slot is padding -- 24.6 MB across 500 titles, on a card with 29 GB free -- where it used to be
+ * 16 % of a smaller slot. The header occupies slot 0's space for the same alignment reason.
  *
- * **A slot does not imply a tile size.** Every tile is TILE_W wide, because that is the grid
- * column, but the height is the system's box aspect and a Game Boy cover is square. The index
- * carries each tile's own dimensions and a fetch into a differently-shaped surface is refused as
- * a miss rather than read at the wrong stride.
+ * **A slot does not imply a tile size.** A tile is as wide as the grid column its shape earns --
+ * 140 px for square and landscape art, 109 for portrait, see ui/theme.h -- and as tall as its own
+ * aspect makes it. The index carries each tile's own dimensions and a fetch into a
+ * differently-shaped surface is refused as a miss rather than read at the wrong stride.
  *
  * **RGBA16, not CI8.** DESIGN.md picks CI8, on a scroll-bandwidth argument that is real. It is
  * also worth about 3.6 ms per tile, and it costs a median-cut quantizer, a 32 KB inverse LUT and
@@ -51,17 +52,22 @@
 #include <stdint.h>
 #include <surface.h>
 
-/** @brief 'M64U'.
+/** @brief 'M64V'.
  *
- * Was 'M64T' (0x4D363454) until tiles became box shapes. Everything about the atlas changed: the
- * slot grew from 32,768 to 49,152 bytes, the index record from 16 to 20, and every tile already
- * in it is 140 x 98 landscape against covers that are now portrait or square.
+ * Was 'M64T' (0x4D363454) until tiles became box shapes: the slot grew from 32,768 to 49,152
+ * bytes, the index record from 16 to 20, and every tile in it was 140 x 98 landscape against
+ * covers that are portrait or square.
  *
- * Its own magic rather than MENU_CACHE_FORMAT_VER, for the reason cache.h now spells out: the
- * shared version would take playstate.dat with it, and every favourite and play count on the card
- * with it. The atlas can be rebuilt from the covers; a play history cannot be rebuilt from
- * anything. */
-#define THUMBSTORE_MAGIC 0x4D363455
+ * 'M64U' (0x4D363455) lasted one release. A tile's width was still the one grid column, and now
+ * there are two -- square and landscape art moved to a 140 px column and portrait kept 109 -- so
+ * every square and landscape tile on a card is cached 28 % narrower than it is about to be drawn.
+ * Nothing in the file is wrong, which is the problem: the pixels would be read back and upscaled,
+ * and the whole point of caching at the drawn size is that they are not.
+ *
+ * Its own magic rather than MENU_CACHE_FORMAT_VER, for the reason cache.h spells out: the shared
+ * version would take playstate.dat with it, and every favourite and play count on the card with
+ * it. The atlas can be rebuilt from the covers; a play history cannot be rebuilt from anything. */
+#define THUMBSTORE_MAGIC 0x4D363456
 
 /** @brief Open the atlas and its index. Safe to call on read-only storage. */
 void thumbstore_open (void);

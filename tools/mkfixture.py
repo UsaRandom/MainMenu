@@ -387,8 +387,9 @@ def main():
          b"n64 = 140x100\n"
          b"nes = 140x100\n"
          b"snes = 140x100\n"
-         b"; Out of range on purpose: 109 x 12 is below TILE_H_MIN, so this key is\n"
-         b"; rejected with a log line and SMS keeps its built-in shape.\n"
+         b"; Out of range on purpose: an aspect of 9 gives a 140 x 16 tile, which is\n"
+         b"; below TILE_H_MIN, so this key is rejected with a log line and SMS\n"
+         b"; keeps its built-in shape.\n"
          b"sms = 900x100\n"
          b"gb = 140x100\n"
          b"gbc = 140x100\n")

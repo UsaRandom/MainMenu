@@ -31,8 +31,8 @@ static const mm_t BUILTIN[SYS_COUNT] = {
 /**
  * @brief The three shapes a tile may be, as aspects. See boxart.h for why three.
  *
- * Heights are derived rather than written, so a change to TILE_W cannot leave one of them at a
- * stale pixel count: at 109 they come out 155, 109 and 76.
+ * Both dimensions are derived rather than written, so a change to the grid cannot leave one of
+ * them at a stale pixel count: they come out 109 x 155, 140 x 140 and 140 x 98.
  */
 static const float SHAPE_ASPECT[ART_SHAPES] = {
     [ART_PORTRAIT]  = 127.0f / 181.0f,      /* 0.7017 */
@@ -44,7 +44,7 @@ static char        names[BOXART_REGIONS_MAX][BOXART_NAME_CAP];
 static int         name_count;
 static int         current;
 static art_shape_t shapes[SYS_COUNT];
-static int         tallest;
+static art_shape_t tallest;
 
 /** The parsed file, kept open for the life of the program because switching region in Settings
  *  has to re-read it and re-reading is a card access on a screen that is otherwise silent. It is
@@ -62,27 +62,55 @@ static void system_key (int sys, char *out, size_t cap) {
 }
 
 /**
- * @brief Turn a "WxH" value into a tile height, or return 0 if it is not one.
+ * @brief The tile an aspect of @p a (width / height) gets: the widest column it can afford.
  *
- * The width is the grid column and cannot move, so the pair is read purely as a ratio. Rounding
- * is to nearest rather than truncating: at 109 px a truncation costs up to a whole pixel of
- * height, which across a 155 px tile is a visible half-percent squash on one system and not the
- * next one along.
+ * The rule and its two widths are in ui/theme.h. Here it is only arithmetic, but note what it
+ * does NOT do: it never letterboxes to reach a width. A shape too tall for the wide column moves
+ * to the narrow one whole, so what changes between the two is how much of the screen the cover
+ * occupies, never how much of the cover is shown.
+ *
+ * Rounding is to nearest rather than truncating: at these widths a truncation costs up to a whole
+ * pixel of height, which across a 155 px tile is a visible half-percent squash on one system and
+ * not the next one along.
  */
-static int height_from (const char *spec) {
+static art_shape_t fit_aspect (float a) {
+    int h = (int)((float)TILE_W_WIDE / a + 0.5f);
+    if (h <= TILE_H_TWO_ROW) {
+        if (h < TILE_H_MIN) {
+            h = TILE_H_MIN;             /* a banner; nothing that wide is a box, but it must draw */
+        }
+        return (art_shape_t){ .w = TILE_W_WIDE, .h = (uint16_t)h };
+    }
+    h = (int)((float)TILE_W_NARROW / a + 0.5f);
+    if (h > TILE_H_MAX) {
+        h = TILE_H_MAX;
+    }
+    return (art_shape_t){ .w = TILE_W_NARROW, .h = (uint16_t)h };
+}
+
+/**
+ * @brief Turn a "WxH" value into a tile, or return a zero-width shape if it is not one.
+ *
+ * The pair is read purely as a ratio -- millimetres, pixels and arbitrary units all work, because
+ * what reaches the screen is a shape.
+ */
+static art_shape_t shape_from (const char *spec) {
     int w = 0, h = 0;
     if (spec == NULL || sscanf(spec, "%dx%d", &w, &h) != 2 || w <= 0 || h <= 0) {
-        return 0;
+        return (art_shape_t){ 0, 0 };
     }
-    int px = (TILE_W * h + w / 2) / w;
-    if (px < TILE_H_MIN || px > TILE_H_MAX) {
-        /* Loud rather than silently clamped. A number outside this range is a typo or a unit
-         * mix-up, and a tile quietly pinned to the ceiling looks like the file was ignored. */
-        debugf("BOXART %s is %d px tall, outside %d..%d -- ignored\n",
-               spec, px, TILE_H_MIN, TILE_H_MAX);
-        return 0;
+    float ratio = (float)w / (float)h;
+    art_shape_t s = fit_aspect(ratio);
+    /* fit_aspect() clamps, because the three built-in shapes must always produce something
+     * drawable. A hand-written spec can actually reach a clamp, and a tile quietly pinned to the
+     * ceiling looks like the file was ignored -- so here the clamp is a rejection instead. */
+    int exact = (int)((float)s.w / ratio + 0.5f);
+    if (exact != s.h) {
+        debugf("BOXART %s wants a %d x %d tile, outside %d..%d tall -- ignored\n",
+               spec, s.w, exact, TILE_H_MIN, TILE_H_MAX);
+        return (art_shape_t){ 0, 0 };
     }
-    return px;
+    return s;
 }
 
 /* The first two entries are not sections.
@@ -103,31 +131,30 @@ static int height_from (const char *spec) {
 static void resolve (void) {
     const char *section = (current >= REGION_FIXED) ? names[current] : NULL;
 
-    tallest = 0;
+    tallest = (art_shape_t){ 0, 0 };
     for (int sys = 0; sys < SYS_COUNT; sys++) {
         const mm_t *mm = &BUILTIN[sys];
         char spec[16];
         snprintf(spec, sizeof(spec), "%ux%u", mm->mm_w, mm->mm_h);
-        int px = height_from(spec);
+        art_shape_t s = shape_from(spec);
 
         if (section != NULL && file != NULL) {
             char key[16];
             system_key(sys, key, sizeof(key));
-            int over = height_from(ini_get_string(file, section, key, NULL));
-            if (over > 0) {
-                px = over;
+            art_shape_t over = shape_from(ini_get_string(file, section, key, NULL));
+            if (over.w > 0) {
+                s = over;
             }
         }
 
-        shapes[sys].w = TILE_W;
-        shapes[sys].h = (uint16_t)px;
-        if (px > tallest) {
-            tallest = px;
+        shapes[sys] = s;
+        if (s.h > tallest.h) {
+            tallest = s;
         }
     }
-    debugf("BOXART %s, fallback table '%s': tallest %d px\n",
+    debugf("BOXART %s, fallback table '%s': tallest %u x %u\n",
            boxart_automatic() ? "automatic" : "forced",
-           boxart_region_name(current), tallest);
+           boxart_region_name(current), tallest.w, tallest.h);
 }
 
 void boxart_init (const char *storage_prefix, const char *want) {
@@ -189,13 +216,20 @@ art_shape_t boxart_shape_at (int kind) {
     if (kind < 0 || kind >= ART_SHAPES) {
         kind = ART_PORTRAIT;
     }
-    int h = (int)((float)TILE_W / SHAPE_ASPECT[kind] + 0.5f);
-    if (h < TILE_H_MIN) {
-        h = TILE_H_MIN;
-    } else if (h > TILE_H_MAX) {
-        h = TILE_H_MAX;
+    return fit_aspect(SHAPE_ASPECT[kind]);
+}
+
+art_shape_t boxart_fit_into (art_shape_t s, int cell_w, int cell_h) {
+    if (s.w == 0 || s.h == 0 || cell_w <= 0 || cell_h <= 0) {
+        return (art_shape_t){ 0, 0 };
     }
-    return (art_shape_t){ .w = TILE_W, .h = (uint16_t)h };
+    int w = cell_w;
+    int h = ((int)s.h * cell_w + s.w / 2) / s.w;
+    if (h > cell_h) {
+        h = cell_h;
+        w = ((int)s.w * cell_h + s.h / 2) / s.h;
+    }
+    return (art_shape_t){ .w = (uint16_t)w, .h = (uint16_t)h };
 }
 
 uint8_t boxart_snap (int src_w, int src_h) {
@@ -240,6 +274,6 @@ art_shape_t boxart_shape (uint8_t system) {
     return shapes[sys];
 }
 
-int boxart_tallest (void) {
+art_shape_t boxart_tallest (void) {
     return tallest;
 }

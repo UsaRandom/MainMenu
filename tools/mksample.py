@@ -81,9 +81,15 @@ SECOND = [
 
 SCENE_NAMES = list(mkdemo.SCENES.keys())
 
-# Tab sizes, chosen so every tab is a full grid rather than one short row. Five columns, so
-# these are multiples of five: N64 gets six rows, the cartridge systems four, the handhelds
-# three. A tab with four titles in it tells you nothing about how a grid looks.
+# Tab sizes, chosen so every tab is several full rows rather than one short one. A tab with four
+# titles in it tells you nothing about how a grid looks.
+#
+# They were multiples of five, back when five columns was the only layout. A tab is four or five
+# wide now depending on what shape its covers turn out to be -- and on a --mix that is not `true`
+# a tab's shape is not knowable from here anyway -- so these are left as they were rather than
+# retuned to a number that would only be right for one of the two. The measurements in AUDIT.md
+# 1ak are against this exact 115-cover card and changing the counts would silently invalidate
+# them. A partial last row is what most real tabs have.
 SYSTEMS = [
     ("n64",  ".z64", 30),
     ("nes",  ".nes", 20),

@@ -53,15 +53,21 @@
  *
  * ## What this file decides, and what it does not
  *
- * Only the aspect. The width of a tile is the width of a grid column and nothing here can change
- * it: five columns of 109 px is what fits across the grid, so every number below is read as a
- * ratio and turned into a height. A region whose boxes are "narrower" is therefore the same
- * picture as one whose boxes are taller, which is the correct reading -- what reaches the screen
- * is a shape, not a millimetre.
+ * Only the aspect. Every number below is read as a ratio, never as a length: a region whose boxes
+ * are "narrower" is the same picture as one whose boxes are taller, which is the correct reading
+ * -- what reaches the screen is a shape, not a millimetre.
  *
- * The height is what varies, so a tab of one system is a perfectly regular grid and a mixed tab
- * -- Recent, Favourites, Most Played -- takes the tallest shape it contains as its row height and
- * centres the shorter art in it. Nothing is ever cropped to fit a neighbour.
+ * The ratio then picks a grid column. There are two of them, four tiles across or five, and the
+ * rule that chooses is in ui/theme.h: **the fewest columns that still show two whole rows**. A
+ * portrait box is 155 px tall in a 109 px column; a square or landscape one fits a 140 px column
+ * and gets it. That is the difference between a landscape cover at 109 x 76 and the same cover at
+ * 140 x 98 -- 66 % more pixels for art that is otherwise identical.
+ *
+ * A tab is laid out on the tallest shape it holds, and shorter art is centred in that cell rather
+ * than stretched or cropped. Because a taller shape never gets a wider column, the tallest shape
+ * in a tab also has the narrowest column in it, so every other shape in the tab is drawn smaller
+ * than the size it was cached at. Nothing is ever cropped to fit a neighbour and nothing is ever
+ * upscaled out of the atlas.
  *
  * ## Why the regional tables are not in this file
  *
@@ -90,7 +96,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/** @brief A tile, in pixels. Always #TILE_W wide: that is the grid column, and nothing else fits. */
+/** @brief A tile, in pixels. Its width is a grid column: one of #TILE_W_WIDE or #TILE_W_NARROW. */
 typedef struct {
     uint16_t w;
     uint16_t h;
@@ -155,11 +161,21 @@ void boxart_set_region (int i);
  *         shape, because an unrecognised ROM on a card of cartridge games is one of those. */
 art_shape_t boxart_shape (uint8_t system);
 
-/** @brief The tallest shape in the current table. What a mixed tab uses for its row height. */
-int boxart_tallest (void);
+/** @brief The tallest shape in the current table. What an empty tab is pitched from. */
+art_shape_t boxart_tallest (void);
 
 /** @brief Tile for one of the three supported shapes. Out of range gives #ART_PORTRAIT. */
 art_shape_t boxart_shape_at (int kind);
+
+/**
+ * @brief The largest rectangle of @p s's aspect that fits inside @p cell_w x @p cell_h.
+ *
+ * What a cell narrower than a cover's own column does with it, which is every shape but the
+ * tallest in a mixed tab. Both dimensions are considered rather than just the width, so the
+ * transient where a cover is measured after its tab was pitched -- and is briefly taller than the
+ * row it lands in -- scales instead of squashing.
+ */
+art_shape_t boxart_fit_into (art_shape_t s, int cell_w, int cell_h);
 
 /**
  * @brief Which of the three a source image of @p src_w x @p src_h is nearest.

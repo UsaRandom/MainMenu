@@ -72,27 +72,42 @@ typedef struct {
 #define GRID_W              596
 #define GRID_H              352
 
-/* A tile is as wide as a column and as tall as the box it holds. See library/boxart.h.
+/* A tile is as wide as a column and as tall as the box it holds -- and how wide a column is
+ * depends on the box. See library/boxart.h.
  *
- * The width is the fixed half, and it is fixed because it is the only thing five columns can be:
- * (596 - 4 x 12) / 5 = 109.2. Five columns rather than four because box art is portrait -- a
- * 0.702 cover cover-cropped into the old 140 x 98 landscape tile lost 51 % of its own height --
- * and at four columns a portrait tile is 199 px tall, which is one and a half rows in a 352 px
- * window. At five it is 155 and two rows fit.
+ * There are two column counts and a rule that picks between them: **the fewest columns that still
+ * show two whole rows**. Four columns is 140 px, five is 109, and a row must fit twice inside the
+ * grid window, so a tile may be at most TILE_H_TWO_ROW = 162 px tall.
  *
- * 109 x 155 is 16,895 pixels against the old tile's 13,720, so the art got bigger as well as
- * whole. Three pixels of the 596 are unused; giving them to the tiles would need 110 px columns,
- * which do not fit. */
-#define TILE_W              109
+ *   portrait   0.702   140 wide would be 200 tall, too tall   -> 5 columns, 109 x 155
+ *   square     1.000   140 wide is 140 tall                   -> 4 columns, 140 x 140
+ *   landscape  1.429   140 wide is 98 tall                    -> 4 columns, 140 x 98
+ *
+ * A single width was tried first and cannot serve both ends. 109 was picked for portrait -- at
+ * four columns a portrait tile is 199 px, one and a half rows -- and it makes a landscape cover
+ * 109 x 76, which is 8,284 pixels against the 13,720 the old fixed 140 x 98 tile gave it. The SD
+ * card this is developed against holds 28 covers and every single one of them is landscape,
+ * 1.369 to 1.469, so on that card five columns shrank every tile on the screen by 40 %.
+ *
+ * The rule gives each shape whichever of the two widths it can afford, and it is monotone in
+ * height -- a taller shape never gets a wider column -- which is what makes a mixed tab work: a
+ * tab takes the column count of the tallest shape it holds, so every other shape in it is drawn
+ * NARROWER than the size it is cached at, never wider. Nothing is ever upscaled out of the atlas.
+ *
+ * Four columns of 140 uses all 596 px exactly. Five of 109 leaves 3 px over; giving them to the
+ * tiles would need 110 px columns, which do not fit. */
 #define TILE_GAP            12
-#define GRID_COLS           5
-#define COL_PITCH           (TILE_W + TILE_GAP)   /* 121 */
+#define TILE_COLS_WIDE      4
+#define TILE_COLS_NARROW    5
+#define TILE_W_FOR(c)       ((GRID_W - ((c) - 1) * TILE_GAP) / (c))
+#define TILE_W_WIDE         TILE_W_FOR(TILE_COLS_WIDE)      /* 140 */
+#define TILE_W_NARROW       TILE_W_FOR(TILE_COLS_NARROW)    /* 109 */
 
 /* Heights the shape table may produce. The floor and ceiling exist so a typo in boxart.ini
  * cannot make a tile that will not fit its slot in the atlas or its row on the screen:
  * TILE_H_MAX bounds thumbstore's slot size, and both bounds are checked at parse time. 176 is an
- * aspect of 0.62, taller than any box anybody has claimed; 64 is 1.70, wider than the tile this
- * replaced. */
+ * aspect of 0.62 at the narrow width, taller than any box anybody has claimed; 64 is 2.19 at the
+ * wide one, wider than any cover that is not a banner. */
 #define TILE_H_MIN          64
 #define TILE_H_MAX          176
 
@@ -104,7 +119,6 @@ typedef struct {
  * the two would read as different animations. */
 #define SEL_GROW_W          12
 #define SEL_GROW_H          8
-#define SEL_W               (TILE_W + SEL_GROW_W)
 #define SEL_DX              (-(SEL_GROW_W / 2))
 #define SEL_DY              (-(SEL_GROW_H / 2))
 #define SEL_SHADOW_DX       4
@@ -123,6 +137,15 @@ typedef struct {
 #define SEL_GROW_Y          (SEL_GROW_H / 2)                        /* 4 */
 #define GRID_PAD_TOP        (SEL_GROW_Y + SEL_OUTLINE)              /* 6 */
 #define GRID_PAD_BOT        (SEL_GROW_Y + SEL_SHADOW_DY)            /* 10 */
+
+/* The tallest a tile may be and still show two whole rows, which is the rule that chooses between
+ * the two column widths above. Two rows and a gap inside the padded window: (352 - 6 - 10 - 12)/2.
+ *
+ * Two rather than three, and this is the trade the whole scheme turns on. Three rows of landscape
+ * would need a 108 px ceiling, which sends square art to the narrow column as well and gives back
+ * most of what this bought. Two rows is what a portrait grid has always shown here, so the rule
+ * asks nothing of the wide shapes that the narrow one does not already accept. */
+#define TILE_H_TWO_ROW      ((GRID_H - GRID_PAD_TOP - GRID_PAD_BOT - TILE_GAP) / 2)   /* 162 */
 
 /* The handoff puts the position bar at 616. A selected column-3 tile spans 466..618 and its
  * shadow reaches 622, so both would sit on top of it -- and column 3 is a quarter of all
@@ -171,17 +194,29 @@ typedef struct {
 #define HAIRLINE            2
 #define ACCENT_BAR          4
 
-/** @brief Left edge of column @p c. */
-#define COL_X(c)            (GRID_X + (c) * COL_PITCH)
+/* There is no COL_X, no ROW_Y and no ROW_PITCH here any more. A column is as wide as the tallest
+ * box in the tab can afford and a row is as tall as that box, both of which are runtime facts --
+ * see col_x() and row_pitch() in screen_grid.c. Leaving compile-time macros behind would have
+ * given half the file a stale answer that still compiled. */
 
-/* There is no ROW_Y and no ROW_PITCH here any more. A row is as tall as the tallest box in the
- * tab, which is a runtime fact -- see row_pitch() in screen_grid.c. Leaving a compile-time macro
- * behind would have given half the file a stale answer that still compiled. */
+_Static_assert(TILE_COLS_WIDE * TILE_W_WIDE + (TILE_COLS_WIDE - 1) * TILE_GAP <= GRID_W,
+               "four wide columns do not fit across the grid");
+_Static_assert(TILE_COLS_NARROW * TILE_W_NARROW + (TILE_COLS_NARROW - 1) * TILE_GAP <= GRID_W,
+               "five narrow columns do not fit across the grid");
+_Static_assert(GRID_X + (TILE_COLS_WIDE - 1) * (TILE_W_WIDE + TILE_GAP)
+               + TILE_W_WIDE + SEL_GROW_W / 2 <= POSBAR_X,
+               "a selected wide tile in the last column overlaps the position bar");
+_Static_assert(GRID_X + (TILE_COLS_NARROW - 1) * (TILE_W_NARROW + TILE_GAP)
+               + TILE_W_NARROW + SEL_GROW_W / 2 <= POSBAR_X,
+               "a selected narrow tile in the last column overlaps the position bar");
 
-_Static_assert(GRID_COLS * TILE_W + (GRID_COLS - 1) * TILE_GAP <= GRID_W,
-               "the tile columns do not fit across the grid");
-_Static_assert(GRID_X + (GRID_COLS - 1) * COL_PITCH + TILE_W + SEL_GROW_W / 2 <= POSBAR_X,
-               "a selected tile in the last column overlaps the position bar");
+/* A wide tile is bounded by the two-row rule, not by TILE_H_MAX, so it is the rule that has to
+ * clear the atlas slot. And the wide column is only worth having if a square fits in it -- if it
+ * did not, square art would join portrait in the narrow column and there would be one width. */
+_Static_assert(TILE_H_TWO_ROW <= TILE_H_MAX,
+               "a wide tile could be taller than the atlas slot allows");
+_Static_assert(TILE_W_WIDE <= TILE_H_TWO_ROW,
+               "a square cover does not fit the wide column, so there is no wide column");
 
 extern const theme_t THEME_MIDNIGHT;
 extern const theme_t THEME_PHOSPHOR;

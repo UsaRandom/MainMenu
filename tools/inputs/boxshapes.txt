@@ -1,13 +1,14 @@
-# Box shapes: five portrait columns, and a square tab that is square.
+# Box shapes: a portrait tab, a square tab, and the one place they meet.
 #
 # The grid drew every game into a 140 x 98 landscape tile, which is the shape of the reference
 # mockup's card and of no box that has ever existed. A 0.702 cover cover-cropped into it lost
-# 51 % of its own height. Tiles are the system's box aspect now -- see library/boxart.h -- so
-# these frames are the two shapes and the one place they meet.
+# 51 % of its own height. Tiles are box shapes now -- see library/boxart.h -- and the COLUMN COUNT
+# follows the shape: the fewest columns that still show two whole rows, which is five for portrait
+# and four for square and landscape.
 #
-# What to look at, in order: an N64 tab of 109 x 155 portrait cells, a GB tab of 109 x 109 square
-# ones with a tighter row pitch, and Recent, which holds both and keeps the portrait row height
-# with the square art centred in it rather than cropped to fit.
+# What to look at, in order: an N64 tab of five 109 x 155 portrait cells across, a GB tab of four
+# 140 x 140 square ones, and Recent, which holds both, takes the portrait cell because portrait is
+# taller, and draws the square cover at 109 x 109 centred in it rather than cropped to fit.
 
 wait 300            # boot plate, then let the first rows decode
 fbdump              # 1: opens on RECENT, which the fixture's playstate makes non-empty
@@ -22,7 +23,7 @@ fbdump              # 3: scrolled by 167 px, not the old 110
 
 press r x3          # -> GB
 wait 200
-fbdump              # 4: squares. Same columns, shorter rows, more of them on screen
+fbdump              # 4: squares, and only four across -- a square earns the wide column
 
 press start         # Settings
 wait 40
@@ -40,7 +41,8 @@ fbdump              # 6: the row reads "tall"
 
 press b             # back to the grid, which opens on the tab it left
 wait 250            # every resident tile was the old shape and was dropped; they come back
-fbdump              # 7: 109 x 174 cells, forced -- the covers no longer get a say
+fbdump              # 7: 109 x 174 cells, forced -- the covers no longer get a say.
+                    #    Still five across: 0.625 is far too tall for the wide column.
 
 press start
 press down x2
@@ -48,7 +50,7 @@ press a             # -> squat
 wait 20
 press b
 wait 250
-fbdump              # 8: 109 x 78 landscape cells, four rows of them
+fbdump              # 8: 140 x 100 landscape cells, four across and three rows deep
 
 press start
 press down x2

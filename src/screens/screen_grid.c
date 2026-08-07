@@ -62,26 +62,39 @@ static int frames_since_move = DECODE_SETTLE_FRAMES;
 
 /* ------------------------------------------------------------------ model */
 
-static int rows_total (void) {
-    return (view_count + GRID_COLS - 1) / GRID_COLS;
-}
-
 /**
- * @brief How tall a row of this tab is, and why it is a tab-wide number.
+ * @brief The cell this tab lays out on, and why it is a tab-wide number.
  *
- * A cell is as tall as the tallest box in the tab, and art shorter than that is centred in it
+ * A cell is the tallest box in the tab, and art shorter or narrower than that is centred in it
  * rather than stretched or cropped -- so the Game Boy tab is a tight grid of squares, the N64 tab
- * a tight grid of portrait boxes, and Recent, which mixes them, keeps the portrait row height and
- * shows a square cover with a little plate above and below.
+ * a tight grid of whatever shape its covers turn out to be, and Recent, which mixes them, takes
+ * the tallest and shows the rest with a little plate around them.
+ *
+ * The WIDTH is part of it, which it was not before. A shape earns a grid column -- four across or
+ * five, see ui/theme.h -- and the tallest shape in a tab always has the narrowest column in it,
+ * so taking the tallest settles both numbers at once and every other shape in the tab is drawn
+ * smaller than the size it was cached at. Never larger: that is the property the whole scheme
+ * rests on, because upscaling out of the atlas is exactly what caching at the drawn size avoids.
  *
  * Per tab rather than per row, which would be a masonry layout: row heights that change as you
  * scroll make the scroll position stop meaning anything, and every tile below a short row would
  * shift when a favourite was added. Per tab costs one pass over the view when the tab changes.
  */
+static int cell_w = TILE_W_NARROW;
 static int cell_h = TILE_H_MAX;
+static int cols   = TILE_COLS_NARROW;
+
+static int rows_total (void) {
+    return (view_count + cols - 1) / cols;
+}
 
 static int row_pitch (void) {
     return cell_h + TILE_GAP;
+}
+
+/** @brief Left edge of column @p c. */
+static int col_x (int c) {
+    return GRID_X + c * (cell_w + TILE_GAP);
 }
 
 /** @brief Top of row @p r in content space, before scroll. Includes the overhang pad. */
@@ -98,31 +111,40 @@ static float scroll_max (void) {
 }
 
 /**
- * @brief Recompute #cell_h from what the tab actually holds.
+ * @brief Recompute #cell_w, #cell_h and #cols from what the tab actually holds.
  *
  * An unmeasured record contributes BOXART_FALLBACK_KIND, which is landscape and therefore the
- * shortest of the three. That has a consequence worth stating: the FIRST visit to a tab on a cold
- * card is pitched from the fallback, so a tab whose covers all turn out portrait opens with short
- * rows and re-pitches on the next visit. The tiles are not cropped while that is true -- the draw
- * clamps by scaling, not by cutting -- they are just small for one visit.
+ * shortest of the three -- and now also one of the two WIDEST, so the consequence is bigger than
+ * it was. The FIRST visit to a tab on a cold card is laid out from the fallback: four columns of
+ * 140 x 98. A tab whose covers all turn out portrait then re-lays itself to five columns of
+ * 109 x 155 on the next visit, which moves every tile rather than just resizing it. The tiles are
+ * not cropped while that is true -- the draw scales to fit, it does not cut -- and on a warm card
+ * none of it happens, because every shape is in library.idx before the first frame.
  *
  * The alternative was to take the tallest shape whenever anything is unknown, which never
- * under-pitches and always over-pitches: a tab of genuinely artless games would be rows of tall
- * cells holding short plates, permanently, to avoid a transient. Guessing the fallback and being
- * briefly wrong is the cheaper mistake.
+ * under-pitches and always over-pitches: a tab of genuinely artless games would be five narrow
+ * columns of tall cells holding short plates, permanently, to avoid a transient. Guessing the
+ * fallback and being briefly wrong is the cheaper mistake.
  */
 static void measure_cells (app_t *app) {
-    int tall = 0;
+    art_shape_t tall = { 0, 0 };
     for (int i = 0; i < view_count; i++) {
-        int h = thumbcache_record_shape(&app->lib->records[view[i]]).h;
-        if (h > tall) {
-            tall = h;
+        art_shape_t s = thumbcache_record_shape(&app->lib->records[view[i]]);
+        if (s.h > tall.h) {
+            tall = s;
         }
     }
     /* An empty tab takes the tallest shape there is. It draws nothing, but scroll_max() and the
      * position bar are computed from the pitch either way, and a zero pitch divides by zero in
      * the prefetch loop. */
-    cell_h = (tall > 0) ? tall : boxart_tallest();
+    if (tall.h == 0) {
+        tall = boxart_tallest();
+    }
+    cell_w = tall.w;
+    cell_h = tall.h;
+    /* Derived rather than stored beside the width, so the two can never disagree: whatever width
+     * the tallest shape earned, this is how many of them fit. */
+    cols = (GRID_W + TILE_GAP) / (cell_w + TILE_GAP);
 }
 
 static void rebuild_view (app_t *app) {
@@ -144,7 +166,7 @@ static void rebuild_view (app_t *app) {
 
 /** @brief Centre the selected row, clamped, snapped to whole pixels. */
 static void retarget_scroll (void) {
-    int row = cursor / GRID_COLS;
+    int row = cursor / cols;
     /* GRID_PAD_TOP appears here because row_y() carries it: the scroll that puts row r's cell at
      * a given screen y is larger by the pad than the cell arithmetic alone would say. */
     float want = (float)(GRID_PAD_TOP + row * row_pitch()) - (float)(GRID_H - cell_h) * 0.5f;
@@ -203,10 +225,10 @@ static void draw_tile (app_t *app, const lib_record_t *rec, uint16_t rom_id,
         } else {
             rdpq_set_mode_copy(false);
         }
-        /* Scaled against the surface's own size, not against a TILE_W x TILE_H constant. Tiles
-         * are per-system shapes now -- a Game Boy cover is 109 x 109 where an N64 one is
-         * 109 x 155 -- and dividing by the wrong constant does not fail, it silently draws the
-         * square art at 1.4x its height. */
+        /* Scaled against the surface's own size, not against a tile constant. Tiles are box
+         * shapes now -- a Game Boy cover is cached 140 x 140 where a portrait one is 109 x 155,
+         * and either may be drawn smaller again in a mixed tab -- and dividing by the wrong
+         * constant does not fail, it silently draws the square art at 1.4x its height. */
         rdpq_tex_blit(art, ax, ay, &(rdpq_blitparms_t){
             .scale_x = (float)aw / (float)art->width,
             .scale_y = (float)ah / (float)art->height,
@@ -664,7 +686,7 @@ static bool grid_worth_revealing (app_t *app) {
     if (app->lib == NULL) {
         return true;            /* nothing to wait for; the fault screen owns this case */
     }
-    int want = GRID_COLS;
+    int want = cols;
     if (want > view_count) {
         want = view_count;
     }
@@ -718,13 +740,13 @@ static void grid_update (app_t *app, float dt) {
     if (view_count > 0) {
         if (in->left  && cursor > 0)                cursor--;
         if (in->right && cursor < view_count - 1)   cursor++;
-        if (in->up    && cursor >= GRID_COLS)       cursor -= GRID_COLS;
+        if (in->up    && cursor >= cols)            cursor -= cols;
         if (in->down) {
             /* Stepping down from the last partial row must land on the final title rather than
              * refusing to move, or the bottom-right corner of the library is unreachable. */
-            if (cursor + GRID_COLS < view_count) {
-                cursor += GRID_COLS;
-            } else if (cursor / GRID_COLS < rows_total() - 1) {
+            if (cursor + cols < view_count) {
+                cursor += cols;
+            } else if (cursor / cols < rows_total() - 1) {
                 cursor = view_count - 1;
             }
         }
@@ -858,8 +880,8 @@ static void grid_render (app_t *app, surface_t *fb) {
         int lo = sy0 / row_pitch() - THUMB_PREFETCH_ROWS;
         int hi = (sy0 + GRID_H) / row_pitch() + THUMB_PREFETCH_ROWS;
         for (int row = lo; row <= hi; row++) {
-            for (int col = 0; col < GRID_COLS; col++) {
-                int idx = row * GRID_COLS + col;
+            for (int col = 0; col < cols; col++) {
+                int idx = row * cols + col;
                 if (idx >= 0 && idx < view_count) {
                     (void)thumbcache_get(app->thumbs, app->lib, view[idx]);
                 }
@@ -899,8 +921,8 @@ static void grid_render (app_t *app, surface_t *fb) {
 
     for (int pass = 0; pass < 2; pass++) {
         for (int row = first_row; row <= last_row; row++) {
-            for (int col = 0; col < GRID_COLS; col++) {
-                int idx = row * GRID_COLS + col;
+            for (int col = 0; col < cols; col++) {
+                int idx = row * cols + col;
                 if (idx < 0 || idx >= view_count) {
                     continue;
                 }
@@ -912,29 +934,29 @@ static void grid_render (app_t *app, surface_t *fb) {
                 }
 
                 const lib_record_t *rec = &app->lib->records[view[idx]];
-                int x = COL_X(col);
+                int cx = col_x(col);
                 int cy = row_y(row) - sy;
 
-                /* The cell is the tab's row height; the art is this system's shape, centred in
-                 * it. On a single-system tab the two are the same and the centring is a no-op --
-                 * which is the point of taking the tallest shape rather than a fixed one. */
-                int ah = thumbcache_record_shape(rec).h;
-                /* Clamped, because #cell_h is only recomputed when the view is rebuilt and a
-                 * cover probed since then can be taller than the row it is in. Scaling to fit
-                 * rather than cropping: the whole point of the shape is that nothing is cut, and
-                 * a tile that is briefly a little small is a far smaller lie than one that has
-                 * had its top and bottom taken off. Transient -- the next visit to the tab has
-                 * the right pitch. */
-                if (ah > cell_h) {
-                    ah = cell_h;
-                }
+                /* The cell is the tab's, the art is this cover's own shape scaled to fit inside
+                 * it and centred both ways. On a tab of one shape the two are the same and the
+                 * centring is a no-op -- which is the point of taking the tallest shape rather
+                 * than a fixed one.
+                 *
+                 * Fitted rather than clamped. The old version pinned the height to the cell and
+                 * left the width alone, which squashed rather than scaled; it only ever showed up
+                 * in the transient where a cover is measured after its tab was laid out, but a
+                 * distorted cover is a worse lie than a small one, and both are worse than the
+                 * crop this whole scheme exists to avoid. */
+                art_shape_t a = boxart_fit_into(thumbcache_record_shape(rec), cell_w, cell_h);
+                int aw = a.w, ah = a.h;
+                int x = cx + (cell_w - aw) / 2;
                 int y = cy + (cell_h - ah) / 2;
 
                 if (selected) {
                     float t = ease_bezier(tween_t01(&grow), EASE_TILE_GROW);
-                    int w = (int)lerpf(TILE_W, TILE_W + SEL_GROW_W, t);
+                    int w = (int)lerpf(aw, aw + SEL_GROW_W, t);
                     int h = (int)lerpf(ah, ah + SEL_GROW_H, t);
-                    int gx = x + (TILE_W - w) / 2;
+                    int gx = x + (aw - w) / 2;
                     int gy = y + (ah - h) / 2;
 
                     ui_wash(gx + SEL_SHADOW_DX, gy + SEL_SHADOW_DY, w, h,
@@ -958,8 +980,8 @@ static void grid_render (app_t *app, surface_t *fb) {
                     rdpq_fill_rectangle(gx - SEL_OUTLINE, gy, gx, gy + h);
                     rdpq_fill_rectangle(gx + w, gy, gx + w + SEL_OUTLINE, gy + h);
                 } else {
-                    draw_tile(app, rec, view[idx], x, y, TILE_W, ah, false);
-                    draw_badges(app, rec, x, y, TILE_W, ah);
+                    draw_tile(app, rec, view[idx], x, y, aw, ah, false);
+                    draw_badges(app, rec, x, y, aw, ah);
                 }
             }
         }

@@ -5,8 +5,10 @@
 # compact, and every screenshot this project had before this one was of a tab holding four.
 #
 # The interesting frames are 1 and 6. Frame 1 is Recent, the only tab where two tile shapes share
-# a grid. Frame 6 is Game Boy, where the cells are square and a third row fits -- if the row pitch
-# were fixed rather than per-tab, that row would not be there.
+# a grid -- and on a cold card it is also where the fallback shows, because the cell is settled
+# before most covers have been measured. Frame 6 is Game Boy: four columns of 140 x 140 squares,
+# where the portrait tabs are five of 109 x 155. If the column count were fixed rather than per
+# tab, that art would be 109 px wide and a third smaller.
 
 wait 400            # boot plate, a 115-title scan, then a screenful of covers
 
@@ -30,7 +32,7 @@ fbdump              # 5: NES, four rows
 
 press r x2
 wait 300
-fbdump              # 6: GB. Square cells, tighter pitch, three rows on screen
+fbdump              # 6: GB. Square cells, four across, two rows and a peek
 
 press r x2
 wait 300

@@ -19,15 +19,25 @@
 /* Three 16 KB FAT clusters. See the header comment -- cluster alignment is the whole point of
  * the number, and the count follows from the biggest tile a slot has to hold.
  *
- * It was two clusters when every tile was 140 x 98. Tiles are per-system box shapes now and the
- * ceiling is TILE_W x TILE_H_MAX = 109 x 176 = 38,368 bytes, which does not fit in 32,768. The
- * alternative was to trim the tile until it did -- 107 x 152 would have -- and distorting the art
- * to suit a filesystem is the wrong way round. The cost is disk: 31 % of each slot is padding
- * against the old 16 %, so a 500-title card holds 24.6 MB of atlas instead of 16.4 MB. */
+ * It was two clusters when every tile was 140 x 98 and nothing else. Tiles are box shapes now, in
+ * one of two column widths, and the ceiling is whichever of them is larger:
+ *
+ *   narrow  109 x TILE_H_MAX  = 109 x 176 = 38,368 bytes
+ *   wide    140 x TILE_H_TWO_ROW = 140 x 162 = 45,360 bytes
+ *
+ * A wide tile is bounded by the two-row rule rather than by TILE_H_MAX -- that is the rule that
+ * put it in the wide column at all -- which is why the bound is written out per width instead of
+ * as one product. Neither fits in 32,768. The alternative was to trim the tile until it did, and
+ * distorting the art to suit a filesystem is the wrong way round. The cost is disk: 8 % of each
+ * slot is padding at the worst case and 43 % at the best, so a 500-title card holds 24.6 MB of
+ * atlas instead of 16.4 MB. */
 #define SLOT_BYTES  49152
 
 /** The most pixels a slot may be asked to carry. */
-#define TILE_BYTES_MAX  (TILE_W * TILE_H_MAX * 2)
+#define TILE_BYTES_NARROW  (TILE_W_NARROW * TILE_H_MAX * 2)
+#define TILE_BYTES_WIDE    (TILE_W_WIDE * TILE_H_TWO_ROW * 2)
+#define TILE_BYTES_MAX \
+    (TILE_BYTES_NARROW > TILE_BYTES_WIDE ? TILE_BYTES_NARROW : TILE_BYTES_WIDE)
 
 /** Hard cap, so a corrupt index cannot make us seek to a nonsense offset in a 16 MB file. */
 #define MAX_SLOTS   2048
@@ -36,7 +46,7 @@
 typedef struct __attribute__((packed)) {
     uint32_t magic;
     uint16_t format_ver;
-    uint16_t tile_w;        /**< every tile's width; the column, so it never varies */
+    uint16_t tile_w;        /**< the WIDEST column, not the tile width -- see ti_record_t */
     uint16_t tile_h;        /**< the CEILING, not the tile height -- see ti_record_t */
     uint16_t pixfmt;        /**< 0 = RGBA16 */
     uint32_t slot_bytes;
@@ -46,9 +56,9 @@ typedef struct __attribute__((packed)) {
 
 /** @brief One index row. 20 bytes.
  *
- *  It carries the tile's own height because a slot no longer implies one: a Game Boy cover is
- *  109 x 109 in the same 48 KB slot an N64 cover fills 109 x 155 of. Reading a slot back at the
- *  wrong height does not fail, it shears the picture -- so the height is stored rather than
+ *  It carries the tile's own width and height because a slot no longer implies either: a Game Boy
+ *  cover is 140 x 140 in the same 48 KB slot an N64 cover fills 109 x 155 of. Reading a slot back
+ *  at the wrong size does not fail, it shears the picture -- so both are stored rather than
  *  re-derived from the record's system, which can change under the atlas when a ROM is moved
  *  between folders. */
 typedef struct __attribute__((packed)) {
@@ -129,7 +139,7 @@ static FILE *pak_create (const char *path) {
     pak_header_t *h = pad;
     h->magic      = THUMBSTORE_MAGIC;
     h->format_ver = MENU_CACHE_FORMAT_VER;
-    h->tile_w     = TILE_W;
+    h->tile_w     = TILE_W_WIDE;
     h->tile_h     = TILE_H_MAX;
     h->pixfmt     = 0;
     h->slot_bytes = SLOT_BYTES;
@@ -164,12 +174,12 @@ void thumbstore_open (void) {
         bool bad = (fread(&h, 1, sizeof(h), pak) != sizeof(h)) ||
                    h.magic      != THUMBSTORE_MAGIC ||
                    h.format_ver != MENU_CACHE_FORMAT_VER ||
-                   h.tile_w     != TILE_W ||
+                   h.tile_w     != TILE_W_WIDE ||
                    h.tile_h     != TILE_H_MAX ||
                    h.slot_bytes != SLOT_BYTES ||
                    h.slot_count  > MAX_SLOTS;
         if (bad) {
-            /* Asserting the geometry as well as the version is deliberate: changing TILE_W and
+            /* Asserting the geometry as well as the version is deliberate: changing a column and
              * forgetting to bump MENU_CACHE_FORMAT_VER is a mistake someone will make, and the
              * symptom would be every tile drawn from misaligned bytes rather than a clean miss. */
             debugf("THUMBSTORE %s: header rejected -- rebuilding\n", PAK_FILE);
@@ -358,8 +368,15 @@ void thumbstore_put (const char *src_path, int64_t src_size, const surface_t *ar
     if (slot_count >= MAX_SLOTS || !rows_room()) {
         return;
     }
-    if (art->width != TILE_W || art->height < TILE_H_MIN || art->height > TILE_H_MAX) {
-        return;                     /* not a grid tile; the sheet's large art is not atlas material */
+    /* Either column, and nothing else. The width is checked rather than assumed because the only
+     * other surface in the program of a plausible tile size is the detail sheet's large art, and
+     * storing one of those would hand a grid tile back at twice the size it expects. The byte
+     * bound is separate and belt-and-braces: TILE_BYTES_MAX is asserted against SLOT_BYTES above,
+     * but that assertion is about the shapes this build can produce, not about this pointer. */
+    if ((art->width != TILE_W_WIDE && art->width != TILE_W_NARROW) ||
+        art->height < TILE_H_MIN || art->height > TILE_H_MAX ||
+        (size_t)art->width * (size_t)art->height * 2 > SLOT_BYTES) {
+        return;
     }
 
     uint64_t hash = cache_hash64(src_path);

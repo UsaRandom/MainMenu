@@ -55,9 +55,9 @@ except ImportError:
 
 FONT = os.path.join(REPO, "assets", "fonts", "Firple-Bold.ttf")
 
-# The cache tile, and the only size the menu ever holds art at: TILE_W from src/ui/theme.h, and
-# the height of the system's box from src/library/boxart.h. screen_detail.c blits that same
-# cached tile at scale 2, so there is nothing above this for a larger source to serve.
+# The cache tile, and the only size the menu ever holds art at: the grid column the shape earns
+# (src/ui/theme.h) by the height of the system's box (src/library/boxart.h). screen_detail.c blits
+# that same cached tile at scale 2, so there is nothing above this for a larger source to serve.
 #
 # Emitting at the target means the menu decodes exactly these pixels and does no downscale at
 # all, so what reaches the screen is what Lanczos produced here rather than what the runtime box
@@ -66,14 +66,13 @@ FONT = os.path.join(REPO, "assets", "fonts", "Firple-Bold.ttf")
 #
 # It was a single 140 x 98 landscape pair, which was the shape of the old tile and of no box that
 # has ever existed. The scenes are all drawn against img.size, so nothing below had to change to
-# turn them portrait.
-ART_W = 109
-ART_H_CART = 155                    # NTSC cartridge box, 127 x 181 mm
-ART_H_SQUARE = 109                  # Game Boy and Game Boy Color, 126 x 126 mm
+# turn them portrait -- or to widen the square one when square art moved to the wide column.
+CART_SIZE = (109, 155)              # NTSC cartridge box, 127 x 181 mm -- narrow column
+SQUARE_SIZE = (140, 140)            # Game Boy and Game Boy Color, 126 x 126 mm -- wide column
 
 def art_size(system):
     """The tile shape for a folder name, matching boxart.c's built-in table."""
-    return (ART_W, ART_H_SQUARE if system in ("gb", "gbc") else ART_H_CART)
+    return SQUARE_SIZE if system in ("gb", "gbc") else CART_SIZE
 
 # Drawn at 6x and reduced once with Lanczos. Circles and the diagonals in the perspective
 # scenes alias badly at 140 px, and the menu's own quantiser then spends palette entries on
@@ -580,7 +579,7 @@ def wrap(text, size, max_w):
 
 
 def draw_card(title, scene, palette, studio, system, size=None):
-    aw, ah = size if size else (ART_W, ART_H_CART)
+    aw, ah = size if size else CART_SIZE
     W, H = aw * SS, ah * SS
     pal = PALETTES[palette % len(PALETTES)]
     rng = Rng(seed_of(title))

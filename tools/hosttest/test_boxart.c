@@ -223,20 +223,51 @@ static void test_snap (void) {
     art_shape_t p = boxart_shape_at(ART_PORTRAIT);
     art_shape_t s = boxart_shape_at(ART_SQUARE);
     art_shape_t l = boxart_shape_at(ART_LANDSCAPE);
-    check(p.w == s.w && s.w == l.w, "every shape is one column wide");
     check(p.h > s.h && s.h > l.h, "portrait is tallest, landscape shortest");
     check(s.h == s.w, "the square one is square");
     /* The atlas slot is sized from TILE_H_MAX, so a shape taller than it would be written past
      * the end of its slot. thumbstore asserts the ceiling; this asserts nothing reaches it. */
     check(p.h <= TILE_H_MAX && l.h >= TILE_H_MIN, "every shape is inside the bounds the atlas sized for");
 
+    printf("\nwhich column each shape earns\n");
+    /* The rule is "the fewest columns that still show two whole rows", and what makes it safe is
+     * that it is MONOTONE: a taller shape never gets a wider column. A mixed tab is laid out on
+     * its tallest shape, so if that were ever false one of the other shapes in the tab would have
+     * to be upscaled out of the atlas -- which is the one thing caching at the drawn size exists
+     * to avoid, and it would look like slightly soft art rather than like a bug. */
+    check(p.w == TILE_W_NARROW, "portrait is too tall for the wide column and takes the narrow one");
+    check(s.w == TILE_W_WIDE && l.w == TILE_W_WIDE, "square and landscape both fit the wide one");
+    check(l.w == TILE_W_WIDE && l.h == 98, "a landscape tile is 140 x 98, as it was at four columns");
+    for (int k = 1; k < ART_SHAPES; k++) {
+        art_shape_t a = boxart_shape_at(k - 1), b = boxart_shape_at(k);
+        check(a.h < b.h || a.w <= b.w, "a taller shape never gets a wider column");
+    }
+
     /* Every snap result must be a drawable shape. A kind that indexed off the end would return
      * portrait from boxart_shape_at() and look almost right. */
     for (int k = 0; k < ART_SHAPES; k++) {
         art_shape_t sh = boxart_shape_at(k);
-        check(sh.w == TILE_W && sh.h >= TILE_H_MIN && sh.h <= TILE_H_MAX,
-              "shape is within bounds");
+        check((sh.w == TILE_W_WIDE || sh.w == TILE_W_NARROW) &&
+              sh.h >= TILE_H_MIN && sh.h <= TILE_H_MAX, "shape is within bounds");
+        check(sh.w != TILE_W_WIDE || sh.h <= TILE_H_TWO_ROW,
+              "a wide shape fits two rows, which is why it is wide");
     }
+
+    printf("\nfitting a shape into a cell it did not choose\n");
+    /* What a mixed tab does. A landscape cover in a portrait tab is drawn at the portrait column
+     * width, and must keep its aspect while it shrinks. */
+    art_shape_t in_narrow = boxart_fit_into(l, p.w, p.h);
+    check(in_narrow.w == TILE_W_NARROW && in_narrow.h == 76,
+          "a landscape cover in a portrait tab is 109 x 76");
+    check(boxart_fit_into(s, p.w, p.h).h == TILE_W_NARROW, "and a square one is 109 x 109");
+    /* The other direction is the transient: a cover measured after its tab was laid out can be
+     * taller than the row it lands in. It must scale, not squash -- pinning the height and
+     * leaving the width alone is what the grid used to do. */
+    art_shape_t squeezed = boxart_fit_into(p, TILE_W_NARROW, 100);
+    check(squeezed.h == 100 && squeezed.w == 70,
+          "a tile too tall for its row narrows as well as shortens");
+    check(boxart_fit_into(l, 0, 100).w == 0 && boxart_fit_into((art_shape_t){0, 0}, 10, 10).w == 0,
+          "a nonsense cell or shape fits nothing");
 }
 
 int main (void) {

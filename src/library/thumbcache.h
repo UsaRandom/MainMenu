@@ -38,17 +38,20 @@
 
 /* 36 slots, up from 20.
  *
- * The grid window is 352 px on a 110 px row pitch, so a scroll position that straddles rows shows
- * four of them -- sixteen tiles, not the twelve the old comment counted. Twenty slots therefore
- * left four spare, which is one row of margin at best and none at all when the selection sits on
- * a boundary. Scrolling two rows evicted art that was about to be needed again, and the tile came
- * back as a placeholder even though its pixels were already on the card.
+ * The worst case is a landscape tab: four columns on a 110 px row pitch in a 352 px window, so a
+ * scroll position that straddles rows shows four of them -- sixteen tiles, not the twelve the old
+ * comment counted. Twenty slots therefore left four spare, which is one row of margin at best and
+ * none at all when the selection sits on a boundary. Scrolling two rows evicted art that was about
+ * to be needed again, and the tile came back as a placeholder even though its pixels were already
+ * on the card. A portrait tab is five columns on a 167 px pitch: fifteen tiles, and a square one
+ * is twelve, so sixteen is the number to size for.
  *
  * 36 is sixteen visible plus THUMB_PREFETCH_ROWS above and below, and four spare. The cost is
  * bounded and lazy: a slot allocates its surface only when something lands in it, and the surface
- * is the box shape of that record's system -- 33,790 bytes for an N64 cover at 109 x 155, 23,762
- * for a square Game Boy one. Full of the tallest shape it is 1.19 MB against the ~3.8 MB free
- * after the framebuffers -- affordable only because the M64 has the Expansion Pak built in. */
+ * is that cover's own box shape -- 39,200 bytes for a square cover at 140 x 140, 33,790 for a
+ * portrait one at 109 x 155, 27,440 for a landscape one at 140 x 98. Full of the largest it is
+ * 1.35 MB against the ~3.8 MB free after the framebuffers -- affordable only because the M64 has
+ * the Expansion Pak built in. It was 1.19 MB when every tile was 109 wide. */
 #define THUMB_SLOTS  36
 
 /* How far past the visible window art is fetched. Two rows either side, so a page of scrolling
