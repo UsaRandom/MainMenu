@@ -95,8 +95,11 @@ def main() -> int:
         # shape change rather than silently checking nothing, which is the only reason the count
         # below exists -- keep the `if not rows` guard whatever the table becomes next.
         rows = re.findall(r'\{\s*"([A-Z0-9\-_.,:/()+&]+)"\s*,\s*\d+\s*\}', src_text)
-        labels = re.findall(r'draw_key\([^;]*?"([A-Z]+)"', src_text)
-        for s in rows + labels:
+        labels = re.findall(r'draw_key\([^;]*?"([A-Za-z]+)"', src_text)
+        # The rows are written in capitals and the case key draws and types the fold of them, so
+        # a-z is as much "what the keyboard offers" as A-Z is. Checking only the literal would
+        # pass a font that can draw every key you can see and none of the ones you get.
+        for s in rows + [s.lower() for s in rows] + labels:
             checked += 1
             for ch in s:
                 if ch not in charsets["FNT_KEY"]:

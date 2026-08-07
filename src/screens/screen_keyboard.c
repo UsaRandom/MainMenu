@@ -35,8 +35,13 @@
  * sits in the same place on both.
  *
  * The handoff says a name is letters and space with no digits. That is right about what most
- * names are and wrong about what a keyboard should refuse: there is no shift key here, so a digit
- * costs one row, and its absence costs anybody called PLAYER2 a name they cannot type.
+ * names are and wrong about what a keyboard should refuse: a digit costs one row, and its absence
+ * costs anybody called PLAYER2 a name they cannot type.
+ *
+ * Lower case costs even less. The UI faces already carry a-z -- assets/fonts/charset-ui.txt has
+ * carried the full 88-glyph set since the fonts were cut, so every one of these glyphs was
+ * already in the ROM and simply unreachable -- so the whole feature is one action key, one
+ * shortcut and a case fold on the row tables. See #upper.
  *
  * ## B is delete, and then it is back
  *
@@ -89,10 +94,13 @@
  *  thing from M, and not so much that the two look like separate keyboards. */
 #define ACTION_GAP  16
 
-/* Two action keys, not three. DELETE was one of them until B was bound to the same thing, at
- * which point it was a key you steered to in order to do what the button under your thumb already
- * did -- and it sat where a thumb going for SPACE would land. Wider now that there are two. */
-#define WIDE_SPACE  340
+/* Three action keys. DELETE was one of them until B was bound to the same thing, at which point
+ * it was a key you steered to in order to do what the button under your thumb already did -- and
+ * it sat where a thumb going for SPACE would land. Case took the width back.
+ *
+ * SPACE keeps the middle so a hand that learned "down, then A" still lands on it. */
+#define WIDE_CASE   120
+#define WIDE_SPACE  220
 #define WIDE_DONE   180
 
 /**
@@ -139,8 +147,15 @@ static const keyrow_t ROWS_TEXT[] = {
 };
 #define ROWS_TEXT_N  5
 
-#define ACTION_X        57      /**< (640 - 340 - 6 - 180) / 2, so it centres on the letters */
-#define ACTION_N        2
+enum { ACT_CASE = 0, ACT_SPACE, ACT_DONE, ACTION_N };
+
+/** Widths in cursor order. The row is centred on the screen from these rather than from a literal
+ *  x, which is what the old `57 = (640 - 340 - 6 - 180) / 2` comment had to be recomputed by hand
+ *  every time a key changed width. */
+static const int16_t ACTION_W[ACTION_N] = { WIDE_CASE, WIDE_SPACE, WIDE_DONE };
+
+#define ACTION_ROW_W    (WIDE_CASE + WIDE_SPACE + WIDE_DONE + (ACTION_N - 1) * KEY_GAP)
+#define ACTION_X        ((SCREEN_W - ACTION_ROW_W) / 2)
 
 /* The symbol keyboard is the tall one, so it is the one that has to fit. This is what would have
  * caught the row drawn under the field: it fails if the field grows, if a row is added, or if the
@@ -149,6 +164,7 @@ _Static_assert(BLOCK_H(ROWS_TEXT_N) <= KB_BOT - KB_TOP,
                "the symbol keyboard does not fit between the field and the footer");
 _Static_assert(KB_TOP >= FIELD_BOT + 12, "the top key row crowds the text field");
 _Static_assert(ROWS_TEXT_N >= ROWS_NAME_N, "BLOCK_H is asserted against the taller charset");
+_Static_assert(ACTION_ROW_W <= SAFE_W, "the action row is wider than the safe area");
 
 static kb_charset_t charset;
 static char *target;            /**< the caller's buffer; written only on DONE */
@@ -161,7 +177,26 @@ static const char *title;
 /** Cursor: row index into the glyph rows, or the action row when @ref on_action. */
 static int row, col;
 static bool on_action;
-static int action;              /**< 0 space, 1 done */
+static int action;              /**< #ACT_CASE, #ACT_SPACE or #ACT_DONE */
+
+/**
+ * @brief Capitals or not.
+ *
+ * The row tables are written in capitals and this shifts what is *drawn* as well as what is
+ * typed, so the keyboard always shows the letter it is about to give you. A keyboard that types
+ * lowercase off keys labelled in capitals is a keyboard you have to remember the state of.
+ *
+ * It is a plain toggle, not a one-shot that snaps back after a letter. Auto-shift would spell
+ * "Martin" in one fewer press and "MARTIN" in seven more, and every existing name in a roster is
+ * the second kind -- so it opens in capitals and stays wherever it was put. Nothing about a name
+ * that already exists changes: uppercase in, uppercase out.
+ */
+static bool upper;
+
+/** @brief @p g, cased. The row tables hold capitals; the marks row has no case to hold. */
+static char cased (char g) {
+    return (!upper && g >= 'A' && g <= 'Z') ? (char)(g - 'A' + 'a') : g;
+}
 
 /**
  * The x the cursor is trying to stay under while it moves up and down.
@@ -236,10 +271,18 @@ static int key_cx (int r, int c) {
     return rows()[r].x + c * (KEY_W + KEY_GAP) + KEY_W / 2;
 }
 
-/** Centre of an action key. SPACE and DONE are wide, so their centres are far apart. */
+/** Left edge of action key @p a. */
+static int action_x (int a) {
+    int x = ACTION_X;
+    for (int i = 0; i < a; i++) {
+        x += ACTION_W[i] + KEY_GAP;
+    }
+    return x;
+}
+
+/** Centre of an action key. They are wide, so their centres are far apart. */
 static int action_cx (int a) {
-    return (a == 0) ? (ACTION_X + WIDE_SPACE / 2)
-                    : (ACTION_X + WIDE_SPACE + KEY_GAP + WIDE_DONE / 2);
+    return action_x(a) + ACTION_W[a] / 2;
 }
 
 /**
@@ -269,10 +312,21 @@ static int nearest_col (int r, int x) {
     return best;
 }
 
-/** The action key nearest @p x. Two of them, so it is one comparison against the gap between. */
+/** The action key nearest @p x. Same rule as nearest_col, so entering the row from above lands
+ *  under the thumb rather than always on the first key. */
 static int nearest_action (int x) {
-    int mid = (action_cx(0) + action_cx(1)) / 2;
-    return (x < mid) ? 0 : 1;
+    int best = 0, best_d = 1 << 30;
+    for (int a = 0; a < ACTION_N; a++) {
+        int d = action_cx(a) - x;
+        if (d < 0) {
+            d = -d;
+        }
+        if (d < best_d) {
+            best_d = d;
+            best = a;
+        }
+    }
+    return best;
 }
 
 static void kb_enter (app_t *app) {
@@ -280,7 +334,8 @@ static void kb_enter (app_t *app) {
     row = 0;
     col = 0;
     on_action = false;
-    action = 0;
+    action = ACT_SPACE;
+    upper = true;
     want_x = key_cx(0, 0);
     caret_t = 0.0f;
     flash_t = 0.0f;
@@ -354,6 +409,14 @@ static void kb_update (app_t *app, float dt) {
         confirm(app);
         return;
     }
+    /* Z shifts without steering to the key, for the same reason B deletes and START confirms
+     * without steering to theirs: case changes in the middle of a word, and a word is where the
+     * cursor already is. The key stays because a shortcut nobody can see is not a feature. */
+    if (input_pressed(in, BTN_Z)) {
+        upper = !upper;
+        sound_play_effect(SFX_SETTING);
+        return;
+    }
 
     int last = row_count() - 1;
     bool moved = false;
@@ -417,8 +480,11 @@ static void kb_update (app_t *app, float dt) {
 
     if (input_pressed(in, BTN_A)) {
         if (!on_action) {
-            type(rows()[row].glyphs[col]);
-        } else if (action == 0) {
+            type(cased(rows()[row].glyphs[col]));
+        } else if (action == ACT_CASE) {
+            upper = !upper;
+            sound_play_effect(SFX_SETTING);
+        } else if (action == ACT_SPACE) {
             type(' ');
         } else {
             confirm(app);
@@ -490,23 +556,29 @@ static void kb_render (app_t *app, surface_t *fb) {
         const keyrow_t *kr = &rows()[r];
         int n = row_len(r);
         for (int c = 0; c < n; c++) {
-            char label[2] = { kr->glyphs[c], '\0' };
+            char label[2] = { cased(kr->glyphs[c]), '\0' };
             draw_key(app, kr->x + c * (KEY_W + KEY_GAP), row_y(r), KEY_W, label,
                      !on_action && r == row && c == col, false);
         }
     }
 
-    int ax = ACTION_X;
     int ay = action_y();
-    draw_key(app, ax, ay, WIDE_SPACE, "SPACE", on_action && action == 0, false);
-    ax += WIDE_SPACE + KEY_GAP;
-    draw_key(app, ax, ay, WIDE_DONE, "DONE", on_action && action == 1, true);
+    /* Labelled with what it gives you, not with what it is: "abc" while the board is in capitals.
+     * A key labelled with the state it is *in* has to be read together with the letters to mean
+     * anything, and the letters are the thing it changed. */
+    draw_key(app, action_x(ACT_CASE), ay, WIDE_CASE, upper ? "abc" : "ABC",
+             on_action && action == ACT_CASE, false);
+    draw_key(app, action_x(ACT_SPACE), ay, WIDE_SPACE, "SPACE",
+             on_action && action == ACT_SPACE, false);
+    draw_key(app, action_x(ACT_DONE), ay, WIDE_DONE, "DONE",
+             on_action && action == ACT_DONE, true);
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
     int hx = SAFE_X;
     hx = ui_hint(hx, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Type");
     hx = ui_hint(hx, FOOTER_Y + 14, "B", BTN_B_COLOR, UI_BTN_DISC,
                  len > 0 ? "Delete" : "Back");
+    hx = ui_hint(hx, FOOTER_Y + 14, "Z", BTN_Z_COLOR, UI_BTN_TALL, upper ? "abc" : "ABC");
     (void)ui_hint(hx, FOOTER_Y + 14, "S", BTN_START_COLOR, UI_BTN_DISC, "Done");
 
     rdpq_detach_show();

@@ -1,0 +1,42 @@
+# Type a mixed-case name, which until now was impossible.
+#
+# The letters were always in the ROM -- assets/fonts/charset-ui.txt has carried a-z since the
+# faces were cut -- and there was simply no key that reached them. So the interesting frames are
+# the ones where the *board* changes, not just the field: a case key that types lowercase off
+# keys still labelled in capitals is a keyboard you have to remember the state of.
+#
+# It also checks the action row, which went from two keys to three. SPACE keeps the middle so a
+# hand that learned "down, then A" still lands on it, and the footer gained a fourth hint, which
+# is the one that could push the row off the safe area.
+
+wait 150
+
+press l x8          # into the picker
+press start         # a new player, so the keyboard opens empty
+wait 30
+fbdump              # 1: three action keys -- abc / SPACE / DONE -- and four footer hints
+
+press down x4       # off the digit row, through QWERTYUIOP, ASDFGHJKL, ZXCVBNM, onto the actions
+wait 20
+fbdump              # 2: the cursor lands on SPACE, not on the first key of the row
+
+press left          # -> the case key
+press a             # lower case
+wait 20
+fbdump              # 3: EVERY letter key now reads lowercase, and the key itself reads ABC
+
+press up            # back into ZXCVBNM, at the case key's x
+press a x2          # two letters, lowercase
+wait 20
+fbdump              # 4: the field holds two lowercase letters
+
+press z             # the shortcut, which is the whole point: case changes mid-word
+press a             # one capital, without steering anywhere
+wait 20
+fbdump              # 5: two lowercase then one capital, and the board is back in capitals
+
+press start         # DONE
+wait 30
+fbdump              # 6: the card carries the mixed-case name
+
+exit

@@ -13,5 +13,5 @@ press r             # the editor
 wait 40
 press a             # the name cell -> the keyboard
 wait 40
-fbdump              # 1: five rows plus SPACE and DONE, clear of the field and the footer
+fbdump              # 1: five rows plus abc / SPACE / DONE, clear of the field and the footer
 exit

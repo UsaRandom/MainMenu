@@ -23,7 +23,7 @@ fbdump              # 1: ten cards under a live tab rail, straight from one pres
 press right         # -> slot 2, empty
 press a             # fills it and opens the keyboard
 wait 30
-fbdump              # 2: QWERTY with a digit row on top, and SPACE / DONE only -- no DELETE key
+fbdump              # 2: QWERTY with a digit row on top, and abc / SPACE / DONE -- no DELETE key
 
 press b             # nothing typed, so B leaves rather than doing nothing
 wait 30
