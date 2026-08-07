@@ -5,7 +5,8 @@ A box-art game launcher for the N64, run from a [SummerCart64](https://github.co
 ![The grid](docs/images/demo-grid-scrolled.png)
 
 *Every game, every cover and every cheat in that picture is invented —
-[`tools/mkdemo.py`](tools/mkdemo.py) draws original art for titles that do not exist.*
+[`tools/mkdemo.py`](tools/mkdemo.py) draws original art for titles that do not exist. Nothing is
+written on the covers; the menu is what puts a name under one.*
 
 ## What it does
 
@@ -14,6 +15,8 @@ A box-art game launcher for the N64, run from a [SummerCart64](https://github.co
   nothing to prepare and no list to hand-write.
 - **Finds the covers itself**, PNG or JPEG, at whatever size and aspect the scan happens to be,
   and caches the decoded art on the card so the next boot is warm.
+- **Fits the grid to the covers.** A tile is the shape of the art in it, and a tab of wide covers
+  lays out four across where a tab of tall ones lays out five. Nothing is cropped to fit.
 - **Tabs per system** — N64, NES, SNES, GB, GBC, SMS — plus Recent, Most Played and Favourites.
   Empty tabs do not appear.
 - **Remembers what you played** and for how long, and offers it back at the top.
@@ -42,7 +45,9 @@ it removed here.
 
 # Licence
 
-Released under the [GNU Affero General Public License](LICENSE.md), inherited from upstream.
+Copyright © 2026 UsaRandom, and the N64FlashcartMenu contributors this is forked from. Released
+under the [GNU Affero General Public License](LICENSE.md), version 3 or later, inherited from
+upstream. There is no warranty; see sections 15 and 16.
 
 Substantially the work of the N64FlashcartMenu authors and
 [contributors](https://github.com/Polprzewodnikowy/N64FlashcartMenu/graphs/contributors); this
@@ -63,6 +68,12 @@ labelled for a flashcart this fork no longer supports.
 * [svg64](src/libs/svg64) - [MIT License](src/libs/svg64/LICENSE) — vendored, not a submodule
 * [picojpeg](src/libs/picojpeg) - public domain, by Rich Geldreich
 
+Two more are linked in from inside libdragon rather than chosen here, and are credited for that
+reason:
+
+* [FatFs](http://elm-chan.org/fsw/ff/) by *ChaN* - [its own licence](libdragon/src/fatfs/License.md), the filesystem that reads the card
+* [libcart](https://github.com/devwizard64/libcart) by *devwizard64* - the flashcart driver. The copy inside libdragon states no licence terms.
+
 ## Icons
 The 3,894 icons players choose from are from [game-icons.net](https://game-icons.net), under
 [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) (a few authors CC0). That is an
@@ -70,6 +81,11 @@ attribution licence and the cartridge is what redistributes, so all 36 authors a
 [CREDITS.md](docs/CREDITS.md) and on the menu's own credits screen. They ride in the cartridge as
 SVG text and are turned into pixels when one is needed, which is why there can be thousands of
 them and why they follow whatever colours a player picks. The artwork is never committed here.
+
+## Data
+The database that recognises a cartridge and knows how it saves is derived from
+[ares](https://ares-emu.net)' own, ISC licensed, copyright © 2004-2025 ares team, Near et al. The
+cheat corpus, where a build ships one, is [libretro-database](https://github.com/libretro/libretro-database), MIT.
 
 ## Sounds
 See [License](https://pixabay.com/en/service/license-summary/) for the following sounds:

@@ -16,19 +16,24 @@ Format rules, because the baker is simple on purpose:
 
 # Source code
 
-This program is free software. You may use it, read it, change it and pass it on.
+Copyright (C) 2026 UsaRandom. Portions copyright the N64FlashcartMenu contributors, whose project
+this is a fork of.
 
-It is licensed under the GNU Affero General Public License, version 3 or later. A copy travels
-with the source as LICENSE.md.
+This program is free software: you may redistribute it and change it under the terms of the GNU
+Affero General Public License as published by the Free Software Foundation, either version 3 of
+that licence or, at your option, any later version.
 
-The complete corresponding source, including everything needed to build this exact cartridge, is
-at:
+There is NO WARRANTY for this program, to the extent permitted by law. See sections 15 and 16 of
+the licence for the full disclaimer.
+
+A copy of the licence travels with the source as LICENSE.md. The complete corresponding source,
+including everything needed to build this exact cartridge, is at:
 
   https://github.com/UsaRandom/MainMenu
 
-The AGPL asks that anyone given the program also be able to get its source. That is what the line
-above is for. If you received this cartridge from someone and that address does not work, the
-person who gave it to you owes you the source.
+The AGPL says that anyone handed the program can also get its source. That is what the address
+above is for. If you were given this cartridge and that address no longer works, whoever gave it
+to you is the one the licence obliges to supply the source.
 
 ## Built from
 
@@ -54,53 +59,57 @@ CC BY is an attribution licence. This cartridge redistributes the artwork, so th
 be named, and naming them is what this section is for. That obligation stands whole regardless of
 how many icons a given build actually packs.
 
-Icons made by:
+Icons made by, with the site each author gave for themselves where they gave one:
 
-- Delapouite
-- Lorc
+- Delapouite - https://delapouite.com
+- Lorc - http://lorcblog.blogspot.com
 - Skoll
 - Caro Asercion
-- Viscious Speed (CC0)
-- Sbed
+- Viscious Speed (CC0) - http://viscious-speed.deviantart.com
+- Sbed - http://opengameart.org/content/95-game-icons
 - Aussiesim
-- DarkZaitzev
+- DarkZaitzev - http://darkzaitzev.deviantart.com
 - Cathelineau
 - Quoting
-- Lord Berandas
-- Faithtoken
-- Willdabeast
+- Lord Berandas - http://berandas.deviantart.com
+- Faithtoken - http://fungustoken.deviantart.com
+- Willdabeast - http://wjbstories.blogspot.com
 - PriorBlue
-- Carl Olsen
-- Felbrigg
+- Carl Olsen - https://twitter.com/unstoppableCarl
+- Felbrigg - http://blackdogofdoom.blogspot.co.uk
 - Lucas
 - seregacthtuf
-- John Redman
+- John Redman - http://www.uniquedicetowers.com
 - Kier Heyl
-- Guard13007
+- Guard13007 - https://guard13007.com
 - Pierre Leducq
 - Rihlsul
 - Zeromancer (CC0)
 - Zajkonur
-- HeavenlyDog
+- HeavenlyDog - http://www.gnomosygoblins.blogspot.com
 - GeneralAce135
-- Andy Meneely
+- Andy Meneely - http://www.se.rit.edu/~andy/
 - Various artists
 - Starseeker
 - SpencerDub
-- Sparker
+- Sparker - http://citizenparker.com
 - Pepijn Poolman
-- John Colburn
-- Irongamer
+- John Colburn - http://ninmunanmu.com
+- Irongamer - http://ecesisllc.wix.com/home
 - Catsu
+
+The addresses are there because CC BY 3.0 asks for the URI an author specifies, not only their
+name, and the corpus supplies one for twenty of the thirty-six. The other sixteen gave none.
 
 Two of those names are directory names rather than people. seregacthtuf and Various artists
 postdate the corpus's own license.txt and are not listed in it, so they are credited as they are
 labelled upstream. Inventing a person's name for an attribution file would be worse than an
 imprecise one.
 
-Some icons in the corpus are left out of this build. That is a trademark question and has nothing
-to do with the attribution above; leaving artwork out does not reduce what is owed for the
-artwork kept.
+A few of the corpus's icons are not packed into this build. That is a decision about the subjects
+some of them depict and it changes nothing here: leaving artwork out does not reduce what is owed
+for the artwork kept, which is why the list above is the whole corpus rather than the part that
+shipped.
 
 ## Rendered by
 
@@ -159,6 +168,15 @@ They are MIDI, not recordings. The console holds the notes and plays them itself
 - acutest, for the host test suite. MIT. Not shipped in the cartridge.
 - svg64, for icon rasterisation. MIT.
 
+Two more arrive inside libdragon and are linked into this cartridge, so they are named here even
+though this project did not choose them:
+
+- FatFs, by ChaN, which is the filesystem that reads the SD card.
+  http://elm-chan.org/fsw/ff/
+- libcart, by devwizard64, which is the driver that detects the flashcart and talks to its card
+  slot. The copy inside libdragon states no licence terms.
+  https://github.com/devwizard64/libcart
+
 ---
 
 # Emulators
@@ -182,7 +200,7 @@ this program and each carries its own licence.
 # Data
 
 The game database that recognises a cartridge and knows how it saves is derived from the ares
-emulator's database.
+emulator's database. ares is ISC licensed, copyright (c) 2004-2025 ares team, Near et al.
 
   https://ares-emu.net
 
@@ -195,4 +213,7 @@ The cheat codes, where a build ships them, come from libretro-database. MIT.
 # Not affiliated
 
 This project is not affiliated with, endorsed by, or connected to any console maker, cartridge
-maker, or game publisher, nor to the upstream project it is forked from.
+maker, or game publisher. Every product name that appears in it belongs to whoever owns it.
+
+It IS derived from N64FlashcartMenu, which is stated above and is the point of a fork. Nothing
+here is endorsed by that project either, and any fault in this cartridge is this project's own.
