@@ -48,6 +48,41 @@ ARTCACHE_DIR = $(BUILD_DIR)/artcache
 FIXTURE_ART  = $(if $(wildcard $(ARTCACHE_DIR)),--art-from $(ARTCACHE_DIR),)
 DFS_ROOT_DIR = $(BUILD_DIR)/dfsroot
 
+# ------------------------------------------------------------------- icon corpus --
+#
+# The faces a profile can wear: SVG text in the cartridge, rasterised on the console by
+# src/libs/svg64. Deliberately NOT vendored -- ICON_DIR points outside the repository, so a
+# clone does not ship 17 MB of CC BY artwork that git would then keep forever. Point it anywhere
+# else and everything still works; point it at nothing and the build still succeeds with no
+# picker, which is what a clone without the corpus gets.
+#
+# Get the corpus from https://game-icons.net. Attribution is an obligation and is discharged in
+# docs/CREDITS.md, which the credits screen renders -- see section 4 of docs/GOTCHAS-PROFILES.md
+# for why excluding icons does not reduce it.
+ICON_DIR ?= ../svgicons
+
+# Icons flagged as possible third-party IP, excluded by default; 286 of 4180. Every icon was
+# reviewed individually -- see svg64's docs/ICON-IP-REVIEW.md. Exclusions apply BEFORE the limit
+# below, so capping the count for a quick build cannot reintroduce one. To pack the full set:
+#
+#   make ICON_EXCLUDE=
+#
+ICON_EXCLUDE ?= tools/ip-blocklist.txt
+
+# The full pack is 6,561,304 bytes and takes the ROM from 1.6 MB to about 7.8. That is fine for a
+# cartridge and slow for a regression run, which rebuilds the ROM once per input script -- so a
+# fixture build caps it. 200 icons is 348,158 bytes and still spans 24 categories, which is
+# enough to exercise paging, the cache and the position bar.
+ICON_LIMIT ?= $(if $(FIXTURE),200,0)
+
+ICON_PACK  = $(FILESYSTEM_DIR)/icons.pack
+ICON_META  = $(FILESYSTEM_DIR)/icons.meta
+# Named after the settings that decide the contents, so changing any of them rebuilds and
+# changing none of them does not. The corpus tree itself is not a prerequisite: it is four
+# thousand files and it does not change.
+ICON_STAMP = $(BUILD_DIR)/.icons-$(ICON_LIMIT)-$(if $(ICON_EXCLUDE),excl,all)-$(shell echo '$(ICON_DIR)' | cksum | cut -d' ' -f1)
+HAVE_ICONS = $(wildcard $(ICON_DIR))
+
 # PLAIN_ART=1 builds the fixture from mkfixture's own procedural cards instead of the real corpus,
 # into a directory of its own so the real fixture is left alone. It exists for one script: the
 # real corpus cannot SETTLE. One card in it is 2118 x 1457 and decodes for 38 seconds, so a
@@ -174,6 +209,9 @@ SRCS = \
 	screens/screen_cheatedit.c \
 	screens/screen_cheats.c \
 	screens/screen_code.c \
+	screens/screen_credits.c \
+	screens/screen_appearance.c \
+	screens/screen_keyboard.c \
 	screens/screen_detail.c \
 	screens/screen_grid.c \
 	screens/screen_launch.c \
@@ -183,7 +221,11 @@ SRCS = \
 	screens/screen_parental.c \
 	screens/screen_settings.c \
 	screens/screen_fault.c \
+	libs/svg64/svg64.c \
+	libs/svg64/path.c \
+	libs/svg64/raster.c \
 	ui/draw.c \
+	ui/icon.c \
 	ui/input.c \
 	ui/theme.c \
 	ui/tween.c \
@@ -213,7 +255,10 @@ $(shell mkdir -p $(BUILD_DIR) && touch $(CONFIG_STAMP))
 # because this is what derives the filesystem entry.
 FONTS = \
 	Firple-Bold.ttf \
-	FirpleBoot.ttf
+	FirpleBoot.ttf \
+	FirpleSmall.ttf \
+	FirpleKey.ttf \
+	FirpleField.ttf
 
 IMAGES = \
 	sc64_logo.png
@@ -256,6 +301,8 @@ FILESYSTEM = \
 	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(FONTS:%.ttf=%.font64))) \
 	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(SOUNDS:%.wav=%.wav64))) \
 	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(IMAGES:%.png=%.sprite))) \
+	$(FILESYSTEM_DIR)/credits.txt \
+	$(if $(HAVE_ICONS),$(ICON_PACK) $(ICON_META),) \
 	$(MUSIC_FS)
 
 $(MINIZ_OBJS): N64_CFLAGS+=-Wno-unused-function -fcompare-debug-second
@@ -272,6 +319,21 @@ $(FILESYSTEM_DIR)/Firple-Bold.font64: MKFONT_FLAGS+=--compress 1 --outline 1 --s
 # four fixed strings. Baking the full 7,931-character charset at that size would cost megabytes
 # for glyphs nothing renders; the boot charset is 41 characters.
 $(FILESYSTEM_DIR)/FirpleBoot.font64: MKFONT_FLAGS+=--compress 1 --size 32 --charset $(ASSETS_DIR)/fonts/charset-boot.txt --ellipsis 2E,3
+
+# Three sizes for the profile picker and the keyboard, all on the 84-glyph charset-ui.txt rather
+# than the 7,931-glyph one the body font uses.
+#
+# The reason is arithmetic. A glyph atlas scales with the square of the type size, and the full
+# charset measures 681,040 bytes at 20 px -- so 24, 32 and 40 px of it would be roughly 1.0, 1.7
+# and 2.7 MB, about 5.4 MB of glyphs for text that is letters, digits and a handful of marks. On
+# the restricted charset the same three come to about 48 KB together.
+#
+# The cost is that a character outside charset-ui.txt draws as a hole and nothing says so at build
+# time. tools/charsetcheck.py is what turns that into a build failure; anything drawn through
+# ui_text_font() has to stay inside it.
+$(FILESYSTEM_DIR)/FirpleSmall.font64: MKFONT_FLAGS+=--compress 1 --size 24 --charset $(ASSETS_DIR)/fonts/charset-ui.txt --ellipsis 2E,3
+$(FILESYSTEM_DIR)/FirpleKey.font64:   MKFONT_FLAGS+=--compress 1 --size 32 --charset $(ASSETS_DIR)/fonts/charset-ui.txt --ellipsis 2E,3
+$(FILESYSTEM_DIR)/FirpleField.font64: MKFONT_FLAGS+=--compress 1 --size 40 --charset $(ASSETS_DIR)/fonts/charset-ui.txt --ellipsis 2E,3
 $(FILESYSTEM_DIR)/%.wav64: AUDIOCONV_FLAGS=--wav-compress 1
 
 $(@info $(shell mkdir -p ./$(FILESYSTEM_DIR) &> /dev/null))
@@ -287,11 +349,43 @@ $(FILESYSTEM_DIR)/%.font64: $(ASSETS_DIR)/fonts/%.ttf
 # repository -- and git history keeps a blob forever, so that copy would be permanent.
 # An explicit rule beats the pattern rule above, which is what stops make looking for a
 # FirpleBoot.ttf that does not exist.
-$(FILESYSTEM_DIR)/FirpleBoot.font64: $(ASSETS_DIR)/fonts/Firple-Bold.ttf
+$(FILESYSTEM_DIR)/FirpleBoot.font64 \
+$(FILESYSTEM_DIR)/FirpleSmall.font64 \
+$(FILESYSTEM_DIR)/FirpleKey.font64 \
+$(FILESYSTEM_DIR)/FirpleField.font64: $(ASSETS_DIR)/fonts/Firple-Bold.ttf $(ASSETS_DIR)/fonts/charset-ui.txt
 	@echo "    [FONT] $@"
-	@mkdir -p $(BUILD_DIR)/fontbake
-	@$(N64_MKFONT) $(MKFONT_FLAGS) -o $(BUILD_DIR)/fontbake "$<"
-	@mv $(BUILD_DIR)/fontbake/Firple-Bold.font64 $@
+	@# A scratch directory PER TARGET, not one shared. mkfont names its output after its input,
+	@# so all four of these bakes write build/fontbake/Firple-Bold.font64 -- and under `make -j8`
+	@# they run at once, race for that one path, and three of the four `mv`s win while the fourth
+	@# finds nothing. It presented as FirpleSmall.font64 simply not existing after a build that
+	@# printed [FONT] for it, which reads as a missing rule rather than as a race.
+	@mkdir -p $(BUILD_DIR)/fontbake/$(notdir $@)
+	@$(N64_MKFONT) $(MKFONT_FLAGS) -o $(BUILD_DIR)/fontbake/$(notdir $@) "$<"
+	@mv $(BUILD_DIR)/fontbake/$(notdir $@)/Firple-Bold.font64 $@
+
+# The credits screen renders this file, so the licence text ships as data rather than as string
+# literals. That puts it outside the reach of any charset check on the source, which is why
+# mkcredits.py does the check itself and writes nothing when it fails: an em dash pasted into the
+# Markdown is a hole in the attribution on a console nobody is going to re-read.
+# The pack, and the category index built FROM the pack rather than beside it. That direction
+# matters: ICON_LIMIT and ICON_EXCLUDE both change what ships, and counts baked from the full
+# metadata against a capped pack are a lie the page counter prints. See tools/mkiconmeta.py.
+$(ICON_STAMP):
+	@rm -f $(BUILD_DIR)/.icons-*
+	@mkdir -p $(BUILD_DIR)
+	@touch $@
+
+$(ICON_PACK): tools/mkpack.py $(ICON_EXCLUDE) $(ICON_STAMP)
+	@mkdir -p $(FILESYSTEM_DIR)
+	@python3 tools/mkpack.py "$(ICON_DIR)" -o $@ \
+		$(if $(filter-out 0,$(ICON_LIMIT)),--limit $(ICON_LIMIT),) \
+		$(if $(ICON_EXCLUDE),--exclude "$(ICON_EXCLUDE)",)
+
+$(ICON_META): $(ICON_PACK) tools/mkiconmeta.py tools/icon-meta.jsonl
+	@python3 tools/mkiconmeta.py $(ICON_PACK) -m tools/icon-meta.jsonl -o $@
+
+$(FILESYSTEM_DIR)/credits.txt: docs/CREDITS.md tools/mkcredits.py $(ASSETS_DIR)/fonts/charset.txt
+	@python3 tools/mkcredits.py docs/CREDITS.md -o $@ --charset $(ASSETS_DIR)/fonts/charset.txt
 
 $(FILESYSTEM_DIR)/%.wav64: $(ASSETS_DIR)/sounds/%.wav
 	@echo "    [AUDIO] $@"

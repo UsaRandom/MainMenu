@@ -28,6 +28,39 @@ void ui_border (int x, int y, int w, int h, int t, uint16_t c);
 /** @brief One line of text in a box @p w wide. Caller sets the render mode first. */
 void ui_text (int x, int y, int w, rdpq_align_t align, int style, const char *s);
 
+/**
+ * @brief ui_text() in a font other than the body face.
+ *
+ * Every face except #FNT_DEFAULT carries a restricted charset, because a full-charset bake at
+ * 40 px is about 2.7 MB of glyphs against 681 KB at 20 px -- see docs/GOTCHAS-PROFILES.md
+ * section 1.4. So a string drawn through here can only contain what that face was baked with,
+ * and a character outside it draws as a hole rather than as an error. tools/charsetcheck.py
+ * is what turns that into a build failure; keep new strings within reach of it.
+ */
+void ui_text_font (menu_font_type_t font, int x, int y, int w, rdpq_align_t align,
+                   int style, const char *s);
+
+/**
+ * @brief Word-wrapped text in a box @p w wide, returning how far the pen advanced in Y.
+ *
+ * The credits screen flows paragraphs it did not write and cannot measure ahead of time, so it
+ * needs the height back rather than assuming a row pitch. Wrapping is WRAP_WORD at @p w, which
+ * is why the baked credits file joins hard-wrapped source lines into whole paragraphs -- handing
+ * this 100-column fragments would re-wrap them at a width nobody chose.
+ *
+ * @return the Y advance of what was drawn, which is the line height times the number of lines.
+ */
+int ui_text_wrap (menu_font_type_t font, int x, int y, int w, int style, const char *s);
+
+/**
+ * @brief How wide @p s is in @p font, in pixels. Draws nothing.
+ *
+ * The keyboard needs it to put the caret after the text. The face is proportional, so a caret
+ * placed at `length * a constant` drifts along a name and ends up inside the last letter -- which
+ * is the kind of wrong that looks like a rounding bug and is actually a wrong model.
+ */
+int ui_text_width (menu_font_type_t font, const char *s);
+
 /** @brief ui_text() that also sets the standard text render mode. For one-off labels. */
 void ui_label (int x, int y, int w, rdpq_align_t align, int style, const char *s);
 

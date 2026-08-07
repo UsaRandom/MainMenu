@@ -1,0 +1,26 @@
+Sound effects in this directory
+===============================
+
+Five WAV files, sourced from Pixabay and used under the Pixabay Content Licence:
+https://pixabay.com/service/license-summary/
+
+  cursorsound.wav
+      "Click buttons ui menu sounds effects button 7" by Skyscraper_seven
+      https://pixabay.com/sound-effects/click-buttons-ui-menu-sounds-effects-button-7-203601/
+
+  enter.wav
+  back.wav
+  settings.wav
+      "Menu button user interface pack" by Liecio
+      https://pixabay.com/sound-effects/menu-button-user-interface-pack-190041/
+
+  error.wav
+      "Error call to attention" by Universfield
+      https://pixabay.com/sound-effects/error-call-to-attention-129258/
+
+The Pixabay licence permits use in commercial and non-commercial projects without
+attribution. Attribution is given here anyway, because the people who made these
+should be nameable by anyone holding the cartridge.
+
+These files are NOT covered by the AGPL-3.0 that covers this project's source code.
+See ../../LICENSE.md for that, and ../../docs/CREDITS.md for the whole picture.

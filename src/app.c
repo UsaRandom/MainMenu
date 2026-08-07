@@ -28,6 +28,7 @@
 #include "menu/music.h"
 #include "menu/launchlog.h"
 #include "menu/profile.h"
+#include "ui/icon.h"
 #include "menu/parental.h"
 #include "menu/paths.h"
 #include "menu/sound.h"
@@ -134,6 +135,17 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
 
     /* Where the launch path records what it did, since USB is not a channel here. */
     launchlog_init(app->storage);
+
+    /* The icon corpus, for the faces profiles wear. Absent is normal and not a fault: a build
+     * made without ICON_DIR pointing at the artwork has no pack, and everything except the
+     * picker works exactly as it did.
+     *
+     * Before profile_load(), and it has to be. A profile with no icon of its own takes the
+     * default for its slot out of the pack's metadata, and every card written before this feature
+     * existed is in exactly that state -- so with the order the other way round every profile on
+     * every existing card would come up blank, permanently, because profile_load() only runs once.
+     * Needs nothing but dfs_init(), which is well above. */
+    icon_init();
 
     /* Before cache_init(), which is fine -- profile_load() only reads an ini and clamps an index.
      * It has to happen before playstate_load() below, because which file that reads is a function
@@ -460,6 +472,24 @@ void app_run (boot_params_t *boot_params) {
             app->bg_calls++;
         }
 
+        /* Icon rasterising, here rather than in each screen's background(), because three screens
+         * want it and the one that forgot would be the one showing blank plates. It costs nothing
+         * on a screen that has requested nothing: icon_pump() returns immediately with an empty
+         * queue.
+         *
+         * ICON_BUDGET_US is about one 40 px icon per frame at svg64's measured 4.8 ms. The cap is
+         * on TIME and not on a count of three, deliberately: the worst file in the corpus takes
+         * 31 ms, and a count-only budget would call three of those a normal frame and drop six
+         * fields saying so. See src/ui/icon.h.
+         *
+         * Bracketed on its own. It sat outside every timer at first, which meant the one genuinely
+         * new cost in this program appeared in no column of the FRAME line -- and the picker
+         * reported bg_us=42 while taking 90 ms frames, which reads as "icons are free" and is
+         * exactly the convincing fake number AUDIT.md keeps warning about. */
+        uint32_t t4 = TICKS_READ();
+        app->icons_done += icon_pump(TICKS_FROM_US(ICON_BUDGET_US));
+        app->icon_us += TIMER_MICROS(TICKS_DISTANCE(t4, TICKS_READ()));
+
         app->frame++;
         if ((app->frame % 60) == 0) {
             /* Every frame in the window, not one instantaneous sample of it. Sampling app->dt
@@ -468,13 +498,14 @@ void app_run (boot_params_t *boot_params) {
              * above 25 ms, and offered no way to tell whether that tail was three bad frames or
              * three hundred. */
             debugf("FRAME n=%lu f1=%lu f2=%lu f3=%lu f4+=%lu worst_us=%lu "
-                   "upd_us=%lu rnd_us=%lu bg_us=%lu snd_us=%lu spin_us=%lu rowus=%lu scanus=%lu starts=%lu stats=%lu rows=%lu worstrow_us=%lu inf_us=%lu scl_us=%lu spin=%lu bg=%lu\n",
+                   "upd_us=%lu rnd_us=%lu bg_us=%lu icon_us=%lu icons=%lu snd_us=%lu spin_us=%lu rowus=%lu scanus=%lu starts=%lu stats=%lu rows=%lu worstrow_us=%lu inf_us=%lu scl_us=%lu spin=%lu bg=%lu\n",
                    (unsigned long)app->frame,
                    (unsigned long)app->fieldbin[0], (unsigned long)app->fieldbin[1],
                    (unsigned long)app->fieldbin[2], (unsigned long)app->fieldbin[3],
                    (unsigned long)app->worst_us,
                    (unsigned long)(app->update_us / 60), (unsigned long)(app->render_us / 60),
                    (unsigned long)(app->bg_us / 60),
+                   (unsigned long)(app->icon_us / 60), (unsigned long)app->icons_done,
                    (unsigned long)(app->snd_us / 60),
                    (unsigned long)(app->spin_us / 60),
                    (unsigned long)(thumb_rows_us / 60), (unsigned long)(thumb_scan_us / 60),
@@ -497,6 +528,7 @@ void app_run (boot_params_t *boot_params) {
             allocwatch_reset();
             for (int i = 0; i < FRAMESTAT_BINS; i++) app->fieldbin[i] = 0;
             app->worst_us = app->update_us = app->render_us = app->bg_us = app->spin_us = 0;
+            app->icon_us = app->icons_done = 0;
             app->snd_us = 0;
             img_rows_done = img_worst_row_us = img_entropy_us = img_scale_us = 0;
             thumb_rows_us = thumb_scan_us = thumb_starts = thumb_statcalls = 0;

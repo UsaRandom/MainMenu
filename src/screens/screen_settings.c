@@ -34,6 +34,39 @@
 #define LIST_W      SAFE_W
 #define ROW_H       34
 
+/**
+ * @brief The pinned Build and Cheat engine lines below the rows.
+ *
+ * Those two are diagnostics rather than settings -- they are read, never changed -- so they stay
+ * put while the rows move under them. Scrolling the build string off the bottom would make "what
+ * version is this" a question about scroll position.
+ */
+#define INFO_GAP    24      /**< separator, and the air around it */
+#define INFO_LINE_H 22
+#define INFO_LINES  2       /**< Build, Cheat engine */
+#define INFO_H      76      /**< reserved below the rows; must cover the lines above */
+
+/**
+ * @brief Rows visible at once, and the reason this screen scrolls at all.
+ *
+ * At seven rows the list ended at y=334 with the info block below it reaching 402, against a
+ * footer at 424 -- twenty-two pixels of slack. The Credits row makes it eight and that slack is
+ * gone: the info block would have been drawn straight through the footer.
+ *
+ * VISIBLE is derived from INFO_H, so the list can never overrun the footer by construction and
+ * an assertion saying so would be a tautology -- it was written that way first and could not be
+ * made to fail, which is the whole reason for checking. What *can* go wrong is the reservation
+ * being too small for what is drawn into it: a third diagnostic line added without growing
+ * INFO_H puts text under the footer, silently. That is what these two check, and both fail when
+ * fed a number that would break them.
+ */
+#define LIST_H      (FOOTER_Y - LIST_Y - INFO_H)
+#define VISIBLE     (LIST_H / ROW_H)
+
+_Static_assert(VISIBLE >= 1, "settings list has no room for a single row");
+_Static_assert(INFO_H >= INFO_GAP + INFO_LINES * INFO_LINE_H,
+               "the info block draws more lines than the space reserved for it below the rows");
+
 /** The level meter drawn in place of a number. A number tells you 6; a meter tells you 6 of 10. */
 #define METER_W     14
 #define METER_GAP   4
@@ -61,10 +94,27 @@ typedef enum {
     ROW_TRACK,
     ROW_CLOCK,
     ROW_PARENTAL,
+    ROW_CREDITS,
     ROW_COUNT,
 } row_t;
 
 static int cursor;
+static int top;         /**< first visible row; see VISIBLE */
+
+/**
+ * @brief Set on the way out to a screen that comes back here, so enter() keeps the cursor.
+ *
+ * Four rows open something -- the roster, the clock, the parental panel and the credits -- and
+ * every one of them returns to SCREEN_SETTINGS, which re-enters this screen and used to reset
+ * the cursor to the top. That was survivable while the list was seven rows and fitted on screen.
+ * It stopped being survivable when Credits became the eighth row and the list started scrolling:
+ * reading the licence and pressing B put you back at Players with the window scrolled home, so
+ * getting back to where you were meant seven presses down through a list that moves under you.
+ *
+ * Measured on the frames from tools/inputs/credits.txt: before this, dump 7 was byte-identical to
+ * dump 1 -- the whole round trip left no trace, which is exactly the complaint.
+ */
+static bool returning;
 static float track_settle;      /**< seconds left before the chosen track starts; 0 = none pending */
 
 /* theme.c owns the list. This screen used to keep a second copy of it, which meant adding a
@@ -88,7 +138,11 @@ static void flush_track (app_t *app) {
 
 static void settings_enter (app_t *app) {
     (void)app;
-    cursor = 0;
+    if (!returning) {
+        cursor = 0;
+        top = 0;
+    }
+    returning = false;
     track_settle = 0.0f;
 }
 
@@ -152,6 +206,15 @@ static void settings_update (app_t *app, float dt) {
         sound_play_effect(SFX_CURSOR);
     }
 
+    /* The window follows the cursor rather than the other way round, so a row is never selected
+     * off screen. Same shape as the lock list, and it is inert while ROW_COUNT fits in VISIBLE. */
+    if (cursor < top) {
+        top = cursor;
+    }
+    if (cursor >= top + VISIBLE) {
+        top = cursor - VISIBLE + 1;
+    }
+
     int delta = (in->right ? 1 : 0) - (in->left ? 1 : 0);
     bool toggle = input_pressed(in, BTN_A);
 
@@ -169,6 +232,7 @@ static void settings_update (app_t *app, float dt) {
                  * the padlocks and the schedule apply to every profile at once and switching
                  * cannot get round either -- so gating this would cost every family a code entry
                  * to protect nothing. See profile.h. */
+                returning = true;
                 app_goto(app, SCREEN_PROFILES);
                 return;
             }
@@ -239,9 +303,11 @@ static void settings_update (app_t *app, float dt) {
                 if (parental_code_set()) {
                     screen_code_ask(CODE_ASK_UNLOCK, "Enter the code to set the clock",
                                     SCREEN_CLOCK, SCREEN_SETTINGS);
-                    app_goto(app, SCREEN_CODE);
+                    returning = true;
+                app_goto(app, SCREEN_CODE);
                 } else {
-                    app_goto(app, SCREEN_CLOCK);
+                    returning = true;
+                app_goto(app, SCREEN_CLOCK);
                 }
                 return;
             }
@@ -256,10 +322,23 @@ static void settings_update (app_t *app, float dt) {
                 if (parental_code_set()) {
                     screen_code_ask(CODE_ASK_UNLOCK, "Enter the parental code",
                                     SCREEN_PARENTAL, SCREEN_SETTINGS);
-                    app_goto(app, SCREEN_CODE);
+                    returning = true;
+                app_goto(app, SCREEN_CODE);
                 } else {
-                    app_goto(app, SCREEN_PARENTAL);
+                    returning = true;
+                app_goto(app, SCREEN_PARENTAL);
                 }
+                return;
+            }
+            break;
+        case ROW_CREDITS:
+            if (toggle) {
+                sound_play_effect(SFX_SETTING);
+                /* Not behind the parental code and not behind anything else. The AGPL's offer of
+                 * source has to be reachable by whoever is holding the console, and a licence a
+                 * parent can lock away is not an offer. */
+                returning = true;
+                app_goto(app, SCREEN_CREDITS);
                 return;
             }
             break;
@@ -268,9 +347,20 @@ static void settings_update (app_t *app, float dt) {
     }
 }
 
+/**
+ * @brief Y of row @p idx inside the scroll window, or a value off screen if it is not visible.
+ *
+ * Returning an off-screen coordinate rather than a flag keeps every caller a straight line: the
+ * scissor around the list is what actually stops the drawing, so a row above or below the window
+ * costs a few clipped primitives and no branch at each call site.
+ */
+static int row_y (int idx) {
+    return LIST_Y + (idx - top) * ROW_H;
+}
+
 static void draw_row (app_t *app, int idx, const char *label, const char *value) {
     const theme_t *th = app->theme;
-    int y = LIST_Y + idx * ROW_H;
+    int y = row_y(idx);
 
     if (idx == cursor) {
         ui_fill(LIST_X, y, LIST_W, ROW_H, th->panel_alt);
@@ -288,7 +378,7 @@ static void draw_row (app_t *app, int idx, const char *label, const char *value)
  * a second label. */
 static void draw_volume_row (app_t *app, int idx, const char *label, int value) {
     const theme_t *th = app->theme;
-    int y = LIST_Y + idx * ROW_H;
+    int y = row_y(idx);
 
     if (idx == cursor) {
         ui_fill(LIST_X, y, LIST_W, ROW_H, th->panel_alt);
@@ -326,6 +416,12 @@ static void settings_render (app_t *app, surface_t *fb) {
     /* First, above Theme, because the theme belongs to whoever this row names -- reading the two
      * in order is what says so. The value is the active player, so the row answers "who am I"
      * without being opened. */
+    /* Scissored to the window, so a row scrolling past either end is cut rather than drawn over
+     * the header or the info block. The rows themselves are drawn unconditionally: at eight rows
+     * and seven visible there is exactly one off screen, and a branch per row to save one clipped
+     * fill would be the more complicated of the two. */
+    rdpq_set_scissor(0, LIST_Y, SCREEN_W, LIST_Y + VISIBLE * ROW_H);
+
     draw_row(app, ROW_PROFILES, "Players", profile_name(profile_active()));
     draw_row(app, ROW_THEME, "Theme", th->name);
     draw_volume_row(app, ROW_SFX, "Sound effects", app->settings.sfx_volume);
@@ -347,20 +443,41 @@ static void settings_render (app_t *app, surface_t *fb) {
     draw_row(app, ROW_PARENTAL, "Parental controls",
              parental_code_set() ? "On" : "Off");
 
+    /* Last, because it is the row nobody is looking for and the one row here that changes
+     * nothing about the console. */
+    draw_row(app, ROW_CREDITS, "Credits and licences", "");
+
+    rdpq_set_scissor(0, 0, SCREEN_W, SCREEN_H);
+
+    if (ROW_COUNT > VISIBLE) {
+        int track_h = VISIBLE * ROW_H;
+        int thumb = (track_h * VISIBLE) / ROW_COUNT;
+        if (thumb < POSBAR_THUMB_MIN) {
+            thumb = POSBAR_THUMB_MIN;
+        }
+        int travel = track_h - thumb;
+        int pos = (travel * top) / (ROW_COUNT - VISIBLE);
+        ui_fill(POSBAR_X, LIST_Y, POSBAR_W, track_h, th->panel);
+        ui_fill(POSBAR_X, LIST_Y + pos, POSBAR_W, thumb, th->text_dim);
+    }
+
     /* Just the build. There were two more lines here -- a library count and a cheat database
      * count -- on the theory that they answered the first support questions anyone would ask.
      * They do not: the grid already shows how many games there are, one tab at a time and with
      * their names on, and the cheat count answers a question nobody asks in the form "how many
      * games does the database cover". The build string is the only one of the three that cannot
      * be read off any other screen. */
-    int y = LIST_Y + ROW_COUNT * ROW_H + 24;
+    /* Anchored to the bottom of the window rather than to the number of rows. It was
+     * LIST_Y + ROW_COUNT * ROW_H + 24, which is where the eighth row put it straight through the
+     * footer -- the reason VISIBLE and its static assertion exist. */
+    int y = LIST_Y + VISIBLE * ROW_H + INFO_GAP;
     ui_fill(LIST_X, y, LIST_W, HAIRLINE, th->panel_alt);
-    y += 22;
+    y += INFO_LINE_H;
 
     snprintf(buf, sizeof(buf), "%s  %s", MENU_VERSION, BUILD_TIMESTAMP);
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Build");
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
-    y += 22;
+    y += INFO_LINE_H;
 
     /* Whether the cheat engine actually runs on this console, which is the one thing about cheats
      * that cannot be established from the menu side and the one thing the first hardware run left

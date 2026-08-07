@@ -1,0 +1,53 @@
+# Rename an existing player, which until now was impossible.
+#
+# A name could only be set at the moment the slot was created -- on the way out of START or A on an
+# empty card. Get it wrong there and it was wrong forever: Z went straight to the appearance editor
+# and the footer called it "Edit", so somebody looking for a rename found only colours and
+# concluded there wasn't one.
+#
+# This also checks the keyboard's geometry, which is the other half of the same report. The digit
+# row was added at y=104 against a field whose bottom edge is at 108, so the top row of keys was
+# drawn four pixels underneath the box being typed into. Frame 3 is the evidence either way.
+
+wait 150
+
+press l x8          # into the picker
+press start         # a second player, so there is somebody to rename
+wait 30
+press a x3          # three presses of the key under the cursor, which is the digit 1
+wait 20
+fbdump              # 1: the field reads 111, and the key rows clear the field
+press start         # DONE
+wait 30
+fbdump              # 2: back on the cards, the new player is called 111
+
+press z             # the edit menu, which is what "Z Name or icon" opens
+wait 30
+fbdump              # 3: two rows, Name selected, showing the name as it will be typed
+
+press a             # -> the keyboard, pre-filled
+wait 30
+fbdump              # 4: "Rename this player", field already holding 111
+
+press b x3          # empty it a character at a time
+press right         # -> the digit 2
+press a x2          # 22
+wait 20
+press start         # DONE
+wait 30
+fbdump              # 5: the card now reads 22, which is a rename and not a second profile
+
+press z
+press down          # -> the second row of the edit menu
+wait 20
+fbdump              # 6: Icon and colours selected, showing the plate colour beside it
+
+press b             # close the menu
+press cleft         # the remove confirmation, which is the other popup
+wait 30
+fbdump              # 7: Keep outlined rather than filled white, Delete in orange, no
+                    #    "slot stays empty" line -- it explained a numbering scheme to somebody
+                    #    who asked to delete a row
+press b             # and back out without deleting anything
+
+exit

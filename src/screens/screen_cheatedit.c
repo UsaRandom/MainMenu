@@ -66,14 +66,30 @@
 #define HEX_CELLS   12                       /**< 8 address nibbles + 4 value nibbles */
 
 /** The name alphabet, in the order up/down walks it. Space first so a short name is the default. */
-static const char ALPHABET[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'!";
-#define ALPHA_N ((int)(sizeof(ALPHABET) - 1))
 
 static char    name[USERCHEAT_NAME_CAP];
 static uint8_t nibbles[USERCHEAT_MAX_LINES][HEX_CELLS];
 static int     line_count;
 static int     cursor;                       /**< 0..name_cells-1 is the name, then 12 per line */
-static int     name_cells;                   /**< NAME_CELLS, or 0 when the name is a label */
+/**
+ * @brief Cursor positions the name occupies. Always 1.
+ *
+ * It was NAME_CELLS -- twenty-three, one per character -- because the name was typed on a
+ * per-character odometer sharing this screen's single cursor with the hex nibbles. The keyboard
+ * replaced that, so the whole name is one stop: A on it opens screen_keyboard.c with KB_TEXT,
+ * which is the charset with digits and marks in it, because cheat names in the corpus are full
+ * of both.
+ *
+ * Kept as a named variable rather than folded away, because cursor_row(), cursor_cell() and
+ * total_cells() are all written in terms of it and a literal 1 in three places is how the name
+ * row and the hex rows would stop agreeing about where the boundary is.
+ *
+ * It was also 0 for a name too long to fit the cell strip, which made that name uneditable. The
+ * keyboard has no such limit, so that case is gone.
+ */
+static int     name_cells = 1;
+/** Set while the keyboard has the screen, so enter() knows not to reset everything. */
+static bool    pending_name_edit;
 static const char *error;
 static bool    editing;                      /**< opened on an existing cheat rather than a blank */
 
@@ -109,6 +125,14 @@ static int total_cells (void) {
 
 static void cheatedit_enter (app_t *app) {
     (void)app;
+    /* Coming back from the keyboard, which wrote straight into `name`. Everything else on this
+     * screen -- the nibbles, the line count, which group is being edited -- has to survive that
+     * round trip, so nothing below runs. */
+    if (pending_name_edit) {
+        pending_name_edit = false;
+        return;
+    }
+
     memset(nibbles, 0, sizeof(nibbles));
     cursor = 0;
     error = NULL;
@@ -119,7 +143,6 @@ static void cheatedit_enter (app_t *app) {
         /* A name that will not fit the cell strip becomes a label. Truncating it to fit would
          * change it, and a changed name is a new cheat rather than a replacement -- the list would
          * end up holding the original and the edit under two nearly identical names. */
-        name_cells = ((int)strlen(name) <= NAME_CELLS) ? NAME_CELLS : 0;
         line_count = pending_group->count;
         for (int r = 0; r < line_count; r++) {
             const cheat_code_t *c = &pending_codes[pending_group->first + r];
@@ -134,7 +157,6 @@ static void cheatedit_enter (app_t *app) {
         /* A default name rather than an empty one. An unnamed group would draw as a blank row in
          * the cheats list, and the user has to press up sixteen times from space to reach A. */
         snprintf(name, sizeof(name), "NEW CHEAT");
-        name_cells = NAME_CELLS;
         line_count = 1;
     }
 
@@ -142,11 +164,6 @@ static void cheatedit_enter (app_t *app) {
      * edited -- and so nothing holds a pointer into groups[] across a realloc. */
     pending_group = NULL;
     pending_codes = NULL;
-}
-
-static int alpha_index (char c) {
-    const char *p = strchr(ALPHABET, c);
-    return (p != NULL) ? (int)(p - ALPHABET) : 0;
 }
 
 /** @brief Pack a row of nibbles into the address/value pair the engine wants. */
@@ -237,9 +254,17 @@ static void cheatedit_update (app_t *app, float dt) {
         return;
     }
 
+    if (input_pressed(in, BTN_A) && cursor < name_cells) {
+        pending_name_edit = true;
+        screen_keyboard_ask(KB_TEXT, "Name this cheat", name,
+                            name, sizeof(name), SCREEN_CHEATEDIT);
+        app_goto(app, SCREEN_KEYBOARD);
+        return;
+    }
+
     if (input_pressed(in, BTN_A) && line_count < USERCHEAT_MAX_LINES) {
         line_count++;
-        cursor = NAME_CELLS + (line_count - 1) * HEX_CELLS;
+        cursor = name_cells + (line_count - 1) * HEX_CELLS;
         error = NULL;
         sound_play_effect(SFX_SETTING);
         return;
@@ -286,15 +311,9 @@ static void cheatedit_update (app_t *app, float dt) {
     if (step != 0) {
         error = NULL;
         if (cursor < name_cells) {
-            /* The name is padded to full width so every cell is editable; without this, moving
-             * right past the end of "NEW CHEAT" would land on a NUL and typing there would leave
-             * a hole in the middle of the string. */
-            for (int i = (int)strlen(name); i < name_cells; i++) {
-                name[i] = ' ';
-            }
-            name[name_cells] = '\0';
-            int idx = (alpha_index(name[cursor]) + step + ALPHA_N) % ALPHA_N;
-            name[cursor] = ALPHABET[idx];
+            /* Nothing. Up and Down wind a hex nibble; the name is typed on the keyboard, which A
+             * opens. Winding a name one letter at a time is what this screen used to do and what
+             * the keyboard exists to stop. */
         } else {
             int row = cursor_row(), cell = cursor_cell();
             nibbles[row][cell] = (uint8_t)((nibbles[row][cell] + step + 16) % 16);
@@ -343,10 +362,12 @@ static void cheatedit_render (app_t *app, surface_t *fb) {
 
     ui_label(LIST_X, NAME_Y - 26, SAFE_W, ALIGN_LEFT, STL_GRAY, "Name");
     if (name_cells > 0) {
-        char padded[NAME_CELLS + 1];
-        snprintf(padded, sizeof(padded), "%-*s", NAME_CELLS, name);
-        draw_cells(th, LIST_X, NAME_Y, padded, NAME_CELLS,
-                   cursor < NAME_CELLS ? cursor : -1, -1);
+        bool here = (cursor < name_cells);
+        if (here) {
+            ui_fill(LIST_X - 4, NAME_Y - 20, NAME_CELLS * CELL_W + 8, 26, th->text_accent);
+        }
+        ui_label(LIST_X, NAME_Y, NAME_CELLS * CELL_W, ALIGN_LEFT,
+                 here ? STL_ONBTN : STL_DEFAULT, name);
     } else {
         /* Too long for the strip, so it is shown rather than offered. Drawn dim to say that,
          * without a second sentence explaining it. */

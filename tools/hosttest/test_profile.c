@@ -71,6 +71,12 @@ bool cheatstate_dirty (void) { return cs_is_dirty; }
 bool cheatstate_save (void) { cs_saves++; cs_is_dirty = false; return true; }
 void cheatstate_load (void) { cs_loads++; }
 
+/* icon.c is not linked in: it is rdpq and libdragon all the way down. profile.c calls exactly one
+ * function out of it -- icon_starter(), the per-slot default face -- so that is stubbed to return
+ * the slot number, which makes "slot 4 gets starter 4" checkable and keeps the tests independent
+ * of whatever the real corpus happens to contain. */
+uint16_t icon_starter (int slot) { return (uint16_t)slot; }
+
 /* ------------------------------------------------------------------ harness */
 
 static int failures;
@@ -232,7 +238,7 @@ static void test_roster (void) {
 /* ------------------------------------------------------------------ removal */
 
 static void test_removal (void) {
-    printf("\n-- removal and renumbering\n");
+    printf("\n-- removal\n");
 
     fresh_storage();
     profile_load(root);
@@ -247,22 +253,31 @@ static void test_removal (void) {
     check(!profile_remove(0), "profile 1 cannot be removed");
     check(profile_count() == 4, "and the roster is untouched by the attempt");
 
-    /* Active sits above the hole. It has to move down with its own data, or the console comes
-     * back as whoever inherited the slot number. */
+    /* This section used to assert the opposite of every line below it. Removing a profile closed
+     * the gap above it, so the checks here were "everything above shifts down a slot" and "the
+     * active profile follows its own data down" -- both of which were true, and both of which
+     * described the bug rather than a feature: the slot number names `saves/pN/`, so the shift
+     * handed one player's saved games to another. The four checks that failed when the behaviour
+     * changed are the four rewritten here.
+     *
+     * Active sits above the hole and must not move at all. */
     profile_activate(3, &lib);
     check(profile_remove(1), "removing profile 2 succeeds");
-    check(profile_count() == 3, "the roster closes the gap");
-    check_str(profile_name(1), "CAI", "and everything above shifts down a slot");
-    check(profile_active() == 2, "the active profile follows its own data down");
+    check(profile_count() == 3, "the roster is one shorter");
+    check(!profile_slot_used(1), "the slot it left is empty, not closed up");
+    check_str(profile_name(2), "CAI", "nothing above it moved");
+    check(profile_active() == 3, "and the active profile did not move either");
     check_str(profile_name(profile_active()), "DEE", "so it is still the same person");
 
-    /* Active is the one deleted. There is nothing to follow, so it lands on profile 1 rather than
-     * on whoever moved into the number. */
-    profile_activate(1, &lib);
-    check(profile_remove(1), "removing the active profile succeeds");
-    check(profile_active() == 0, "and lands on profile 1, not on its replacement");
+    /* Active is the one deleted. There is nothing left to be, so it falls back to profile 1 --
+     * the one slot guaranteed to exist. */
+    profile_activate(2, &lib);
+    check(profile_remove(2), "removing the active profile succeeds");
+    check(profile_active() == 0, "and lands on profile 1");
+    check(profile_slot_used(3), "the profile above the deleted one is still there");
+    check_str(profile_name(3), "DEE", "under its own name and its own slot number");
 
-    check(profile_remove(1), "removing the last extra profile succeeds");
+    check(profile_remove(3), "removing the last extra profile succeeds");
     check(!profile_remove(0), "and the roster cannot be emptied");
     check(profile_count() == 1, "one profile always remains");
 }
@@ -329,6 +344,282 @@ static void test_locks (void) {
     check(!locks_dirty(), "no locks.dat and nothing locked is simply a card with no locks");
 }
 
+/* ------------------------------------------------- format 2: slots do not move */
+
+/**
+ * Deleting a profile used to close the gap above it, and the slot number names `saves/pN/` -- so
+ * deleting player 2 handed player 3's folder to player 2. This is the test that the shift is gone.
+ * It cannot be reached from ares at all: profile_save() writes nothing there, so the roster never
+ * survives to be re-read.
+ */
+static void test_stable_slots (void) {
+    printf("\nstable slots\n");
+    fresh_storage();
+    profile_load(root);
+
+    check(profile_add() == 1, "the second profile takes slot 2");
+    check(profile_add() == 2, "the third takes slot 3");
+    profile_set_name(1, "BEE");
+    profile_set_name(2, "CEE");
+    profile_save();
+
+    check(profile_remove(1), "the middle profile is removed");
+    check(!profile_slot_used(1), "its slot is now empty");
+    check(profile_slot_used(2), "the slot above it still exists");
+    check_str(profile_name(2), "CEE", "and still belongs to the same person");
+    check(profile_count() == 2, "two profiles remain");
+
+    /* The whole point, restated as the thing a user would notice. */
+    profile_activate(2, NULL);
+    check_str(profile_save_subdir(), "p3", "who keeps writing to saves/p3");
+
+    check(profile_add() == 1, "a new profile fills the hole rather than appending");
+    check_str(profile_name(1), "Player 2", "and comes up unnamed");
+
+    /* Round trip, because the used flags are the new thing on disk. */
+    profile_save();
+    profile_load(root);
+    check(profile_count() == 3, "three profiles after a reload");
+    check_str(profile_name(2), "CEE", "the untouched profile survived the write");
+}
+
+/**
+ * A card written by the format that had no version key. Slots 0..count-1 are in use and nothing
+ * needs renumbering, which is exactly why the old layout could be adopted rather than converted --
+ * and this is the check that adopting it does not move anybody.
+ */
+static void test_migration (void) {
+    printf("\nreading a format 1 roster\n");
+    fresh_storage();
+
+    char path[600];
+    snprintf(path, sizeof(path), "%smainmenu", root);
+    directory_create(path);
+    snprintf(path, sizeof(path), "%smainmenu/profiles.ini", root);
+    FILE *f = fopen(path, "wb");
+    check(f != NULL, "a version 1 profiles.ini can be written for the test");
+    if (f != NULL) {
+        /* No version key, no used flags, no icon, no colour. This is what every card that has
+         * ever run this menu holds. */
+        fputs("[profiles]\ncount=3\nactive=2\n"
+              "[p1]\nname=ANN\n[p2]\nname=BEE\n[p3]\nname=CEE\n", f);
+        fclose(f);
+    }
+
+    profile_load(root);
+    check(profile_count() == 3, "all three profiles are found");
+    check_str(profile_name(0), "ANN", "slot 1 keeps its name");
+    check_str(profile_name(1), "BEE", "slot 2 keeps its name");
+    check_str(profile_name(2), "CEE", "slot 3 keeps its name");
+    check(profile_active() == 2, "the active profile is still the active profile");
+    check_str(profile_save_subdir(), "p3", "and still writes to the same folder");
+    check(profile_icon(1) == 1, "a profile with no icon gets its slot's default");
+    check(!profile_slot_used(3), "nothing above the third is invented");
+
+    /* Rewritten in format 2, and the names must survive that too -- this is the write that every
+     * existing card gets on its first boot after the upgrade. */
+    profile_save();
+    profile_load(root);
+    check_str(profile_name(1), "BEE", "the rewrite in the new format kept the middle name");
+    check(profile_active() == 2, "and the active profile");
+}
+
+static void test_appearance (void) {
+    printf("\nicon and colour\n");
+    fresh_storage();
+    profile_load(root);
+    (void)profile_add();
+
+    /* Named, not numbered. These were the literals 8 and 9, which were the two neutrals until the
+     * palette lost its duplicate white and became nine colours -- at which point 9 was out of
+     * range and profile_set_ink() ignored it, so five checks went red. Correctly red: the tests
+     * were asserting the palette's size in passing, and this is what they meant to say. */
+    const int WHITE = PROFILE_COLOUR_PAPER;
+    const int BLACK = PROFILE_COLOUR_INK;
+
+    profile_set_icon(0, 100);
+    profile_set_plate(0, 3);
+    profile_set_ink(0, WHITE);
+    profile_set_icon(1, 100);
+    profile_set_plate(1, 3);
+    profile_set_ink(1, WHITE);
+
+    check(profile_appearance_owner(100, 3, WHITE, 1) == 0, "a duplicate appearance names its owner");
+    /* The plate and the artwork are separate choices now, so two profiles sharing a sprite AND a
+     * plate are still distinguishable if the artwork on them differs. That is the whole reason
+     * the uniqueness key grew a third field. */
+    check(profile_appearance_owner(100, 3, BLACK, 1) == -1, "the same sprite and plate in other ink is free");
+    check(profile_appearance_owner(100, 4, WHITE, 1) == -1, "the same sprite on another plate is free");
+    check(profile_appearance_owner(100, 3, WHITE, 0) == 1, "the check ignores the slot being edited");
+    /* Ten unconfigured slots must not all collide with each other, or the first edit is
+     * impossible. */
+    check(profile_appearance_owner(0xFFFF, 3, WHITE, 5) == -1, "an unchosen icon never collides");
+
+    profile_set_plate(0, 99);
+    check(profile_plate(0) == 3, "an out-of-range plate is ignored, not clamped");
+    profile_set_ink(0, -1);
+    check(profile_ink(0) == WHITE, "and so is an out-of-range ink");
+    /* One past the end, which is the value a screen that still thinks the palette is ten long
+     * would hand over. Nothing on screen would show a wrong colour -- profile_colour_fill() folds
+     * it to red -- so the refusal has to be here or it is nowhere. */
+    profile_set_ink(0, PROFILE_COLOURS);
+    check(profile_ink(0) == WHITE, "an ink one past the palette is refused");
+    check(profile_colour_name(PROFILE_COLOURS - 1)[0] != '\0', "every palette entry is named");
+
+    /* The pairing that used to be hardcoded in the swatch table is now the default only. Dark
+     * plates take the light neutral; light plates take the dark one. */
+    check(profile_default_ink(0) == PROFILE_COLOUR_PAPER, "a dark plate defaults to light artwork");
+    check(profile_default_ink(1) == PROFILE_COLOUR_INK, "a light plate defaults to dark artwork");
+
+    profile_save();
+    profile_load(root);
+    check(profile_icon(1) == 100, "the icon survives a round trip");
+    check(profile_plate(1) == 3, "so does the plate");
+    check(profile_ink(1) == WHITE, "and so does the ink");
+}
+
+/**
+ * A card written before the plate and the artwork could differ -- which is every card. The ink
+ * key is absent, and reading it must reproduce exactly what the old fixed pairing drew, or every
+ * profile on every existing card changes colour on the first boot after the upgrade.
+ */
+static void test_ink_default (void) {
+    printf("\nreading a roster with no ink key\n");
+    fresh_storage();
+
+    char path[600];
+    snprintf(path, sizeof(path), "%smainmenu", root);
+    directory_create(path);
+    snprintf(path, sizeof(path), "%smainmenu/profiles.ini", root);
+    FILE *f = fopen(path, "wb");
+    if (f != NULL) {
+        fputs("[profiles]\nversion=2\ncount=2\nactive=0\n"
+              "[p1]\nused=1\nname=ANN\nicon=5\ncolour=0\n"    /* red, a dark plate */
+              "[p2]\nused=1\nname=BEE\nicon=6\ncolour=1\n",   /* amber, a light one */
+              f);
+        fclose(f);
+    }
+
+    profile_load(root);
+    check(profile_plate(0) == 0, "the plate is read as written");
+    check(profile_ink(0) == PROFILE_COLOUR_PAPER, "a dark plate gets light artwork");
+    check(profile_ink(1) == PROFILE_COLOUR_INK, "a light plate gets dark artwork");
+
+    profile_save();
+    profile_load(root);
+    check(profile_ink(0) == PROFILE_COLOUR_PAPER, "and the default is written down, not re-derived");
+}
+
+/**
+ * The destructive path, against real files. This is the one thing in the program that cannot be
+ * undone, and ares cannot execute a byte of it.
+ */
+/**
+ * Ten slots, ten different default names.
+ *
+ * "Player 10" is nine characters and the fallback buffer was #PROFILE_NAME_CAP -- nine bytes,
+ * eight characters and a terminator -- so snprintf truncated it to "Player 1". Slot 10 and slot 1
+ * showed the same name on the same screen, on a screen whose entire job is telling ten people
+ * apart. The cap is right for a *typed* name, which the keyboard limits to eight; the fallback is
+ * neither typed nor stored and had no business sharing it.
+ */
+static void test_default_names (void) {
+    printf("\nten slots, ten default names\n");
+    fresh_storage();
+    profile_load(root);
+    for (int i = 1; i < PROFILE_MAX; i++) {
+        (void)profile_add_at(i);
+    }
+    check(profile_count() == PROFILE_MAX, "all ten slots are occupied");
+
+    static char seen[PROFILE_MAX][32];
+    for (int i = 0; i < PROFILE_MAX; i++) {
+        snprintf(seen[i], sizeof(seen[i]), "%s", profile_name(i));
+    }
+    check_str(seen[PROFILE_MAX - 1], "Player 10", "the tenth slot is called Player 10");
+
+    int clashes = 0;
+    for (int i = 0; i < PROFILE_MAX; i++) {
+        for (int j = i + 1; j < PROFILE_MAX; j++) {
+            if (strcmp(seen[i], seen[j]) == 0) {
+                clashes++;
+            }
+        }
+    }
+    check(clashes == 0, "no two slots default to the same name");
+
+    /* The rail reserves room for the longest of them, so the longest is worth pinning: nine
+     * characters, and everything that draws a name is laid out against that. */
+    size_t longest = 0;
+    for (int i = 0; i < PROFILE_MAX; i++) {
+        if (strlen(seen[i]) > longest) {
+            longest = strlen(seen[i]);
+        }
+    }
+    check(longest == 9, "the longest default name is nine characters");
+}
+
+static void test_save_erasure (void) {
+    printf("\ndeleting a profile's saves\n");
+    fresh_storage();
+    profile_load(root);
+    (void)profile_add();     /* slot 1 -> saves/p2 */
+
+    /* Two ROM directories, each with a save for profile 2 and one for profile 1 that must not be
+     * touched. The library is what says where to look, so it is built the same shape the scanner
+     * produces. */
+    char d[600];
+    static lib_record_t recs[2];
+    static char p0[600], p1[600];
+    snprintf(d, sizeof(d), "%sroms/n64", root);        directory_create(d);
+    snprintf(d, sizeof(d), "%sroms/n64/saves", root);  directory_create(d);
+    snprintf(d, sizeof(d), "%sroms/n64/saves/p2", root); directory_create(d);
+    snprintf(d, sizeof(d), "%sroms/snes", root);       directory_create(d);
+    snprintf(d, sizeof(d), "%sroms/snes/saves", root); directory_create(d);
+    snprintf(d, sizeof(d), "%sroms/snes/saves/p2", root); directory_create(d);
+
+    const char *files[] = {
+        "roms/n64/saves/p2/One.sav", "roms/n64/saves/p2/Two.sav",
+        "roms/snes/saves/p2/Three.srm",
+        "roms/n64/saves/Mine.sav",          /* profile 1's, and it must survive */
+    };
+    for (unsigned i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
+        snprintf(d, sizeof(d), "%s%s", root, files[i]);
+        FILE *f = fopen(d, "wb");
+        if (f != NULL) { fputs("x", f); fclose(f); }
+    }
+
+    snprintf(p0, sizeof(p0), "%sroms/n64/Game.z64", root);
+    snprintf(p1, sizeof(p1), "%sroms/snes/Other.sfc", root);
+    recs[0].path = p0;
+    recs[1].path = p1;
+    library_t lib = { .records = recs, .count = 2 };
+
+    check(profile_erase_saves(1, &lib, true) == 3, "the dry run counts three saves");
+    snprintf(d, sizeof(d), "%sroms/n64/saves/p2/One.sav", root);
+    check(access(d, F_OK) == 0, "and the dry run deleted nothing");
+
+    check(profile_erase_saves(1, &lib, false) == 3, "the real run reports three");
+    check(access(d, F_OK) != 0, "the save is gone");
+    snprintf(d, sizeof(d), "%sroms/snes/saves/p2/Three.srm", root);
+    check(access(d, F_OK) != 0, "including the one in the other directory");
+    snprintf(d, sizeof(d), "%sroms/n64/saves/Mine.sav", root);
+    check(access(d, F_OK) == 0, "profile 1's save is untouched");
+
+    /* Player one owns the unsuffixed saves/ -- on a card older than this feature, every save on
+     * it. This must refuse at the source and not merely be unreachable from the UI.
+     *
+     * Two things protect it and only one of them is the guard. The guard refuses slot 0 outright;
+     * underneath that, slot 0's folder name would be `p1`, and nothing has ever written to
+     * `saves/p1/`. That matters for how this is tested: relaxing the guard alone leaves the mutant
+     * passing, because it then looks in a directory that does not exist. The mutation in
+     * tools/hosttest/run.sh therefore also makes the path agree with profile_save_subdir(), which
+     * is the bug somebody would really write -- and with both edits these three checks go red. */
+    check(profile_erase_saves(0, &lib, true) == 0, "profile 1's saves cannot be counted");
+    check(profile_erase_saves(0, &lib, false) == 0, "or erased");
+    check(access(d, F_OK) == 0, "and are still there afterwards");
+}
+
 int main (void) {
     const char *dir = getenv("TESTDIR");
     snprintf(root, sizeof(root), "%s/", dir ? dir : "build/hosttest/profiledir");
@@ -338,6 +629,12 @@ int main (void) {
     test_paths();
     test_roster();
     test_removal();
+    test_stable_slots();
+    test_migration();
+    test_appearance();
+    test_ink_default();
+    test_default_names();
+    test_save_erasure();
     test_locks();
 
     printf("\n%d checks, %d failures\n", checks, failures);

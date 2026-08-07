@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <libdragon.h>
 
 #include "fs.h"
 #include "utils.h"
@@ -229,4 +231,46 @@ bool directory_create(char *path) {
     free(directory);
 
     return error;
+}
+
+int directory_erase (const char *path, bool dry_run) {
+    /* libdragon's dir_findfirst/dir_findnext, not opendir/readdir: <dirent.h> on this toolchain
+     * is a header that #errors out, and the rest of this program walks directories the same way
+     * -- see library.c's scan. */
+    dir_t info;
+    if (dir_findfirst(path, &info) != 0) {
+        /* Absent is the ordinary case: a profile that never launched a game in this directory has
+         * no folder here. Not an error, and not worth a log line per directory on a card with
+         * five hundred of them. */
+        return 0;
+    }
+
+    int removed = 0;
+    do {
+        if (info.d_name[0] == '.') {
+            continue;
+        }
+        if (info.d_type == DT_DIR) {
+            /* See the header: a subdirectory is left alone rather than walked into. That is the
+             * safety property -- a wrong path deletes at most the files sitting directly in it. */
+            debugf("fs: %s/%s is a directory; left alone\n", path, info.d_name);
+            continue;
+        }
+
+        char file[512];
+        if (snprintf(file, sizeof(file), "%s/%s", path, info.d_name) >= (int)sizeof(file)) {
+            continue;
+        }
+        if (dry_run) {
+            removed++;
+        } else if (remove(file) == 0) {
+            removed++;
+        }
+    } while (dir_findnext(path, &info) == 0);
+
+    /* The directory itself stays, empty. There is no rmdir in this libc -- the link fails on it --
+     * and there is nothing to gain by finding one: an empty `saves/pN/` is exactly what the next
+     * occupant of the slot needs, and cart_load.c's create_saves_subdirectory() would make it
+     * again on their first launch anyway. The files are what mattered and the files are gone. */
+    return removed;
 }

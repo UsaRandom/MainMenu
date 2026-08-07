@@ -1,0 +1,47 @@
+# The settings list scrolling, and the credits screen it now reaches.
+#
+# Two things are being checked and only one of them is the new screen.
+#
+# The settings list gained an eighth row and started scrolling, which means the row a cursor is on
+# and the row drawn at a given y are no longer the same number. Every earlier settings frame in
+# this suite was taken when they were. So the first three dumps here are about the window: the
+# list at rest, the list after the cursor has pushed it down by one, and the position bar that
+# says so.
+#
+# The credits text is baked from docs/CREDITS.md rather than compiled in, so what these frames
+# actually prove is that the file reached the cartridge, parsed into blocks, and laid out at a
+# width nobody had to guess. A hole where a character should be would be visible here and nowhere
+# else -- tools/mkcredits.py is supposed to make that impossible, and this is the frame that would
+# catch it if the check were wrong.
+
+wait 120
+
+press start         # settings
+wait 20
+fbdump              # 1: eight rows do not fit; seven are drawn, position bar at the top
+
+press down x7       # -> Credits, which is the row that pushed the list past the window
+wait 20
+fbdump              # 2: the list has scrolled by one, Players is gone off the top, bar at the bottom
+
+press a             # -> credits
+wait 30
+fbdump              # 3: the top of the licence text: the AGPL source offer, then the fork notice
+
+press down x12      # into the icon attribution, which is the longest list in the file
+wait 20
+fbdump              # 4: authors, one bullet each, wrapped inside the safe area
+
+press r             # page down
+wait 20
+fbdump              # 5: a page further on, to show L/R move further than Up/Down
+
+press r x24         # well past the end, where the scroll must stop with the last line at the bottom
+wait 20
+fbdump              # 6: the last block, still on screen; nothing blank below it
+
+press b             # back to settings
+wait 20
+fbdump              # 7: settings again, cursor still on Credits, window still scrolled
+
+exit

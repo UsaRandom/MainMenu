@@ -1,0 +1,17 @@
+# The five-row keyboard, which is the tall one and the one the layout assert is written against.
+#
+# Reached from the cheat editor: A on the name cell opens screen_keyboard with KB_TEXT, which adds
+# a row of marks under the letters. Four rows fit with room to spare; five is what has to be
+# checked by eye, because the block is centred and the assert only says it does not overflow.
+
+wait 150
+press a             # detail sheet for the first title
+wait 40
+press z             # cheats
+wait 40
+press r             # the editor
+wait 40
+press a             # the name cell -> the keyboard
+wait 40
+fbdump              # 1: five rows plus SPACE and DONE, clear of the field and the footer
+exit

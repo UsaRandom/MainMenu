@@ -1,0 +1,51 @@
+# Does a page of the icon picker fill, and then stay filled?
+#
+# Two separate failures used to be tangled together here, and neither is visible in a single frame.
+#
+# 1. The cache was direct-mapped on the pack index, on the assumption that the picker walks a
+#    contiguous run. It does not: a category is a scattered list of pack indices. Over the shipped
+#    metadata, 87 of the 100 category pages collide -- nine cells to a page on average, eighteen on
+#    the worst -- and colliding cells evict each other forever.
+#
+# 2. The request loop folded distance and direction into one counter and so reached at most 22
+#    cells either side of the cursor. With the cursor at cell 0 the bottom half of the page was
+#    never asked for at all.
+#
+# Together: icons missing, a different subset missing after every press, cells blinking.
+#
+# The screen opens on the page holding the profile's own icon, which for a fresh card is Treasure
+# page 2 -- 32 cells, not 45. One press of L is what puts a genuinely full page under the cursor,
+# and a full page is the only page that tests anything.
+#
+# What to read: the FRAME line's `icons=` column, which counts decodes in the window. Filling
+# 45 cells plus the 60 px preview is 46 of them at roughly one a frame. After that it must go to 0
+# and stay there, because moving the cursor is not supposed to cost a rasterisation: every cell is
+# drawn in one colour pair and selection is geometry. The 60 px preview used to be the exception --
+# it followed the cursor, so a press cost one decode -- but it now holds the *chosen* icon, which
+# only A changes. Moving the cursor costs nothing at all.
+#
+# The check that this can go red: TUNE=-DCACHE_40=32. Forty-five cells do not fit in thirty-two
+# entries however they are indexed, and `icons=` never settles.
+
+wait 150
+
+press l x8          # along the tab rail, into the picker
+wait 30
+press z             # -> the appearance editor
+wait 40
+
+press l             # -> page 1 of the category, which is the full 45
+wait 360            # six seconds: 46 decodes at about one a frame, with margin
+fbdump              # 1: all 45 cells, no holes
+
+press right x6      # walk the cursor about. Nothing here may decode: not the grid, whose cells are
+press down x2       # all one colour pair, and not the preview, which holds the chosen icon.
+press left x4
+press up
+wait 240
+fbdump              # 2: still full, and the cursor somewhere else
+
+wait 240            # and left alone: these four windows must read icons=0 flat
+fbdump              # 3: byte-identical to 2, because nothing is still arriving
+
+exit

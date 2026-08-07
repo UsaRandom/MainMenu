@@ -18,6 +18,14 @@
 typedef enum {
     FNT_DEFAULT = 1, /**< Body text, 15 px */
     FNT_BOOT = 2,    /**< 32 px, boot plate only; 41-glyph charset, see the Makefile */
+    /* Three sizes for the profile picker and the keyboard, all on charset-ui.txt: 84 glyphs of
+     * letters, digits and marks. A character outside it draws as a hole and nothing says so at
+     * run time, which is what tools/charsetcheck.py exists to catch at build time. Baking the
+     * full charset at these sizes would cost about 5.4 MB; these three together are 28,564 bytes.
+     * See docs/GOTCHAS-PROFILES.md section 1. */
+    FNT_SMALL = 3,   /**< 24 px, category rows */
+    FNT_KEY = 4,     /**< 32 px, keyboard glyphs and the picker heading */
+    FNT_FIELD = 5,   /**< 40 px, the name being typed */
 } menu_font_type_t;
 
 /**
@@ -34,6 +42,11 @@ typedef enum {
     STL_ORANGE,      /**< Accent. Follows the theme. */
     STL_RED,         /**< Red font style */
     STL_GRAY,        /**< Secondary text. Follows the theme. */
+    STL_ONLIGHT,     /**< Always near-black: a glyph on a light plate. The keyboard cursor inverts
+                      *   to a white key, and every other style in this list is light-on-dark --
+                      *   drawing STL_DEFAULT there put white glyphs on a white plate, which is a
+                      *   cursor you cannot read. Fixed like STL_ONBTN, for the same reason: the
+                      *   plate is not a theme colour, so the ink on it must not be either. */
     STL_ONBTN,       /**< Always white: the glyph inside a controller-colour disc, which is not
                       *   a theme surface. Binding this to the theme's text colour turned the
                       *   letters black on the blue A button under a light theme. */

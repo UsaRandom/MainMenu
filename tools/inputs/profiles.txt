@@ -1,4 +1,4 @@
-# Add a second player, name them, and switch to them.
+# Add a player, give them a face and two colours, and switch to them.
 #
 # The whole feature end to end, and it has to be end to end for the same reason parental.txt does:
 # every part of this is a state machine that only means something in sequence. A roster with two
@@ -10,58 +10,65 @@
 # screens testable at all -- but "the roster survives a power cycle" is a claim only hardware can
 # settle. Same gap as every other written file in this program.
 #
-# It also cannot reach the interesting half of the feature. Switching profile changes which
-# playstate.dat is read and which saves/ folder a launch writes into, and neither is observable
-# from a frame: the fixture has no saved games and no favourites to lose.
+# It also cannot reach the destructive half. Removing a player deletes their saves, and the
+# fixture has none to delete. tools/hosttest is where the deletion itself is exercised, against
+# real files.
 
-wait 120
+wait 150
 
-press start         # settings
-wait 20
-fbdump              # 1: Settings, with Players at the top reading "Player 1"
+press l x8          # along the tab rail. L past the FIRST tab IS the picker -- no A, no chip focus
+wait 30
+fbdump              # 1: ten cards under a live tab rail, straight from one press past FAVORITES
 
-press a             # -> the roster
-wait 20
-fbdump              # 2: two rows -- Player 1, and "Add a player"
+press right         # -> slot 2, empty
+press a             # fills it and opens the keyboard
+wait 30
+fbdump              # 2: QWERTY with a digit row on top, and SPACE / DONE only -- no DELETE key
 
-press down          # -> Add a player
-press a             # adds player 2 and opens the name editor on it
-wait 20
-fbdump              # 3: the name editor, twelve blank cells
+press b             # nothing typed, so B leaves rather than doing nothing
+wait 30
+fbdump              # 3: back on the cards; the slot exists but is still unnamed
 
-# Wind the first cell to A, the second to B. Up steps forward through
-# " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'!", so one press from a space is A.
-press up            # A
-press right
-press up x2         # B
-wait 20
-fbdump              # 4: "AB" typed, cursor on the second cell
+press a             # the slot is filled now, so A plays as them
+wait 30
+fbdump              # 4: the grid, chip showing the new unnamed player
 
-press a             # done
-wait 20
-fbdump              # 5: back on the list, row 2 now reads AB, and says saves/p2/
+press l x8          # back to the picker, which opens on the active profile -- slot 2 already
+press z             # the edit menu: Name, then Icon and colours
+press down
+press a             # -> the appearance editor
+wait 40
+fbdump              # 5: categories, sprites, and TWO labelled colour rows under them
 
-press a             # play as AB
-wait 60
-fbdump              # 6: the grid, with the player chip and Z disc at the right of the tab rail
+# The cursor is not the choice. A takes the sprite under it; moving on must not un-take it, or
+# there is no way to hold a face still while trying colours against it -- which is the only thing
+# this screen is for.
+press right x2
+press a             # take this one: accent bar under its cell, and the preview picks it up
+press right x3      # and walk away from it
+wait 40
+fbdump              # 6: cursor three cells past the accent bar, preview still on the chosen sprite
 
-# And back again, this time by Z from the grid rather than through Settings.
-press z
-wait 20
-fbdump              # 7: the roster, opened from the grid, cursor sitting on the active profile
+# Six, not five. The editor opens on the page holding the profile's own icon and puts the cursor
+# on it, and Player 2's starter is the fox -- Animals cell 14, which is row 1 of five. Crossing the
+# grid from there is three presses and passing through the Icon row is two more, but the starter is
+# baked by tools/mkiconmeta.py against whatever corpus shipped and can land on any row. Six reaches
+# the Plate row from all of them; the surplus presses fall off the bottom and do nothing.
+press down x6       # off the grid, through the Icon row, onto Plate
+press right x3      # amber -> purple
+wait 30
+fbdump              # 7: the Plate row live, and the 60 px preview repainted on the new plate
 
-press up            # -> Player 1
-press cleft         # remove... no, this is Player 1, which cannot be removed
-wait 20
-fbdump              # 8: still the list; the refusal is a sound, not a screen
+press up            # -> the Icon row
+# Left, not right. Player 2's plate is amber, so their artwork already defaults to black, which is
+# the second-to-last swatch -- pressing right moves one square and then stops against the end, and
+# a row that does not appear to move is not a row that has been tested.
+press left x7       # black -> red
+wait 30
+fbdump              # 8: the Icon row live, the Plate row still showing its choice dimmed
 
-press down          # -> AB
-press cleft         # remove, for real this time
-wait 20
-fbdump              # 9: the confirmation, naming AB and what happens to their saves
-
-press b             # keep them
-wait 20
-fbdump              # 10: back on the list, still two rows
+press start         # accept. A is only for taking a sprite now; START and B both commit.
+wait 30
+fbdump              # 9: back on the cards, wearing the chosen sprite and both colours
 
 exit

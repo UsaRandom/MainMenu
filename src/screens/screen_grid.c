@@ -30,6 +30,7 @@
 #include "screens.h"
 #include "screens/boot_plate.h"
 #include "ui/draw.h"
+#include "ui/icon.h"
 #include "ui/theme.h"
 #include "ui/tween.h"
 
@@ -40,6 +41,7 @@ static int view_count;
 
 static tab_t tab = TAB_N64;      /**< replaced at first entry; see pick_opening_tab() */
 static int cursor;              /**< index into view[] */
+
 static float scroll_y;          /**< pixels, content space; always rounded before use */
 static float scroll_target;
 static float pulse_phase;
@@ -100,12 +102,29 @@ static void retarget_scroll (void) {
 
 /* ------------------------------------------------------------------ tiles */
 
+/* The player chip, at the left end of the rail. A 40 px sprite is the floor the handoff sets --
+ * nothing in the UI draws an icon smaller -- and a 44 px plate leaves 2 px of colour around it.
+ * Centred in the rail above its accent bar, so a lit chip underlines exactly like a lit tab. */
+#define CHIP_PLATE      44
+#define CHIP_MARGIN     8
+#define CHIP_GAP        6
+#define CHIP_X          (TABRAIL_X + CHIP_MARGIN)
+#define CHIP_Y          (TABRAIL_Y + (TABRAIL_H - ACCENT_BAR - CHIP_PLATE) / 2)
+
 /**
- * @brief Draw one tile in its "no art" state.
+ * Room for the name beside the plate, reserved whatever the name actually is.
  *
- * bg_alt fill, 2 px panel_alt inner border, title clipped along the bottom. Still identifiable --
- * which is the point: a grid with a cold cache must be navigable, not a wall of grey rectangles.
+ * Nine characters, which is #PROFILE_LABEL_CAP - 1: eight is the most anybody can type and nine is
+ * "Player 10". A box measured from the current name would move every tab when somebody switched to
+ * a player with a longer one, which is the reason the name was dropped from the chip when it moved
+ * to this end of the rail. Reserving the worst case costs 108 px of a rail that had 164 spare.
  */
+#define CHIP_NAME_W     ((PROFILE_LABEL_CAP - 1) * TAB_GLYPH_W)
+#define CHIP_W          (CHIP_PLATE + CHIP_GAP + CHIP_NAME_W)
+
+/** Where the tabs begin, which is past the chip. Fixed, so who is playing never moves a tab. */
+#define TAB_X0          (CHIP_X + CHIP_W + TAB_PAD)
+
 static void draw_tile (app_t *app, const lib_record_t *rec, uint16_t rom_id,
                        int x, int y, int w, int h, bool selected) {
     const theme_t *th = app->theme;
@@ -295,21 +314,90 @@ static void draw_tab_icon (int x, int y, tab_t t, uint16_t c) {
     }
 }
 
-static void draw_tab_rail (app_t *app) {
+/**
+ * @brief Who is playing, at the left end of the tab rail, and how you get to the picker.
+ *
+ * The entry point used to be a Z hint in the footer, shown only when a second profile existed.
+ * That was right while profiles were a thing you opted into; it is wrong now that the picker is
+ * where an appearance is chosen, because a card with one player had no route to it at all.
+ *
+ * So the chip draws always, and it is a stop on the tab rail rather than a separate control: L
+ * from the first tab opens the picker. One axis, one button, and nothing on the pad had to be
+ * rebound -- L and R have paged the tabs since the grid existed and they still do.
+ *
+ * It was at the *right* end, past SMS, and moved for one reason: the picker now keeps the rail on
+ * screen, so the chip is a position the rail cursor can occupy and not just a door. A cursor that
+ * lives past the last tab means "keep pressing R" walks the whole rail to reach the player and
+ * then has nowhere to go; at the left it is where a cursor starts.
+ *
+ * Arriving IS opening it. There was a focus state here first -- the chip lit, A opened it -- and
+ * it was wrong twice over: two presses to reach a destination that has no other use, and while
+ * the chip was lit the last tab still drew as selected, so the rail showed two selected things at
+ * once. A stop that needs confirming is a menu item; this is a rail.
+ *
+ * The name is beside the plate in a box of fixed width. It used to be measured from the name and
+ * dropped when the tabs needed the room, so whether it appeared depended on which tab was
+ * selected; at this end of the rail that would instead have moved every tab when somebody switched
+ * to a player with a longer name. #CHIP_NAME_W reserves the worst case -- nine characters, which
+ * is "Player 10" -- and the rail had the room.
+ *
+ * @param selected the rail cursor is on the chip, which is true exactly when the picker is open.
+ */
+static void draw_chip (app_t *app, bool selected) {
+    const theme_t *th = app->theme;
+    int who = profile_active();
+
+    if (selected) {
+        ui_fill(CHIP_X - TAB_PAD / 2, TABRAIL_Y, CHIP_W + TAB_PAD, TABRAIL_H, th->panel_alt);
+        ui_fill(CHIP_X - TAB_PAD / 2, TABRAIL_Y + TABRAIL_H - ACCENT_BAR, CHIP_W + TAB_PAD,
+                ACCENT_BAR, th->tab_underline);
+    }
+
+    uint16_t fill = profile_colour_fill(profile_plate(who));
+    uint16_t ink  = profile_colour_fill(profile_ink(who));
+
+    ui_fill(CHIP_X, CHIP_Y, CHIP_PLATE, CHIP_PLATE, fill);
+
+    uint16_t icon = profile_icon(who);
+    const surface_t *pix = icon_get(icon, ICON_SMALL, ink, fill);
+    if (pix != NULL) {
+        rdpq_set_mode_copy(false);
+        rdpq_tex_blit(pix, CHIP_X + (CHIP_PLATE - ICON_SMALL) / 2,
+                      CHIP_Y + (CHIP_PLATE - ICON_SMALL) / 2, NULL);
+    } else {
+        /* Not decoded yet, or this profile has no icon. Either way the plate is the placeholder:
+         * it is already the right colour and the right size, so an icon arriving two frames later
+         * fills a shape that was always there rather than making one appear. */
+        icon_request(icon, ICON_SMALL, ink, fill);
+    }
+
+    /* Brightens with the chip, like a tab label. The rail is the only place the active player's
+     * name and face appear together, which is what makes the chip readable as a *player* rather
+     * than as a decoration whose meaning you have to remember. */
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+    ui_text(CHIP_X + CHIP_PLATE + CHIP_GAP, TABRAIL_Y + 32, CHIP_NAME_W, ALIGN_LEFT,
+            selected ? STL_DEFAULT : STL_GRAY, profile_name(who));
+}
+
+void screen_grid_draw_rail (app_t *app, bool chip_selected) {
     const theme_t *th = app->theme;
 
     ui_fill(TABRAIL_X, TABRAIL_Y, TABRAIL_W, TABRAIL_H, th->panel);
+    draw_chip(app, chip_selected);
 
     /* All eight tabs are always present, empty or not, left-aligned, never centred or
      * distributed. A tab you have nothing for is still exactly where you left it.
      *
-     * The two virtual tabs are icon-only until selected, which is section 4.3 and also what makes
-     * the rail fit. At the body font's 12 px glyph metric, spelling every label out measures
-     * 8 * 20 padding + 108 + 72 + 36 + 36 + 48 + 24 + 36 + 36 = 556 against a 608 px rail -- which
-     * now fits, since dropping Most Played took 132 px off it. Icons for the inactive virtual tabs
-     * are kept anyway: the worst case with Favourites active is 468, and the rail reads better
-     * with room in it than filled to 92 %. */
-    int x = TABRAIL_X + TAB_PAD;
+     * The two virtual tabs are icon-only, always, which is section 4.3 and also what makes the
+     * rail fit. At the body font's 12 px glyph metric the eight tabs measure 24 + 24 for the two
+     * icons, 36 + 36 + 48 + 24 + 36 + 36 for the words, and 8 * 20 of padding: 424 px. The chip
+     * and its name take 158 more plus a pad, so the run ends at 626 in a rail that reaches 624 --
+     * the last tab's own edge lands at 616, because the trailing pad is not drawn.
+     *
+     * That is close enough that a ninth tab or a longer label would overflow silently, so
+     * rail_overflow() below says so once rather than letting SMS slide off a CRT. */
+    int x = TAB_X0;
     for (int t = 0; t < TAB_COUNT; t++) {
         bool active = (t == (int)tab);
         bool virt = (t < TAB_N64);
@@ -322,8 +410,15 @@ static void draw_tab_rail (app_t *app) {
 
         if (active) {
             ui_fill(x - TAB_PAD / 2, TABRAIL_Y, w + TAB_PAD, TABRAIL_H, th->panel_alt);
-            ui_fill(x - TAB_PAD / 2, TABRAIL_Y + TABRAIL_H - ACCENT_BAR, w + TAB_PAD, ACCENT_BAR,
-                    th->tab_underline);
+            /* The plate says "this is the tab you are on"; the accent bar says "the rail cursor is
+             * here". They are the same thing on the grid and two different things on the picker,
+             * where the cursor is on the chip -- and the chip sits immediately left of the first
+             * tab, so two accent bars merge into one 108 px stripe that reads as a single
+             * selection spanning both. The tab keeps its plate and gives up the bar. */
+            if (!chip_selected) {
+                ui_fill(x - TAB_PAD / 2, TABRAIL_Y + TABRAIL_H - ACCENT_BAR, w + TAB_PAD,
+                        ACCENT_BAR, th->tab_underline);
+            }
         }
 
         if (icon_only) {
@@ -341,6 +436,22 @@ static void draw_tab_rail (app_t *app) {
         x += w + TAB_PAD;
     }
 
+    /* The chip is drawn before the loop, not after it. It used to be last, because it was right-
+     * aligned and needed to know where the tabs finished; the leftover call took that `x` as its
+     * new `bool selected` argument, which is non-zero always -- so the grid drew a second, lit chip
+     * over its own. Nothing warned: int to bool is a legal conversion. */
+    _Static_assert(TAB_X0 > CHIP_X + CHIP_W, "the first tab overlaps the player chip");
+
+    /* The tab labels come from library_tab_label(), so the rail's width is not a compile-time
+     * quantity and cannot be asserted. Said once instead: a rail that has outgrown its box draws
+     * its last tab off the side of the screen, and on a CRT that is a tab nobody knows exists. */
+    static bool warned;
+    int right = x - TAB_PAD;
+    if (!warned && right > TABRAIL_X + TABRAIL_W) {
+        warned = true;
+        debugf("GRID tab rail runs to %d, past the rail's %d -- the last tab is off screen\n",
+               right, TABRAIL_X + TABRAIL_W);
+    }
 }
 
 static void draw_footer (app_t *app) {
@@ -376,17 +487,18 @@ static void draw_footer (app_t *app) {
     hx = ui_hint(hx, FOOTER_Y + 32, ">", BTN_C_COLOR, UI_BTN_DISC, "Fav");
     hx = ui_hint(hx, FOOTER_Y + 32, "S", BTN_START_COLOR, UI_BTN_DISC, "Settings");
 
-    /* Who is playing, last, and only when there is more than one player. It sits in the footer
-     * rather than in the tab rail because the rail has a fixed width and no slack: a name there
-     * collided with the tabs the moment Favourites was selected.
+    /* The shortcut to the picker, and only when there is more than one player. It used to be
+     * labelled with the active player's name, because the name had nowhere else to live -- the
+     * rail's chip dropped it whenever the tabs wanted the room. The chip carries it now, in a box
+     * reserved for the worst case, so labelling this with the name would print it twice on one
+     * screen. It says what the button does instead.
      *
      * UI_BTN_TALL, matching the Cheats hint on the detail sheet. Z is a trigger under the
      * controller, not a face button, and drawing it as another coloured disc says the wrong thing
      * about where the finger goes -- the shape is the same information as the colour and survives
      * being glanced at. Same button, same shape, both places. */
     if (profile_count() > 1) {
-        (void)ui_hint(hx, FOOTER_Y + 32, "Z", BTN_Z_COLOR, UI_BTN_TALL,
-                      profile_name(profile_active()));
+        (void)ui_hint(hx, FOOTER_Y + 32, "Z", BTN_Z_COLOR, UI_BTN_TALL, "Players");
     }
     if (buf[0]) {
         ui_text(SAFE_X, FOOTER_Y + 48, SAFE_W, ALIGN_RIGHT, STL_ORANGE, buf);
@@ -510,15 +622,29 @@ static void grid_update (app_t *app, float dt) {
     }
     int prev = cursor;
 
+    /* The rail runs left to right and stops at both ends: tabs 0..TAB_COUNT-1, then the chip.
+     * It used to wrap with a modulo, which cannot survive the chip -- wrapping would make
+     * "keep pressing L" cycle past the player plate forever instead of arriving at it. */
     if (input_pressed(in, BTN_L)) {
-        sound_play_effect(SFX_CURSOR);
-        tab = (tab_t)((tab + TAB_COUNT - 1) % TAB_COUNT);
-        rebuild_view(app);
-        cursor = 0;
+        if (tab > 0) {
+            sound_play_effect(SFX_CURSOR);
+            tab = (tab_t)(tab - 1);
+            rebuild_view(app);
+            cursor = 0;
+        } else {
+            /* Left of the first tab is the picker, and arriving IS opening it. There used to be a
+             * focus state here -- the chip lit up, A opened it -- and it was wrong twice over: it
+             * made reaching the picker two presses instead of one, and while the chip was lit the
+             * tab still drew as selected, so the rail showed two selected things at once. A
+             * destination that needs confirming is a menu item, and this is a rail. */
+            sound_play_effect(SFX_ENTER);
+            app_goto(app, SCREEN_PROFILES);
+            return;
+        }
     }
-    if (input_pressed(in, BTN_R)) {
+    if (input_pressed(in, BTN_R) && tab < TAB_COUNT - 1) {
         sound_play_effect(SFX_CURSOR);
-        tab = (tab_t)((tab + 1) % TAB_COUNT);
+        tab = (tab_t)(tab + 1);
         rebuild_view(app);
         cursor = 0;
     }
@@ -692,7 +818,7 @@ static void grid_render (app_t *app, surface_t *fb) {
      * the 126,000 blended pixels DESIGN.md section 4 costed it at, roughly 2.0 ms of the 10.3 ms
      * fill estimate. */
 
-    draw_tab_rail(app);
+    screen_grid_draw_rail(app, false);
 
     /* Round once, here. Everything downstream is integer, so a fractional scroll can never
      * reach a blit and shimmer. */

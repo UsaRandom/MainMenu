@@ -25,3 +25,30 @@ bool directory_exists (char *path) {
     struct stat st;
     return (stat(path, &st) == 0) && S_ISDIR(st.st_mode);
 }
+
+#include <dirent.h>
+#include <stdio.h>
+#include <string.h>
+
+int directory_erase (const char *path, bool dry_run) {
+    DIR *d = opendir(path);
+    if (d == NULL) {
+        return 0;
+    }
+    int removed = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') {
+            continue;
+        }
+        char file[512];
+        snprintf(file, sizeof(file), "%s/%s", path, e->d_name);
+        if (dry_run) {
+            removed++;
+        } else if (remove(file) == 0) {
+            removed++;
+        }
+    }
+    closedir(d);
+    return removed;
+}

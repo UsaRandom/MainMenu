@@ -1,0 +1,20 @@
+Music in this directory
+=======================
+
+Twenty-eight Standard MIDI Files, released under CC0 1.0 Universal (public domain
+dedication): https://creativecommons.org/publicdomain/zero/1.0/
+
+CC0 waives copyright and requires no attribution. Nothing here is owed to anyone.
+
+  UNRECORDED: the collection these came from is not named anywhere in this repository
+  or in the commit that added them (34ba022c, "Give the menu a soundtrack that costs
+  less than the silence did"). CC0 asks for nothing, so no obligation is unmet -- but
+  a source that cannot be pointed at also cannot be re-verified, and that is worth
+  fixing rather than leaving. If you know where these came from, put it here.
+
+These are notes, not recordings. The menu synthesises them at play time with midi64
+(src/libs/midi64, MIT), which is why 28 songs cost 296 KB. The instrument patches are
+midi64's, under its own licence, not part of this dedication.
+
+These files are NOT covered by the AGPL-3.0 that covers this project's source code.
+See ../../LICENSE.md for that, and ../../docs/CREDITS.md for the whole picture.

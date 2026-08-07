@@ -1,0 +1,60 @@
+# Ten players, and the longest name any of them can have.
+#
+# "Player 10" is nine characters. The fallback buffer was PROFILE_NAME_CAP -- nine bytes, eight
+# characters and a terminator -- so snprintf truncated it and slot 10 came back as "Player 1", the
+# same string slot 1 shows, on the screen whose entire job is telling ten people apart.
+#
+# Fixing the buffer is only half of it. Nine characters is longer than anything the keyboard can
+# type, so it is also the worst case every layout that draws a name has to hold: the card, the tab
+# rail's chip, the edit dialog. tools/hosttest proves the string; only a frame proves the box.
+#
+# START on the picker adds a player and opens the keyboard on their name; B leaves it empty, so the
+# slot keeps its default. Nine of those fill slots 2..10, and the cursor follows the new slot, so
+# it ends on slot 10 without any steering.
+
+wait 150
+press l x8          # into the picker
+
+press start
+press b
+press start
+press b
+press start
+press b
+press start
+press b
+press start
+press b
+press start
+press b
+press start
+press b
+press start
+press b
+press start
+press b
+wait 40
+fbdump              # 1: ten filled cards, ten different names, none of them repeated
+
+press z             # the edit menu, titled with the longest name there is
+wait 30
+fbdump              # 2: "Edit Player 10", and the Name row showing it has none of its own
+
+press down
+press a             # -> the appearance editor
+wait 60
+fbdump              # 3: "Player 10's appearance" in the 32 px header, which is the widest string
+                    #    this program ever draws
+
+press b             # back, keeping the appearance unchanged
+wait 40
+
+press a             # play as slot 10
+wait 60
+fbdump              # 4: the rail's chip reading "Player 10", not clipped and not "Player 1"
+
+press l             # and back to the picker with the longest name in the lit chip
+wait 40
+fbdump              # 5: the same nine characters in the highlighted state
+
+exit

@@ -42,6 +42,13 @@ $CC $CFLAGS tools/hosttest/test_thumbstore.c src/library/cache.c src/library/thu
 TESTDIR="$OUT/thumbdir" "$OUT/test_thumbstore" 2>/dev/null
 
 echo
+echo "== fonts: every literal drawn in a restricted charset"
+# Three of the five faces carry an 84-glyph charset rather than the body font's 7,931, because a
+# full-charset bake at 40 px is about 2.7 MB. A character outside it draws as nothing, silently,
+# on a console. --self-test proves the checker can say no before its green is believed.
+python3 tools/charsetcheck.py --self-test
+
+echo
 echo "== profiles, paths and the shared lock list"
 rm -rf "$OUT/profiledir"
 $CC $CFLAGS tools/hosttest/test_profile.c src/library/cache.c src/library/locks.c src/library/playstate.c \
@@ -155,6 +162,39 @@ if [ "${1:-}" = "--mutate" ]; then
     fi
     grep -E 'FAIL|failures' "$OUT/profile_mutant.log"
     echo "mutation detected, so a green profile run above means something"
+
+    echo
+    echo "== mutation: let profile 1's saves be deleted, the profile suite must go red"
+    # The most dangerous thing in the program, and the mutation took two tries to get right.
+    #
+    # The first attempt only relaxed the `index <= 0` guard, and the mutant PASSED -- because slot
+    # 0's folder name would be `p1`, and nothing has ever written to `saves/p1/`. The guard alone
+    # is belt and braces; what really protects profile 1 is that its saves are in the UNSUFFIXED
+    # `saves/` and this function never builds that path.
+    #
+    # So the mutation is the bug somebody would actually write: making erase agree with
+    # profile_save_subdir(), which returns NULL for slot 0 so profile 1 uses `saves/` directly --
+    # and forgetting that the guard was the only thing standing between that and every save on a
+    # card older than this feature. Two edits, because it takes two to be dangerous.
+    sed -e 's/if (index <= 0 || index >= PROFILE_MAX || lib == NULL)/if (index < 0 || index >= PROFILE_MAX || lib == NULL)/' \
+        -e 's|snprintf(folder, sizeof(folder), "%s/%s/%s", dir, SAVE_DIRECTORY_NAME, sub);|snprintf(folder, sizeof(folder), index ? "%s/%s/%s" : "%s/%s", dir, SAVE_DIRECTORY_NAME, sub);|' \
+        src/menu/profile.c > "$OUT/profile_mutant2.c"
+    grep -q 'index ? ' "$OUT/profile_mutant2.c" \
+        || { echo "erase-guard mutation did not apply" >&2; exit 1; }
+
+    rm -rf "$OUT/mutant_profiledir2"
+    $CC -std=c11 -Wall -Itools/hosttest/shim -Isrc -Isrc/library \
+        tools/hosttest/test_profile.c src/library/cache.c src/library/locks.c \
+        src/library/playstate.c "$OUT/profile_mutant2.c" src/menu/ini_parser.c src/menu/paths.c tools/hosttest/shim/fs_probe.c \
+        -o "$OUT/test_profile_mutant2"
+
+    if TESTDIR="$OUT/mutant_profiledir2" "$OUT/test_profile_mutant2" \
+            >"$OUT/profile_mutant2.log" 2>/dev/null; then
+        echo "MUTANT PASSED -- nothing here checks that profile 1's saves are protected" >&2
+        exit 1
+    fi
+    grep -E 'FAIL|failures' "$OUT/profile_mutant2.log"
+    echo "mutation detected, so the guard on profile 1's saves is really tested"
 
     if [ -f build/cheats.db ]; then
         echo

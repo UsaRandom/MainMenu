@@ -54,6 +54,9 @@ typedef enum {
     SCREEN_PROFILES,   /**< who is playing; the boot picker and the roster editor */
     SCREEN_CLOCK,      /**< setting the date and time; see screen_clock.c */
     SCREEN_CODE,       /**< the button-code pad; see screen_code_ask() */
+    SCREEN_CREDITS,    /**< what this program owes to other people; see screen_credits.c */
+    SCREEN_KEYBOARD,   /**< typing a name; see screen_keyboard_ask() */
+    SCREEN_APPEARANCE, /**< picking a profile's face and colour; see screen_appearance.c */
     SCREEN_LAUNCH,
     SCREEN_FAULT,
     SCREEN_COUNT,
@@ -92,6 +95,11 @@ struct app_s {
      *  construction only: rdpq_detach_show() returns before the RDP has drawn anything, so the
      *  drain lands in the gap between these and the frame interval, not in render_us. */
     uint32_t  update_us, render_us, bg_us, spin_us, snd_us;
+    /** Icon rasterising, bracketed separately from bg_us. See the call site in app.c: it was
+     *  originally OUTSIDE every bracket, so the most expensive new work in the program was
+     *  measured by nothing and `bg_us=42` on the icon picker read as "this is free". */
+    uint32_t  icon_us;
+    uint32_t  icons_done;   /**< icons rasterised in the window */
     time_t    now;
 
     library_t *lib;

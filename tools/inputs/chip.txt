@@ -1,0 +1,34 @@
+# The player chip, and the first icon this program has ever rasterised.
+#
+# Everything about the icon path is unproven before this frame. svg64's own README says it has
+# never run on real hardware and its timings are ares numbers; nothing in THIS tree had drawn a
+# single icon until the chip. So dump 1 is the one that matters: a coloured plate with artwork on
+# it means the pack opened, the index byte-swapped, the seek landed, svg64 parsed the SVG, the
+# recolour hit the right two colours and the cache handed back a surface the RDP could blit.
+#
+# A plate with no artwork means one of those failed and they are not distinguishable from here --
+# see the debugf lines in src/ui/icon.c, which name which.
+#
+# It is also the rail's shape, which has changed twice. L and R used to page the tabs with a modulo
+# wrap. Then the rail went linear with the chip as its last stop, R from SMS opening the picker.
+# The chip is now at the LEFT end instead, because the picker keeps the rail on screen -- so the
+# chip is a place the rail cursor sits rather than only a door, and a cursor that lives past the
+# last tab is a long walk to a thing you reach constantly. L from the first tab opens it, R comes
+# back, and neither end wraps.
+
+wait 150
+fbdump              # 1: the grid, chip at the LEFT of the rail with its icon drawn
+
+press r x2          # rightwards along the tabs, away from the chip
+wait 20
+fbdump              # 2: two tabs along; the chip is unlit but still shows who is playing
+
+press l x8          # back along the rail and off its left end
+wait 40
+fbdump              # 3: the picker, with the rail still up and the chip underlined
+
+press r             # and straight back out to the grid without answering anything
+wait 40
+fbdump              # 4: the first tab again -- the point of keeping the rail
+
+exit

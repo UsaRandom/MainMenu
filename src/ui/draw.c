@@ -107,6 +107,54 @@ void ui_text (int x, int y, int w, rdpq_align_t align, int style, const char *s)
                      FNT_DEFAULT, x, y, s, strlen(s));
 }
 
+void ui_text_font (menu_font_type_t font, int x, int y, int w, rdpq_align_t align,
+                   int style, const char *s) {
+    if (s == NULL) {
+        return;
+    }
+    char escaped[ESCAPE_MAX];
+    s = escape_markup(s, escaped, sizeof(escaped));
+    rdpq_text_printn(&(rdpq_textparms_t){ .width = w, .align = align,
+                                          .style_id = style, .disable_aa_fix = true },
+                     font, x, y, s, strlen(s));
+}
+
+int ui_text_wrap (menu_font_type_t font, int x, int y, int w, int style, const char *s) {
+    if (s == NULL || s[0] == '\0') {
+        return 0;
+    }
+    char escaped[ESCAPE_MAX];
+    s = escape_markup(s, escaped, sizeof(escaped));
+    rdpq_textmetrics_t m = rdpq_text_printn(
+        &(rdpq_textparms_t){ .width = w, .wrap = WRAP_WORD,
+                             .style_id = style, .disable_aa_fix = true },
+        font, x, y, s, strlen(s));
+    /* advance_y is a float and the caller is stepping integer pixel rows. Rounding up rather
+     * than truncating: a paragraph that reports one pixel short of its real height overlaps the
+     * next one by a pixel every time, and over a screen of text that accumulates into a visible
+     * crush. One pixel of extra air does not. */
+    return (int)(m.advance_y + 0.999f);
+}
+
+int ui_text_width (menu_font_type_t font, const char *s) {
+    if (s == NULL || s[0] == '\0') {
+        return 0;
+    }
+    char escaped[ESCAPE_MAX];
+    s = escape_markup(s, escaped, sizeof(escaped));
+    /* Laid out and freed rather than drawn. rdpq_text_printn would give the same advance_x, but
+     * only by putting the string on screen -- and this is called to decide where something else
+     * goes, sometimes before the text itself is drawn. */
+    rdpq_paragraph_t *par = rdpq_paragraph_build(
+        &(rdpq_textparms_t){ .disable_aa_fix = true }, font, s, &(int){ (int)strlen(s) });
+    if (par == NULL) {
+        return 0;
+    }
+    int w = (int)(par->advance_x + 0.999f);
+    rdpq_paragraph_free(par);
+    return w;
+}
+
 void ui_label (int x, int y, int w, rdpq_align_t align, int style, const char *s) {
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);

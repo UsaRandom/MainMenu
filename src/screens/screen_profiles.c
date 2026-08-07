@@ -1,35 +1,52 @@
 /**
  * @file screen_profiles.c
- * @brief Who is playing: the boot picker, and the list that manages it.
+ * @brief Who's playing: ten slots, a face each, and the only screen that can delete a save.
  * @ingroup screens
  *
- * One screen, two ways in. At boot it asks; from Settings it edits. The difference is a single
- * flag, because the list, the rows and every verb on them are the same either way -- a boot
- * picker that could not also rename would mean two screens drawing the same list, and the second
- * one would be the one that drifted.
+ * One screen, two ways in. At boot it asks; from the grid's player chip it edits. The difference
+ * is a single flag, because the cards and every verb on them are the same either way -- a boot
+ * picker that could not also rename would mean two screens drawing the same ten cards, and the
+ * second one would be the one that drifted.
+ *
+ * ## Renaming was not actually possible
+ *
+ * The paragraph above was aspirational for a while. A name could only be set at the instant a slot
+ * was created, on the way out of START or A-on-an-empty-card, and Z went straight to the appearance
+ * editor under a footer reading "Edit" -- so anybody looking for a rename pressed the button that
+ * said so, found colours, and concluded there was none. Z now opens two rows, Name and Icon and
+ * colours, and the footer says both nouns. See #pmode_t for why it is a menu and not a second
+ * button.
+ *
+ * ## Why it is a grid of cards and not a list of rows
+ *
+ * It was a list, and the list was right while a profile was a name. A profile is now a name and a
+ * face, and a face in a 32 px row is a thumbnail nobody can tell apart from the next one. The
+ * handoff's answer is a 5 x 2 grid of 112 x 158 cards -- 608 px wide, which is exactly #SAFE_W --
+ * with a 64 px plate carrying a 40 px sprite. At that size the sprite is the thing you read and
+ * the name is the confirmation, which is the right way round for a screen answering "which one
+ * is me".
  *
  * ## It does not appear for one profile
  *
  * #screen_profiles_needed() is false when there is exactly one profile, and app.c uses it to
- * decide whether to boot into this screen or straight into the grid. A card that nobody has added
- * a second player to therefore boots exactly as it did before this existed -- same first frame,
- * same number of presses to a game. The whole feature stays invisible until it is asked for,
- * which is the only reason it is affordable to put a screen in front of the grid at all.
+ * decide whether to boot into this screen or straight into the grid. A card nobody has added a
+ * second player to therefore boots exactly as it did before this existed -- same first frame,
+ * same number of presses to a game.
  *
- * ## Renaming, without a keyboard
+ * That is now the *only* place the feature hides. The grid's player chip draws always, because it
+ * is how an appearance is reached and a single-profile card would otherwise have no route to one.
  *
- * The same per-character odometer screen_cheatedit.c uses for cheat names: Left and Right pick a
- * cell, Up and Down wind it through the alphabet. It is not fast and it does not need to be --
- * a name is typed once, and the alternative is an on-screen keyboard that would be the largest
- * single piece of UI in the program in order to be used twice per household.
+ * ## Slots are stable, and deleting takes the saves
  *
- * ## Deleting
+ * Removing a profile used to close the gap above it, and the slot number names the folder on
+ * disk -- so deleting player 2 turned player 3's `saves/p3/` into player 2's. Slots are fixed
+ * now: slot 4 stays slot 4 forever, an empty slot draws as a dashed "+ Empty" card, and the next
+ * player to take it gets an empty folder because #profile_erase_saves ran when the last one left.
  *
- * Confirmed, and the confirmation says the two true things that are not obvious: the saves stay
- * on the card, and every profile above this one shifts down a slot. The second is the surprising
- * one -- slot numbers name the folders, so deleting player 2 makes player 3's `saves/p3/` into
- * player 2's `saves/p2/`. Nothing on disk moves, so the saves follow the slot rather than the
- * person. That is worth one sentence on screen rather than a support question later.
+ * The confirmation therefore says something it never had to before: **the saves go too**. It
+ * counts them first and puts the number on screen, because "and 41 saved games" is a different
+ * decision from "and no saved games" and the user is the only one who can tell which they are in.
+ * The cursor starts on Keep.
  */
 
 #include <stdio.h>
@@ -37,39 +54,82 @@
 #include <libdragon.h>
 
 #include "app.h"
-#include "library/cache.h"
 #include "menu/fonts.h"
 #include "menu/profile.h"
 #include "menu/sound.h"
 #include "screens.h"
 #include "ui/draw.h"
+#include "ui/icon.h"
 #include "ui/theme.h"
 
-#define LIST_X      SAFE_X
-#define LIST_Y      92
-#define LIST_W      SAFE_W
-#define ROW_H       32
+/* Handoff section 5. Five columns of 112 with 12 between them is 608, which is SAFE_W to the
+ * pixel -- the board was drawn to the same safe area this program already used. */
+#define CARD_W      112
+#define CARD_H      158
+#define COL_GAP     12
+#define ROW_GAP     14
+#define GRID_ORG_X  16
+#define GRID_ORG_Y  78
+#define COLS        5
+#define ROWS        2
 
-/** @brief Cells in the name editor. One short of the buffer, which holds the terminator. */
-#define NAME_CELLS  (PROFILE_NAME_CAP - 1)
-#define CELL_W      26
+#define PLATE       64
+#define PLATE_TOP   24
+#define NAME_GAP    16
 
-/** Same set as the cheat name editor, and deliberately the same order: anyone who has typed one
- *  already knows which way Up goes. Space first so a name can be shortened from the right. */
-static const char ALPHABET[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'!";
-#define ALPHA_N ((int)(sizeof(ALPHABET) - 1))
+/** Selected cards lift and gain an outline; unselected ones dim. Section 8: the chosen thing is
+ *  the brightest thing, and nothing is distinguished by colour alone. */
+#define LIFT        3
+#define OUTLINE     2
+#define SHADOW_DY   5
+/** 0.66 brightness, as an alpha over the card. 255 - 0.66*255 = 87. */
+#define DIM_ALPHA   87
 
+/** The dashed edge of an empty slot. Fixed rather than themed, and this is the one place the
+ *  handoff's #52525A is allowed: section 8 forbids it for *text* because it fails on a CRT, and a
+ *  border that nearly disappears is exactly what an empty slot should look like. The "+ Empty"
+ *  label beside it takes the theme's dim text, which the handoff floors at #737384. */
+#define EMPTY_EDGE  RGBA5551(0x52, 0x52, 0x5A)
+
+_Static_assert(GRID_ORG_X + COLS * CARD_W + (COLS - 1) * COL_GAP == SAFE_X + SAFE_W,
+               "the profile card grid is not the width of the safe area");
+_Static_assert(COLS * ROWS == PROFILE_MAX, "the card grid does not hold PROFILE_MAX slots");
+_Static_assert(GRID_ORG_Y + ROWS * CARD_H + (ROWS - 1) * ROW_GAP <= FOOTER_Y,
+               "the profile card grid overruns the footer");
+
+/**
+ * @brief What Z offers, and why it is a menu rather than a second button.
+ *
+ * Z used to go straight to the appearance editor and the footer called it "Edit", which meant a
+ * player's *name* could only ever be set once -- at the moment the slot was created, on the way
+ * out of START or A-on-an-empty-card. Get it wrong there and it was wrong forever. There was no
+ * rename at all.
+ *
+ * The obvious fix is a second button, and the obvious second button is R. R is taken: it is how
+ * this screen gets back onto the tab rail, which is the whole reason the rail stays drawn. Even
+ * before that it was the one to avoid -- a rename keyboard opens pre-filled with the player's own
+ * name and B deletes a letter, so a mis-press there silently shortens a name.
+ *
+ * So Z means what the footer already said it meant, and there are two things under it.
+ */
 typedef enum {
-    MODE_LIST = 0,
-    MODE_RENAME,
+    MODE_GRID = 0,
+    MODE_EDIT,
     MODE_CONFIRM_REMOVE,
 } pmode_t;
 
-static bool   picking;          /**< entered at boot, so B has nowhere to go back to */
+enum { EDIT_NAME = 0, EDIT_LOOK, EDIT_ROWS };
+
+static bool    picking;         /**< entered at boot, so B has nowhere to go back to */
 static pmode_t mode;
-static int    cursor;
-static char   name[PROFILE_NAME_CAP];
-static int    name_cursor;
+static int     cursor;          /**< slot 0..PROFILE_MAX-1 */
+static int     confirm_keep;    /**< 1 = cursor on Keep, which is where it starts */
+static int     confirm_saves;   /**< how many save files the confirmation is offering to destroy */
+static int     edit_row;        /**< #EDIT_NAME or #EDIT_LOOK */
+
+/** Where a name typed on the keyboard lands, and which slot asked for it. */
+static char pending_name[PROFILE_NAME_CAP];
+static int  pending_slot = -1;
 
 bool screen_profiles_needed (void) {
     return profile_count() > 1;
@@ -79,56 +139,52 @@ void screen_profiles_ask (void) {
     picking = true;
 }
 
-/** @brief Rows in the list: every profile, then "Add a player" if there is room. */
-static int row_count (void) {
-    return profile_count() + (profile_count() < PROFILE_MAX ? 1 : 0);
+static int card_x (int slot) {
+    return GRID_ORG_X + (slot % COLS) * (CARD_W + COL_GAP);
 }
 
-static bool on_add_row (void) {
-    return cursor >= profile_count();
+static int card_y (int slot) {
+    return GRID_ORG_Y + (slot / COLS) * (CARD_H + ROW_GAP);
 }
 
 static void profiles_enter (app_t *app) {
     (void)app;
-    mode = MODE_LIST;
-    /* Opens on whoever is already active, so the common case -- boot, confirm it is still you,
-     * press A -- is one press and no steering. */
-    cursor = profile_active();
-}
+    mode = MODE_GRID;
 
-/** @brief Start editing @p index's name. */
-static void begin_rename (int index) {
-    mode = MODE_RENAME;
-    name_cursor = 0;
-
-    /* The raw name, not profile_name(): the fallback "Player 3" is what an unnamed profile reads
-     * as, not what it is called, and pre-filling the editor with it would make every new player
-     * start by deleting eight characters they never typed. */
-    snprintf(name, sizeof(name), "%s", profile_name_raw(index));
-
-    /* Padded to full width so every cell is editable. Without this, winding right past the end of
-     * a short name lands on the terminator and typing there leaves a hole in the string. */
-    for (int i = (int)strlen(name); i < NAME_CELLS; i++) {
-        name[i] = ' ';
+    /* A name may have come back from the keyboard. Applied here rather than by the keyboard,
+     * which does not know what it was typing for -- it writes a buffer and returns. */
+    if (pending_slot >= 0) {
+        if (pending_name[0] != '\0') {
+            profile_set_name(pending_slot, pending_name);
+            profile_save();
+        }
+        pending_slot = -1;
+    } else {
+        /* Opens on whoever is already active, so the common case -- boot, confirm it is still
+         * you, press A -- is one press and no steering. Not reset when returning from the
+         * keyboard or the appearance editor, which would throw away the slot being worked on. */
+        cursor = profile_active();
     }
-    name[NAME_CELLS] = '\0';
 }
 
-static void commit_rename (void) {
-    profile_set_name(cursor, name);     /* trims the padding back off; see profile_set_name() */
-    profile_save();
-    mode = MODE_LIST;
-    sound_play_effect(SFX_ENTER);
+static void begin_rename (app_t *app, int slot, const char *prompt) {
+    pending_slot = slot;
+    pending_name[0] = '\0';
+    /* The raw name, not profile_name(): the fallback "Player 3" is what an unnamed profile reads
+     * as, not what it is called, and pre-filling the field with it would make every new player
+     * start by deleting eight characters they never typed. */
+    screen_keyboard_ask(KB_NAME, prompt, profile_name_raw(slot),
+                        pending_name, sizeof(pending_name), SCREEN_PROFILES);
+    app_goto(app, SCREEN_KEYBOARD);
 }
 
-/** @brief Switch to @p index and leave. */
-static void choose (app_t *app, int index) {
-    if (index != profile_active()) {
-        profile_activate(index, app->lib);
+static void choose (app_t *app, int slot) {
+    if (slot != profile_active()) {
+        profile_activate(slot, app->lib);
         /* The theme is the profile's, so it changes with them. theme_apply() and not just the
          * assignment, because the font styles are registered state that does not follow
          * app->theme on its own -- see the same pairing in screen_settings.c. */
-        app->theme = theme_by_name(profile_theme(index));
+        app->theme = theme_by_name(profile_theme(slot));
         theme_apply(app->theme);
     }
     picking = false;
@@ -136,97 +192,135 @@ static void choose (app_t *app, int index) {
     app_goto(app, SCREEN_GRID);
 }
 
-static void update_list (app_t *app) {
+static void update_grid (app_t *app) {
     const input_t *in = &app->input;
-    int rows = row_count();
 
     if (input_pressed(in, BTN_B)) {
         /* Nowhere to go back to at boot: the question has to be answered, and answering it with
-         * the profile already active is what A on the pre-selected row does. From Settings, B is
-         * Back as it is everywhere else. */
+         * the profile already active is what A on the pre-selected card does. */
         if (picking) {
-            choose(app, cursor);
+            sound_play_effect(SFX_ERROR);
+            return;
+        }
+        sound_play_effect(SFX_EXIT);
+        app_goto(app, SCREEN_GRID);
+        return;
+    }
+
+    /* R is the way back onto the rail, mirroring L on the grid's first tab. Refused while the
+     * boot question is up, for the same reason B is: there is no grid to go back to yet. */
+    if (input_pressed(in, BTN_R)) {
+        if (picking) {
+            sound_play_effect(SFX_ERROR);
         } else {
-            sound_play_effect(SFX_EXIT);
-            app_goto(app, SCREEN_SETTINGS);
+            sound_play_effect(SFX_CURSOR);
+            app_goto(app, SCREEN_GRID);
         }
         return;
     }
 
     int prev = cursor;
-    if (in->up   && cursor > 0)        cursor--;
-    if (in->down && cursor < rows - 1) cursor++;
+    if (in->left  && (cursor % COLS) > 0)        cursor--;
+    if (in->right && (cursor % COLS) < COLS - 1) cursor++;
+    if (in->up    && cursor >= COLS)             cursor -= COLS;
+    if (in->down  && cursor < PROFILE_MAX - COLS) cursor += COLS;
     if (cursor != prev) {
         sound_play_effect(SFX_CURSOR);
     }
 
+    bool used = profile_slot_used(cursor);
+
     if (input_pressed(in, BTN_A)) {
-        if (on_add_row()) {
-            int added = profile_add();
-            if (added >= 0) {
-                /* Added, then named, in one go. A row called "Player 4" that the user has to
-                 * discover a second button to rename is a row most people would leave alone. */
-                cursor = added;
-                begin_rename(added);
+        if (used) {
+            choose(app, cursor);
+        } else {
+            /* A on an empty card creates the profile there and goes straight to naming it, which
+             * is the handoff's START-on-a-new-slot flow arriving from the other direction. The
+             * slot is the one under the cursor rather than the next free one, because the card
+             * being pressed is the promise being made. */
+            if (profile_add_at(cursor)) {
                 sound_play_effect(SFX_ENTER);
+                begin_rename(app, cursor, "Name this player");
             } else {
                 sound_play_effect(SFX_ERROR);
             }
-        } else {
-            choose(app, cursor);
         }
         return;
     }
 
-    if (on_add_row()) {
-        return;
-    }
-
-    if (input_pressed(in, BTN_CRIGHT)) {
-        begin_rename(cursor);
-        sound_play_effect(SFX_SETTING);
-    }
-
-    if (input_pressed(in, BTN_CLEFT)) {
-        /* Profile 1 owns the unsuffixed paths and cannot go -- profile_remove() refuses it too,
-         * but refusing silently after a press reads as a broken button. */
-        if (cursor == 0) {
+    if (input_pressed(in, BTN_START)) {
+        /* START makes a new player in the lowest free slot, wherever the cursor is. The handoff
+         * offers both; this is the one for somebody who has not thought about slots. */
+        int slot = profile_add();
+        if (slot >= 0) {
+            cursor = slot;
+            sound_play_effect(SFX_ENTER);
+            begin_rename(app, slot, "Name this player");
+        } else {
             sound_play_effect(SFX_ERROR);
-        } else {
-            mode = MODE_CONFIRM_REMOVE;
-            sound_play_effect(SFX_SETTING);
         }
+        return;
+    }
+
+    if (input_pressed(in, BTN_Z) && used) {
+        sound_play_effect(SFX_SETTING);
+        edit_row = EDIT_NAME;
+        mode = MODE_EDIT;
+        return;
+    }
+
+    /* C-left removes, as it did on the list this replaced. Not A and not B: both of those are
+     * one press away from being pressed by somebody scrolling, and this is the only irreversible
+     * thing in the program. */
+    if (input_pressed(in, BTN_CLEFT) && used) {
+        if (cursor == 0) {
+            /* Player one owns the unsuffixed `saves/` -- on a card that predates profiles, every
+             * save on it. Removing them is not a thing this screen offers at any confirmation
+             * depth. The refusal is a sound rather than a dialog, because explaining it would
+             * mean explaining slot numbering to somebody who asked to delete a row. */
+            sound_play_effect(SFX_ERROR);
+            return;
+        }
+        confirm_saves = profile_erase_saves(cursor, app->lib, true);
+        confirm_keep = 1;
+        mode = MODE_CONFIRM_REMOVE;
+        sound_play_effect(SFX_SETTING);
     }
 }
 
-static void update_rename (app_t *app) {
+static void update_edit (app_t *app) {
     const input_t *in = &app->input;
 
-    if (input_pressed(in, BTN_B)) {
-        mode = MODE_LIST;
+    if (input_pressed(in, BTN_B) || input_pressed(in, BTN_Z)) {
+        /* Z closes it as well as opens it, so a press that was meant for the grid underneath does
+         * not leave the user hunting for the way out of a two-line menu. */
+        mode = MODE_GRID;
         sound_play_effect(SFX_EXIT);
         return;
     }
-    if (input_pressed(in, BTN_A) || input_pressed(in, BTN_START)) {
-        commit_rename();
+    if (in->up && edit_row > 0) {
+        edit_row--;
+        sound_play_effect(SFX_CURSOR);
+    }
+    if (in->down && edit_row < EDIT_ROWS - 1) {
+        edit_row++;
+        sound_play_effect(SFX_CURSOR);
+    }
+    if (!input_pressed(in, BTN_A)) {
         return;
     }
 
-    if (in->right) {
-        name_cursor = (name_cursor + 1) % NAME_CELLS;
-        sound_play_effect(SFX_CURSOR);
-    }
-    if (in->left) {
-        name_cursor = (name_cursor + NAME_CELLS - 1) % NAME_CELLS;
-        sound_play_effect(SFX_CURSOR);
-    }
-
-    int step = (in->up ? 1 : 0) - (in->down ? 1 : 0);
-    if (step != 0) {
-        const char *p = strchr(ALPHABET, name[name_cursor]);
-        int idx = (p != NULL) ? (int)(p - ALPHABET) : 0;
-        name[name_cursor] = ALPHABET[(idx + step + ALPHA_N) % ALPHA_N];
-        sound_play_effect(SFX_SETTING);
+    /* Back to the grid first in both cases. Both destinations return here, and profiles_enter()
+     * leaves the cursor where it was -- so coming back into an open menu would be a menu the user
+     * has to dismiss after every edit. */
+    mode = MODE_GRID;
+    if (edit_row == EDIT_NAME) {
+        sound_play_effect(SFX_ENTER);
+        begin_rename(app, cursor, "Rename this player");
+    } else {
+        sound_play_effect(SFX_ENTER);
+        screen_appearance_ask(cursor);
+        app_goto(app, SCREEN_APPEARANCE);
     }
 }
 
@@ -234,176 +328,310 @@ static void update_confirm (app_t *app) {
     const input_t *in = &app->input;
 
     if (input_pressed(in, BTN_B)) {
-        mode = MODE_LIST;
+        mode = MODE_GRID;
         sound_play_effect(SFX_EXIT);
         return;
     }
-    if (input_pressed(in, BTN_A)) {
-        int removed = cursor;
-        if (profile_remove(removed)) {
-            sound_play_effect(SFX_ENTER);
-            /* profile_remove() may have moved the active profile -- either because it was the one
-             * deleted, or because it sat above the hole and shifted down. Either way the library
-             * in memory now belongs to somebody else's slot, so it is re-keyed rather than left
-             * showing the removed player's favourites. */
-            profile_activate(profile_active(), app->lib);
-            app->theme = theme_by_name(profile_theme(profile_active()));
-            theme_apply(app->theme);
-        } else {
-            sound_play_effect(SFX_ERROR);
-        }
-        if (cursor >= row_count()) {
-            cursor = row_count() - 1;
-        }
-        mode = MODE_LIST;
+    if (in->left || in->right) {
+        confirm_keep = !confirm_keep;
+        sound_play_effect(SFX_CURSOR);
     }
+    if (!input_pressed(in, BTN_A)) {
+        return;
+    }
+    if (confirm_keep) {
+        mode = MODE_GRID;
+        sound_play_effect(SFX_EXIT);
+        return;
+    }
+
+    /* The saves first, then the profile. That order matters: profile_erase_saves() needs the slot
+     * to still exist to name its folder, and profile_remove() clears it. */
+    int gone = profile_erase_saves(cursor, app->lib, false);
+    if (profile_remove(cursor)) {
+        debugf("PROFILE removed slot %d, %d save file(s) deleted\n", cursor + 1, gone);
+        sound_play_effect(SFX_ENTER);
+        /* If the deleted profile was the active one, profile_remove() moved it back to slot 0, so
+         * the library in memory belongs to somebody else now and is re-keyed rather than left
+         * showing the removed player's favourites. Nobody else moved -- that is the point of
+         * stable slots -- so this is the only case. */
+        profile_activate(profile_active(), app->lib);
+        app->theme = theme_by_name(profile_theme(profile_active()));
+        theme_apply(app->theme);
+    } else {
+        sound_play_effect(SFX_ERROR);
+    }
+    mode = MODE_GRID;
 }
 
 static void profiles_update (app_t *app, float dt) {
     (void)dt;
     switch (mode) {
-        case MODE_RENAME:         update_rename(app);  break;
+        case MODE_EDIT:           update_edit(app);    break;
         case MODE_CONFIRM_REMOVE: update_confirm(app); break;
-        default:                  update_list(app);    break;
+        default:                  update_grid(app);    break;
     }
 }
 
 /* ------------------------------------------------------------------ drawing */
 
-static void draw_header (const theme_t *th) {
+/** Ask the icon cache for every visible face, so a page of cards fills over a few frames rather
+ *  than the cursor's one arriving and the rest staying blank. */
+static void profiles_background (app_t *app, uint32_t budget) {
+    (void)budget;
+    (void)app;
+    for (int i = 0; i < PROFILE_MAX; i++) {
+        if (!profile_slot_used(i)) {
+            continue;
+        }
+        icon_request(profile_icon(i), ICON_SMALL,
+                     profile_colour_fill(profile_ink(i)),
+                     profile_colour_fill(profile_plate(i)));
+    }
+}
+
+/**
+ * @brief The rail, or the question.
+ *
+ * Reached from the grid, this screen keeps the tab rail with the player chip lit: L and R still
+ * walk it, so pressing L one too many times is not a trap you have to answer your way out of.
+ * That replaced a "Who's playing? / 2 of 10 used" header, which said what the cards already say
+ * and cost the rail its place.
+ *
+ * At boot there is no rail to keep, because there is no grid behind this yet and R is refused
+ * until the question is answered -- so drawing one would advertise a move that does not work.
+ * That is the only case the header survives for, and it is the one place the words belong.
+ */
+static void draw_header (app_t *app) {
+    const theme_t *th = app->theme;
+
+    if (!picking) {
+        screen_grid_draw_rail(app, true);
+        return;
+    }
     ui_fill(0, 0, SCREEN_W, 64, th->panel);
     ui_fill(0, 64 - ACCENT_BAR, SCREEN_W, ACCENT_BAR, th->tab_underline);
 
-    /* The boot question and the settings heading are not the same sentence. "Who's playing?" is
-     * asking; "Players" is a list of things you may change. */
-    ui_label(SAFE_X, 36, SAFE_W, ALIGN_LEFT, STL_DEFAULT,
-             (mode == MODE_LIST && picking) ? "Who's playing?" : "Players");
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+    ui_text_font(FNT_KEY, SAFE_X, 42, SAFE_W, ALIGN_LEFT, STL_DEFAULT, "Who's playing?");
+}
 
-    if (mode == MODE_LIST) {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%d of %d", profile_count(), PROFILE_MAX);
-        ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_GRAY, buf);
+/**
+ * @brief One dashed edge, landing a whole dash on each end.
+ *
+ * The pattern is stretched to fit rather than truncated. Stepping a fixed 12 px and clipping the
+ * last dash to what was left put a two-pixel stub in the corner of a 158 px edge with a six-pixel
+ * hole in front of it -- so the bottom of every empty card read as unfinished, which is exactly
+ * what it looked like.
+ */
+static void dashed_edge (int origin, int len, int fixed, bool vertical, uint16_t c) {
+    const int DASH = 6, STEP = 12;
+    int n = (len - DASH + STEP / 2) / STEP;      /* gaps, so n+1 dashes */
+    if (n < 1) {
+        n = 1;
+    }
+    for (int i = 0; i <= n; i++) {
+        int at = origin + ((len - DASH) * i) / n;
+        if (vertical) {
+            ui_fill(fixed, at, 1, DASH, c);
+        } else {
+            ui_fill(at, fixed, DASH, 1, c);
+        }
     }
 }
 
-static void draw_footer (const theme_t *th) {
+/** A dashed rectangle, for an empty slot. Drawn from dashes rather than as a solid border because
+ *  a solid one reads as a card that is there and merely blank. */
+static void dashed_rect (int x, int y, int w, int h, uint16_t c) {
+    dashed_edge(x, w, y,         false, c);
+    dashed_edge(x, w, y + h - 1, false, c);
+    dashed_edge(y, h, x,         true,  c);
+    dashed_edge(y, h, x + w - 1, true,  c);
+}
+
+static void draw_card (app_t *app, int slot, bool selected) {
+    const theme_t *th = app->theme;
+    int x = card_x(slot);
+    int y = card_y(slot) - (selected ? LIFT : 0);
+
+    if (!profile_slot_used(slot)) {
+        dashed_rect(x, y, CARD_W, CARD_H, EMPTY_EDGE);
+        rdpq_set_mode_standard();
+        rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+        ui_text_font(FNT_KEY, x, y + CARD_H / 2, CARD_W, ALIGN_CENTER, STL_GRAY, "+");
+        ui_text(x, y + CARD_H / 2 + 28, CARD_W, ALIGN_CENTER, STL_GRAY, "Empty");
+        if (selected) {
+            ui_border(x - OUTLINE, y - OUTLINE, CARD_W + OUTLINE * 2, CARD_H + OUTLINE * 2,
+                      OUTLINE, th->text);
+        }
+        return;
+    }
+
+    if (selected) {
+        ui_fill(x, y + CARD_H, CARD_W, SHADOW_DY, th->sel_shadow);
+    }
+    ui_fill(x, y, CARD_W, CARD_H, th->panel);
+
+    uint16_t fill = profile_colour_fill(profile_plate(slot));
+    uint16_t ink  = profile_colour_fill(profile_ink(slot));
+    int px = x + (CARD_W - PLATE) / 2;
+    int py = y + PLATE_TOP;
+
+    ui_fill(px, py, PLATE, PLATE, fill);
+    const surface_t *pix = icon_get(profile_icon(slot), ICON_SMALL, ink, fill);
+    if (pix != NULL) {
+        rdpq_set_mode_copy(false);
+        rdpq_tex_blit(pix, px + (PLATE - ICON_SMALL) / 2, py + (PLATE - ICON_SMALL) / 2, NULL);
+    }
+
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+    /* The whole card wide, not CARD_W - 8. "Player 10" measures 105 px of ink against a 104 px box
+     * and lost its last glyph, so slot 10's card read "Player 1" -- the same clipping the fallback
+     * buffer had just been widened to stop, moved from the string into the box. Measured off the
+     * framebuffer, not estimated: tools/inputs/tenplayers.txt is the frame that shows it.
+     *
+     * 112 leaves 7 px. A name of eight wide capitals could still overrun it, which is a thing
+     * somebody would do to themselves and see immediately; "Player 10" is a thing the menu does to
+     * a card that has ten players on it. */
+    ui_text(x, py + PLATE + NAME_GAP + 16, CARD_W, ALIGN_CENTER,
+            selected ? STL_DEFAULT : STL_GRAY, profile_name(slot));
+
+    if (slot == profile_active()) {
+        /* A bar under the active player's card, the same accent the tab rail uses for the
+         * selected tab. Without it the boot picker cannot say which profile it opened on -- the
+         * cursor is where you are, not who you are, and after one press of Right they differ. */
+        ui_fill(x, y + CARD_H - ACCENT_BAR, CARD_W, ACCENT_BAR, th->tab_underline);
+    }
+
+    if (!selected) {
+        /* 0.66 brightness. A wash over the finished card rather than dimmer colours per element,
+         * so the plate, the sprite and the name all dim by the same amount and the swatch stays
+         * recognisable as itself. */
+        ui_wash(x, y, CARD_W, CARD_H, 0x0001, DIM_ALPHA);
+    } else {
+        ui_border(x - OUTLINE, y - OUTLINE, CARD_W + OUTLINE * 2, CARD_H + OUTLINE * 2,
+                  OUTLINE, 0xFFFF);
+    }
+}
+
+static void draw_footer (app_t *app) {
+    const theme_t *th = app->theme;
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
 
-    int y = FOOTER_Y + 14;
-    const char *back = "Back";
-
-    switch (mode) {
-        case MODE_RENAME: {
-            int x = ui_hint(SAFE_X, y, "A", BTN_A_COLOR, UI_BTN_DISC, "Done");
-            (void)ui_hint(x + 20, y, "^", BTN_C_COLOR, UI_BTN_DISC, "Letter");
-            back = "Cancel";
-            break;
-        }
-        case MODE_CONFIRM_REMOVE:
-            (void)ui_hint(SAFE_X, y, "A", BTN_A_COLOR, UI_BTN_DISC, "Remove");
-            back = "Keep";
-            break;
-        default: {
-            /* The verbs offered are the verbs that will work on the row the cursor is on. A
-             * "Remove" hint above Player 1 -- which can never be removed, because it owns the
-             * unsuffixed paths -- would be advertising a button whose only response is an error
-             * sound, and the same goes for renaming the "Add a player" row. */
-            int x = ui_hint(SAFE_X, y, "A", BTN_A_COLOR, UI_BTN_DISC,
-                            on_add_row() ? "Add" : "Play as");
-            if (!on_add_row()) {
-                x = ui_hint(x + 20, y, ">", BTN_C_COLOR, UI_BTN_DISC, "Rename");
-                if (cursor > 0) {
-                    x = ui_hint(x + 20, y, "<", BTN_C_COLOR, UI_BTN_DISC, "Remove");
-                }
-            }
-            (void)x;
-            /* Three hints, so the right-hand label has to stay short. The other screens append
-             * "(not saved to card)" here and it does not fit beside three: it drew straight
-             * through the Remove hint. The warning moved into the list area instead, where it is
-             * more visible anyway -- see draw_list(). */
-            break;
+    int hx = SAFE_X;
+    hx = ui_hint(hx, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC,
+                 profile_slot_used(cursor) ? "Select" : "New");
+    if (profile_slot_used(cursor)) {
+        /* "Name or icon", not "Edit". The old label was accurate about the button and useless
+         * about the feature: it went straight to the appearance editor, so somebody looking for a
+         * rename read "Edit", found only colours, and concluded there was no rename. Saying both
+         * nouns is the whole fix for that -- the menu behind it is only how they fit. */
+        hx = ui_hint(hx, FOOTER_Y + 14, "Z", BTN_Z_COLOR, UI_BTN_TALL, "Name or icon");
+        if (cursor != 0) {
+            hx = ui_hint(hx, FOOTER_Y + 14, "<", BTN_C_COLOR, UI_BTN_DISC, "Remove");
         }
     }
-
-    ui_button(SAFE_X + SAFE_W - UI_BTN_D, y, "B", BTN_B_COLOR, UI_BTN_DISC);
-    ui_label(SAFE_X, y + UI_BTN_D - 5, SAFE_W - UI_BTN_D - 6, ALIGN_RIGHT, STL_GRAY, back);
+    (void)ui_hint(hx, FOOTER_Y + 14, "S", BTN_START_COLOR, UI_BTN_DISC, "New player");
 }
 
-static void draw_list (const theme_t *th) {
-    char buf[64];
+static void draw_edit (app_t *app) {
+    const theme_t *th = app->theme;
+    char line[64];
 
-    /* A card that cannot be written takes every one of these and forgets it at power off. Said
-     * here rather than in the footer, which on this screen already carries three hints -- and
-     * this is the one screen where the warning matters most, because a roster that does not
-     * persist is a feature that does not work rather than a preference that resets. */
-    if (!cache_writable()) {
-        ui_label(LIST_X, FOOTER_Y - 20, LIST_W, ALIGN_CENTER, STL_YELLOW,
-                 "Read-only card: players reset at power off.");
-    }
+    ui_wash(0, 0, SCREEN_W, SCREEN_H, 0x0001, 180);
 
-    for (int i = 0; i < row_count(); i++) {
-        int y = LIST_Y + i * ROW_H;
-        bool sel = (i == cursor);
+    const int W = 420, H = 178;   /* title, two 40 px rows, and 16 px of margin */
+    const int X = (SCREEN_W - W) / 2, Y = (SCREEN_H - H) / 2;
+    ui_fill(X, Y, W, H, th->panel);
+    ui_border(X, Y, W, H, 2, th->text_dim);
 
-        if (sel) {
-            ui_fill(LIST_X, y, LIST_W, ROW_H, th->panel_alt);
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+    snprintf(line, sizeof(line), "Edit %s", profile_name(cursor));
+    ui_text(X + 24, Y + 42, W - 48, ALIGN_CENTER, STL_DEFAULT, line);
+
+    /* The name row shows the name as it will be typed, not as it reads: an unnamed profile shows
+     * nothing rather than "Player 3", because "Player 3" is the placeholder and offering to rename
+     * it to itself would be a lie about what is in the field. */
+    const char *raw = profile_name_raw(cursor);
+    const char *rows[EDIT_ROWS] = { "Name", "Icon and colours" };
+    char detail[EDIT_ROWS][32];
+    snprintf(detail[EDIT_NAME], sizeof(detail[0]), "%s", (raw[0] != '\0') ? raw : "Not set");
+    snprintf(detail[EDIT_LOOK], sizeof(detail[0]), "%s",
+             profile_colour_name(profile_plate(cursor)));
+
+    /* Outlined, not inverted. The selected row was a white plate with near-black text on it, and
+     * near-black on white is the one combination this display does worst -- 32 levels a channel
+     * and a CRT's bloom turn small dark glyphs on a bright field into a smear. The row keeps the
+     * panel behind it and gains a border; the text just brightens. */
+    const int RH = 40, R0 = Y + 74;
+    for (int i = 0; i < EDIT_ROWS; i++) {
+        int ry = R0 + i * (RH + 8);
+        bool here = (i == edit_row);
+        if (here) {
+            ui_fill(X + 20, ry, W - 40, RH, th->panel_alt);
+            ui_border(X + 20, ry, W - 40, RH, 2, th->text);
         }
-
-        if (i >= profile_count()) {
-            ui_label(LIST_X + 16, y + 22, LIST_W - 32, ALIGN_LEFT,
-                     sel ? STL_DEFAULT : STL_GRAY, "Add a player");
-            continue;
-        }
-
-        ui_label(LIST_X + 16, y + 22, LIST_W - 200, ALIGN_LEFT,
-                 sel ? STL_DEFAULT : STL_GRAY, profile_name(i));
-
-        /* Which folder this player's saves are in, spelled out rather than implied. Somebody
-         * copying a save off the card on a computer has no other way to find out, and the answer
-         * for player 1 -- the plain saves folder, no suffix -- is the one people assume is wrong. */
-        if (i == 0) {
-            snprintf(buf, sizeof(buf), "saves/");
-        } else {
-            snprintf(buf, sizeof(buf), "saves/p%d/", i + 1);
-        }
-        ui_label(LIST_X, y + 22, LIST_W - 16, ALIGN_RIGHT,
-                 i == profile_active() ? STL_YELLOW : STL_GRAY, buf);
+        rdpq_set_mode_standard();
+        rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+        ui_text(X + 34, ry + 26, W - 68, ALIGN_LEFT,
+                here ? STL_DEFAULT : STL_GRAY, rows[i]);
+        ui_text(X + 34, ry + 26, W - 68, ALIGN_RIGHT, STL_GRAY, detail[i]);
     }
 }
 
-static void draw_rename (const theme_t *th) {
-    char one[2] = { 0, 0 };
+static void draw_confirm (app_t *app) {
+    const theme_t *th = app->theme;
+    char line[128];
 
-    ui_label(SAFE_X, LIST_Y + 20, SAFE_W, ALIGN_CENTER, STL_GRAY, "Name this player");
+    ui_wash(0, 0, SCREEN_W, SCREEN_H, 0x0001, 180);
 
-    int span = NAME_CELLS * CELL_W;
-    int ox = (SCREEN_W - span) / 2;
-    int y = LIST_Y + 90;
+    /* 220 while there were three lines of text in it. Losing the one about slots and
+     * renumbering left a third of the panel empty above the buttons, which reads as a dialog
+     * that failed to draw something. */
+    const int W = 520, H = 176;
+    const int X = (SCREEN_W - W) / 2, Y = (SCREEN_H - H) / 2;
+    ui_fill(X, Y, W, H, th->panel);
+    ui_border(X, Y, W, H, 2, th->text_dim);
 
-    for (int i = 0; i < NAME_CELLS; i++) {
-        int cx = ox + i * CELL_W;
-        if (i == name_cursor) {
-            ui_fill(cx - 2, y - 20, CELL_W, 26, th->text_accent);
-        }
-        one[0] = name[i];
-        ui_label(cx, y, CELL_W, ALIGN_LEFT, i == name_cursor ? STL_ONBTN : STL_DEFAULT, one);
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+
+    snprintf(line, sizeof(line), "Remove %s?", profile_name(cursor));
+    ui_text(X + 24, Y + 44, W - 48, ALIGN_CENTER, STL_DEFAULT, line);
+
+    /* The count, and it is the whole point of this dialog. "and 41 saved games" is a different
+     * decision from "and no saved games", and the person answering is the only one who can tell
+     * which of the two they are in. */
+    if (confirm_saves > 0) {
+        snprintf(line, sizeof(line), "This deletes %d saved game%s.",
+                 confirm_saves, confirm_saves == 1 ? "" : "s");
+    } else {
+        snprintf(line, sizeof(line), "They have no saved games on this card.");
     }
-    ui_fill(ox, y + 6, span, HAIRLINE, th->panel_alt);
-}
+    ui_text(X + 24, Y + 86, W - 48, ALIGN_CENTER,
+            confirm_saves > 0 ? STL_ORANGE : STL_GRAY, line);
 
-static void draw_confirm (const theme_t *th) {
-    char buf[96];
-    (void)th;
+    /* Both buttons keep the same plate and the chosen one is outlined, for the same reason the
+     * edit rows are: the selected one used to be a white fill with near-black text, which is the
+     * worst thing this display renders. Which button is dangerous is carried by the word and by
+     * the colour of the word, not by which one is lit. */
+    const int BW = 180, BH = 44, BY = Y + H - 68;
+    int kx = X + 40, dx = X + W - 40 - BW;
 
-    snprintf(buf, sizeof(buf), "Remove %s?", profile_name(cursor));
-    ui_label(SAFE_X, LIST_Y + 40, SAFE_W, ALIGN_CENTER, STL_DEFAULT, buf);
+    ui_fill(kx, BY, BW, BH, th->panel_alt);
+    if (confirm_keep) {
+        ui_border(kx, BY, BW, BH, 3, th->text);
+    }
+    ui_text(kx, BY + 29, BW, ALIGN_CENTER, confirm_keep ? STL_DEFAULT : STL_GRAY, "Keep");
 
-    ui_label(SAFE_X, LIST_Y + 90, SAFE_W, ALIGN_CENTER, STL_GRAY,
-             "Their saves stay on the card.");
-    ui_label(SAFE_X, LIST_Y + 120, SAFE_W, ALIGN_CENTER, STL_GRAY,
-             "Players below them move up a slot, and their save");
-    ui_label(SAFE_X, LIST_Y + 146, SAFE_W, ALIGN_CENTER, STL_GRAY,
-             "folders do not follow.");
+    ui_fill(dx, BY, BW, BH, th->panel_alt);
+    if (!confirm_keep) {
+        ui_border(dx, BY, BW, BH, 3, th->text);
+    }
+    ui_text(dx, BY + 29, BW, ALIGN_CENTER, STL_ORANGE, "Delete");
 }
 
 static void profiles_render (app_t *app, surface_t *fb) {
@@ -412,21 +640,30 @@ static void profiles_render (app_t *app, surface_t *fb) {
     rdpq_attach(fb, NULL);
     ui_fill(0, 0, SCREEN_W, SCREEN_H, th->bg);
 
-    draw_header(th);
+    draw_header(app);
+    /* Unselected first, selected last: it lifts, outlines and casts a shadow, all of which
+     * overlap its neighbours and have to land on top of them. */
+    for (int i = 0; i < PROFILE_MAX; i++) {
+        if (i != cursor) {
+            draw_card(app, i, false);
+        }
+    }
+    draw_card(app, cursor, true);
+    draw_footer(app);
 
-    switch (mode) {
-        case MODE_RENAME:         draw_rename(th);  break;
-        case MODE_CONFIRM_REMOVE: draw_confirm(th); break;
-        default:                  draw_list(th);    break;
+    if (mode == MODE_EDIT) {
+        draw_edit(app);
+    } else if (mode == MODE_CONFIRM_REMOVE) {
+        draw_confirm(app);
     }
 
-    draw_footer(th);
     rdpq_detach_show();
 }
 
 const screen_t SCREEN_PROFILES_DEF = {
-    .id     = SCREEN_PROFILES,
-    .enter  = profiles_enter,
-    .update = profiles_update,
-    .render = profiles_render,
+    .id         = SCREEN_PROFILES,
+    .enter      = profiles_enter,
+    .update     = profiles_update,
+    .render     = profiles_render,
+    .background = profiles_background,
 };

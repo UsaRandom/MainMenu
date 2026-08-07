@@ -110,4 +110,21 @@ bool directory_exists(char *path);
  */
 bool directory_create(char *path);
 
+/**
+ * @brief Delete the regular files directly inside @p path. The directory itself stays, empty.
+ *
+ * **Deliberately not recursive.** It deletes files it finds one level down and nothing else; a
+ * subdirectory is left where it is. That is the safety property, not a limitation. The one caller
+ * is profile_erase_saves(), and a profile's save folder is flat -- so recursion would buy nothing
+ * and would turn a wrong path into an unbounded delete instead of a bounded one.
+ *
+ * The empty directory is left behind too, and that is fine: it is what the next occupant of the
+ * slot needs, and cart_load.c would recreate it on their first launch regardless.
+ *
+ * @param path      the directory
+ * @param dry_run   count what would go without removing anything
+ * @return how many files were removed, or would be
+ */
+int directory_erase(const char *path, bool dry_run);
+
 #endif // UTILS_FS_H__

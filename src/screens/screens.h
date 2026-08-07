@@ -19,6 +19,33 @@ extern const screen_t SCREEN_LOCKS_DEF;
 extern const screen_t SCREEN_PROFILES_DEF;
 extern const screen_t SCREEN_CLOCK_DEF;
 extern const screen_t SCREEN_CODE_DEF;
+extern const screen_t SCREEN_CREDITS_DEF;
+extern const screen_t SCREEN_KEYBOARD_DEF;
+extern const screen_t SCREEN_APPEARANCE_DEF;
+
+/** @brief Which profile the appearance editor is about to edit. Call before app_goto(). */
+void screen_appearance_ask (int profile_slot);
+
+/** @brief Which characters the keyboard offers. See screen_keyboard.c. */
+typedef enum {
+    KB_NAME = 0,   /**< A-Z and space. A profile name: no shift key, no digits, eight characters. */
+    KB_TEXT,       /**< adds digits and marks, for cheat names, which the corpus is full of */
+} kb_charset_t;
+
+/**
+ * @brief Arm the keyboard, then `app_goto(app, SCREEN_KEYBOARD)`.
+ *
+ * @p out is written only when the user confirms with a non-empty field, so a cancelled edit
+ * leaves the old value alone without the caller having to keep a copy.
+ *
+ * @p initial may contain characters this charset cannot type -- a name written by the odometer
+ * this replaced can hold digits. Those display and can be deleted; only input is restricted.
+ */
+void screen_keyboard_ask (kb_charset_t set, const char *prompt, const char *initial,
+                          char *out, size_t cap, screen_id_t back);
+
+/** @brief Characters @p set accepts before it starts refusing. */
+int screen_keyboard_limit (kb_charset_t set);
 extern const screen_t SCREEN_LAUNCH_DEF;
 extern const screen_t SCREEN_FAULT_DEF;
 
@@ -32,6 +59,18 @@ void screens_register (const screen_t **table);
  * has ever been in before profiles existed, and it has to stay cheap to be true: the cost of this
  * feature for somebody who never uses it must be exactly zero presses.
  */
+/**
+ * @brief Draw the tab rail, from the screen that owns which tab is current.
+ *
+ * The picker keeps the rail on screen so somebody who pressed L one too many times can get back
+ * to a tab without first picking a player. It draws through here rather than owning a copy,
+ * because the rail's contents -- which tab is underlined -- are the grid's state, and a second
+ * copy is a second thing to keep in step.
+ *
+ * @param chip_selected the rail cursor is on the player chip rather than on a tab.
+ */
+void screen_grid_draw_rail (app_t *app, bool chip_selected);
+
 bool screen_profiles_needed (void);
 
 /** @brief Mark the next entry to SCREEN_PROFILES as the boot question rather than the editor. */

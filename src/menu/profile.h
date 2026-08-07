@@ -57,12 +57,43 @@
 #define MENU_PROFILE_H__
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stddef.h>
 
 #include "library/library.h"
 
-/** @brief Ten players. The picker is one screen of rows and this is what fits on it. */
+/** @brief Ten players. The picker is a 5 x 2 grid of cards and this is what fits on it. */
 #define PROFILE_MAX         10
+
+/**
+ * @brief The closed palette a profile's plate and artwork both pick from.
+ *
+ * Nine: seven hues, then black and white. Slots default to one of the first #PROFILE_PLATES,
+ * because a black or white plate reads as an empty card -- but both neutrals are choosable, and
+ * white-on-red is the reason this is one list rather than two.
+ *
+ * It was ten. The handoff's eighth swatch was a bone white that quantised to three levels off the
+ * pure one in RGBA5551, which is a palette with two whites in it; see the SWATCH table.
+ */
+#define PROFILE_COLOURS     9
+#define PROFILE_PLATES      7       /**< the hues, which defaults come from */
+#define PROFILE_COLOUR_INK    7     /**< the dark neutral */
+#define PROFILE_COLOUR_PAPER  8     /**< the light neutral */
+
+/**
+ * @brief `profiles.ini` format.
+ *
+ * 1: `count` profiles in slots 0..count-1, no holes. Deleting one moved every profile above it
+ *    down a slot -- and since the slot number names `saves/pN/`, that handed one player's saves
+ *    to another. Still read, and read without renumbering anything; see profile_load().
+ * 2: every slot carries its own `used` flag, so a deleted slot stays empty and nobody inherits a
+ *    folder. Adds `icon`, `colour` (the plate) and `ink` (the artwork on it). A file with no
+ *    `ink` key -- which is every file written before the two could differ -- takes
+ *    #profile_default_ink, the pairing that used to be hardcoded, so nothing changes appearance
+ *    on upgrade. No version bump for that: the key is additive and its absence has a defined
+ *    meaning, which is the whole reason it was given one.
+ */
+#define PROFILE_VERSION     2
 
 /**
  * @brief Name length, including the terminator.
@@ -76,6 +107,16 @@
  */
 #define PROFILE_NAME_CAP    9
 
+/**
+ * @brief Longest string #profile_name can return, including the terminator.
+ *
+ * Ten, not #PROFILE_NAME_CAP's nine, and the extra character is entirely "Player 10". A typed name
+ * is eight characters; the unnamed fallback for the last slot is nine, so anything that reserves
+ * space for a name has to reserve for nine or slot 10 gets clipped. It shared the cap once and the
+ * fallback came out as "Player 1" -- the same string slot 1 shows.
+ */
+#define PROFILE_LABEL_CAP   10
+
 /** @brief Load `profiles.ini` and select the active profile. Absent is normal: one nameless profile. */
 void profile_load (const char *storage_prefix);
 
@@ -85,8 +126,64 @@ void profile_save (void);
 /** @brief How many profiles exist. Always at least 1. */
 int profile_count (void);
 
-/** @brief Index of the profile in use, 0..profile_count()-1. */
+/** @brief Index of the profile in use, 0..PROFILE_MAX-1. */
 int profile_active (void);
+
+/**
+ * @brief Is slot @p index occupied?
+ *
+ * Slots are stable and the roster can have holes, so this is what the picker draws its "+ Empty"
+ * cards from and what any loop over profiles must test. Iterating to profile_count() was correct
+ * under format 1 and is wrong now: three profiles in slots 0, 1 and 4 make profile_count() 3, and
+ * a loop bounded by it stops before the third.
+ */
+bool profile_slot_used (int index);
+
+/** @brief The icon @p index wears, or #ICON_NONE if they have not chosen one. */
+uint16_t profile_icon (int index);
+
+/** @brief Set the icon. Not saved until profile_save(). */
+void profile_set_icon (int index, uint16_t icon);
+
+/** @brief The plate @p index wears: a #PROFILE_COLOURS index. */
+int profile_plate (int index);
+
+/** @brief Set the plate. Out-of-range values are ignored rather than clamped. */
+void profile_set_plate (int index, int colour);
+
+/** @brief The colour the artwork on that plate is drawn in. Also a #PROFILE_COLOURS index. */
+int profile_ink (int index);
+
+/** @brief Set the artwork colour. Out-of-range values are ignored rather than clamped. */
+void profile_set_ink (int index, int colour);
+
+/** @brief The RGBA5551 value of palette entry @p colour. */
+uint16_t profile_colour_fill (int colour);
+
+/** @brief What palette entry @p colour is called -- "Red", "Black". Never NULL. */
+const char *profile_colour_name (int colour);
+
+/**
+ * @brief The artwork colour that stays legible on plate @p plate.
+ *
+ * The pairing the swatch table used to hardcode -- amber, green, cyan, pink and white take black
+ * artwork; red, blue, purple and black take white. It is now a *default* rather than a rule: it is
+ * what a new slot gets and what a card written before the two could differ is read as, and the
+ * user can then pick anything.
+ */
+int profile_default_ink (int plate);
+
+/**
+ * @brief Which slot already wears (@p icon, @p plate, @p ink), ignoring @p except. -1 if none.
+ *
+ * The whole appearance has to be unique, so two people are never the same card in the grid; the
+ * sprite alone may be shared, and so may a colour. Checked when an appearance is applied rather
+ * than by hiding taken combinations, because a cell the cursor cannot land on is a worse answer
+ * than a refusal that says who has it.
+ *
+ * An unchosen icon never collides -- ten slots with #ICON_NONE are not ten conflicts.
+ */
+int profile_appearance_owner (uint16_t icon, int plate, int ink, int except);
 
 /**
  * @brief What @p index is called. Never NULL.
@@ -118,23 +215,58 @@ void profile_set_theme (int index, const char *name);
 int profile_add (void);
 
 /**
- * @brief Remove @p index, closing the gap above it.
+ * @brief Fill a specific empty slot, returning false if it is out of range or already taken.
  *
- * **Saves are not touched.** Finding them all would mean walking the entire card -- they live
- * beside each ROM, not in one place -- and deleting somebody's saves because they came off a
- * family list is the one outcome here that cannot be undone. The `saves/pN/` folders are left
- * where they are, and the card guide says so. What does go is the profile's playstate and cheat
- * selections, which are this menu's own bookkeeping.
+ * The picker offers both this and #profile_add. Pressing A on a particular empty card should fill
+ * *that* card -- the card being pressed is the promise being made -- while START is for somebody
+ * who has not thought about slots and just wants another player.
+ *
+ * The new slot gets a colour and a starter face immediately, by slot number, so it is never a
+ * blank panel and ten of them are never the same one.
+ */
+bool profile_add_at (int slot);
+
+/**
+ * @brief Empty slot @p index, leaving the slot itself where it is.
+ *
+ * **Nothing above it moves.** That is the change format 2 exists for. Removing a profile used to
+ * close the gap by shifting every profile above it down a slot -- and the slot number is what
+ * names the folder on disk, so deleting player 2 turned player 3's `saves/p3/` into player 2's.
+ * The saves followed the slot rather than the person, which is a thing a menu should never do and
+ * which took a paragraph of on-screen confirmation to excuse.
+ *
+ * Now slot 2 stays empty and keeps its number forever. The next player to fill it gets an empty
+ * folder, because #profile_erase_saves has already run.
+ *
+ * This call removes the profile's own bookkeeping -- its playstate and cheat selections. It does
+ * **not** touch saves; that is #profile_erase_saves, deliberately separate so the irreversible
+ * half is explicit at the call site.
  *
  * Profile 1 cannot be removed, because something has to own the unsuffixed paths. Returns false
- * if asked to, or if only one profile is left.
- *
- * Note that removing a profile renumbers every profile above it, and the numbering is what names
- * the folders on disk -- so profile 3's `saves/p3/` becomes profile 2's after a deletion. Nothing
- * on disk moves, so the saves follow the slot rather than the person. That is why the screen
- * confirms, and why the confirmation says so in as many words.
+ * if asked to.
  */
 bool profile_remove (int index);
+
+/**
+ * @brief Delete the saves belonging to @p index, across every directory the library knows.
+ *
+ * Separate from profile_remove() on purpose. Removing a name from a list and destroying somebody's
+ * saved games are different sizes of decision, and the screen has to have confirmed the second
+ * before this is reached -- so it is its own call at its own call site rather than a side effect.
+ *
+ * Saves live beside their ROM rather than in one place, so the set of directories to visit is the
+ * set the library already walked. Taking @p lib rather than walking the card again is both faster
+ * and narrower: a second walk would also find `saves/` trees under directories holding no game,
+ * and guessing is not a thing to do while deleting.
+ *
+ * Profile 1 is refused. Its saves are the unsuffixed `saves/`, which on a card that predates
+ * profiles is every save on it.
+ *
+ * @param dry_run count what would go, without removing anything -- this is what the confirmation
+ *                screen puts in front of the user before they answer.
+ * @return files removed, or that would be
+ */
+int profile_erase_saves (int index, const library_t *lib, bool dry_run);
 
 /**
  * @brief Switch to @p index: reloads playstate and cheat selections for the new profile.
