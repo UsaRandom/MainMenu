@@ -55,8 +55,7 @@ static void check (bool ok, const char *what) {
  *        caller chooses -- I_JR(REG_K0) makes it real, anything else makes it a near-miss the
  *        scan must reject.
  */
-static void plant (uint32_t third_word) {
-    uint32_t osexc = (uint32_t)(&arena[4]);
+static void plant_at (uint32_t third_word, uint32_t osexc) {
 
     arena[0]  = I_JR(REG_RA);
     arena[1]  = I_NOP();
@@ -73,6 +72,11 @@ static void plant (uint32_t third_word) {
 
     data_cache_hit_writeback_invalidate(arena, 64);
     inst_cache_hit_invalidate(arena, 64);
+}
+
+/** @brief The ordinary fixture: a preamble whose target is the fake __osException next door. */
+static void plant (uint32_t third_word) {
+    plant_at(third_word, (uint32_t)(&arena[4]));
 }
 
 /**
@@ -112,7 +116,35 @@ static void run_vector (void *vector) {
     );
 }
 
+/**
+ * @brief Pin the four words tools/preamblescan.py carries as literals to what this build emits.
+ *
+ * The tool exists because the console answers one ROM per launch and only after the menu is gone;
+ * it scans a whole shelf on a PC in seconds. It cannot include vr4300_asm.h, so the pattern is
+ * written down twice, and the failure mode of a drift is silent and wrong in both directions: a
+ * match reported for a ROM the patcher will not hook, or a clean bill for a ROM it will corrupt.
+ *
+ * Here rather than in tools/hosttest because vr4300_asm.h assembles through a bitfield union, and
+ * bitfield allocation order follows the target's endianness -- on a little-endian host
+ * I_JR(REG_K0) is 0x20000680, not 0x03400008. The macros only mean anything compiled for MIPS.
+ * A _Static_assert cannot do it either: a compound literal is not a constant expression.
+ */
+static void check_preamble_pattern (void) {
+    check((I_LUI(REG_K0, 0) >> 16) == 0x3C1A, "preamblescan.py's lui $k0 word still matches");
+    check((I_ADDIU(REG_K0, REG_K0, 0) >> 16) == 0x275A,
+          "preamblescan.py's addiu $k0 word still matches");
+    check(I_JR(REG_K0) == 0x03400008, "preamblescan.py's jr $k0 word still matches");
+    check(I_NOP() == 0x00000000, "preamblescan.py's nop word still matches");
+    /* The address check the scan gained after the tool found two ROMs matching data whose target
+     * is not RDRAM. Conker's %hi is 0x1000 and GoldenEye's is 0x7001; neither may pass. */
+    check((I_LUI(REG_K0, 0x8000) & 0xFF00) == 0x8000, "a KSEG0 %hi passes the address check");
+    check((I_LUI(REG_K0, 0x1000) & 0xFF00) != 0x8000, "Conker's %hi does not");
+    check((I_LUI(REG_K0, 0x7001) & 0xFF00) != 0x8000, "GoldenEye's %hi does not");
+}
+
 void hooktest_run (void) {
+    check_preamble_pattern();
+
     volatile uint32_t *vec = (volatile uint32_t *)(0x80000180);
     uint32_t vec0 = vec[0];
     uint32_t vec1 = vec[1];
@@ -303,6 +335,47 @@ void hooktest_run (void) {
             check(osexc_hit == (uint32_t)(&arena[4]),
                   "control still reached __osException with the beacon in the way");
         }
+    }
+
+    /* Scenario 4: a preamble-shaped run whose target is not an address.
+     *
+     * Not hypothetical. tools/preamblescan.py ran this exact pattern over the 24 N64 ROMs on the
+     * reference card, and Conker's Bad Fur Day and GoldenEye 007 both match a run of data whose
+     * reconstructed target is 0x100071e0 and 0x700101a0 -- neither of which is RDRAM. The patcher
+     * takes the FIRST match and rewrites two words of live game code at it, so on those two ROMs
+     * it was about to corrupt something arbitrary. One in twelve.
+     *
+     * 0x10007000 is Conker's, near enough. The scan must walk straight past it and land on the
+     * watch fallback, leaving the fake preamble exactly as planted. */
+    plant_at(I_JR(REG_K0), 0x10007000);
+    uint32_t bogus_w0 = arena[8];
+    uint32_t bogus_w1 = arena[9];
+
+    target_byte = 0;
+    target_half = 0;
+    target_cond = 0;
+
+    patcher = cheats_emit(list);
+    check(patcher != NULL, "emit (bogus-target scenario)");
+
+    if (patcher != NULL) {
+        disable_interrupts();
+        run_patcher(patcher, arena);
+
+        uint32_t armed = READ_WATCHLO();
+        uint32_t got0 = vec[0];
+        WRITE_WATCHLO(0);
+        WRITE_WATCHHI(0);
+        vec[0] = vec0;
+        vec[1] = vec1;
+        data_cache_hit_writeback_invalidate((void *)(vec), 8);
+        inst_cache_hit_invalidate((void *)(vec), 8);
+        enable_interrupts();
+
+        check(arena[8] == bogus_w0 && arena[9] == bogus_w1,
+              "a preamble whose target is not an address is left alone");
+        check((got0 >> 26) == OP_J && armed == ((0x80000180 | 1) & 0xFFFF),
+              "and the scan falls through to the watch instead of hooking it");
     }
 
     debugf("HOOKTEST %d/%d ok\n", checks - failures, checks);

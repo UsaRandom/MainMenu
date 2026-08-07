@@ -52,6 +52,17 @@ void cheats_set_beacon (bool enabled) {
 #define PREAMBLE_LUI_K0_HI16   (I_LUI(REG_K0, 0) >> 16)
 #define PREAMBLE_ADDIU_K0_HI16 (I_ADDIU(REG_K0, REG_K0, 0) >> 16)
 
+/* tools/preamblescan.py runs this same pattern over ROM files on a PC, because the console can
+ * only answer one launch at a time and only after the menu is gone. It cannot include this
+ * header, so it carries the four words as literals, and a tool that agrees with itself and
+ * disagrees with the console is worse than no tool. src/dev/hooktest.c pins the two together.
+ *
+ * That pin took two homes to find. A host test cannot do it: vr4300_asm.h builds instructions out
+ * of a bitfield union and bitfield allocation order follows the target's endianness, so on a
+ * little-endian host I_JR(REG_K0) comes out 0x20000680 instead of 0x03400008. A _Static_assert
+ * cannot do it either, because a compound literal is not a constant expression. Which leaves a
+ * runtime check in a MIPS build -- which hooktest already is. */
+
 /* The patcher region runs from PATCHER_ADDRESS up to where the engine is staged. Nothing
  * enforced this before: a long enough list of boot-writes walked straight into the staging
  * buffer and corrupted the engine it was about to copy. */
@@ -557,7 +568,7 @@ uint32_t *cheats_emit (uint32_t *cheat_list) {
      * exist -- a branch offset counts instructions from its own delay slot, and the distance is
      * not known until the target is emitted. Backpatching beats hand-counted offsets because a
      * hand count silently rots the first time an instruction is added between branch and target. */
-    io32_t *to_next[3];
+    io32_t *to_next[4];
     io32_t *to_found;
     io32_t *to_notfound;
     io32_t *to_join;
@@ -589,8 +600,30 @@ uint32_t *cheats_emit (uint32_t *cheat_list) {
     *patcher_p++ = I_NOP();
 
     *patcher_p++ = I_LW(REG_K0, 12, REG_T3);
+    to_next[3] = patcher_p;
+    *patcher_p++ = I_NOP(); // bne $k0, $zero, next -- the nop that ends the preamble
+    *patcher_p++ = I_NOP();
+
+    /* The address has to be an address. tools/preamblescan.py ran this same pattern over the 24
+     * N64 ROMs on the reference card and two of them -- Conker's Bad Fur Day and GoldenEye 007 --
+     * matched a run of data whose reconstructed target is 0x100071e0 and 0x700101a0. Neither is a
+     * RDRAM address. Neither is a preamble.
+     *
+     * That is not a cosmetic false positive. The patcher takes the FIRST match and rewrites two
+     * words of live game code at it, so on those two ROMs it was about to corrupt something
+     * arbitrary and hand the result to the game. One in twelve, on the only real shelf of ROMs
+     * this project has.
+     *
+     * The check is on the `lui` immediate rather than on the reconstructed address, because the
+     * immediate is already in hand and the reconstruction needs a sign-extended add. %hi in
+     * 0x8000..0x80FF covers every KSEG0 address an 8 MB machine has, and rejects both of the
+     * above. It does not make a match certain -- nothing here can -- it removes the matches that
+     * were provably wrong. */
+    *patcher_p++ = I_LW(REG_K0, 0, REG_T3);
+    *patcher_p++ = I_ANDI(REG_K0, REG_K0, 0xFF00);
+    *patcher_p++ = I_ORI(REG_K1, REG_ZERO, 0x8000);
     to_found = patcher_p;
-    *patcher_p++ = I_NOP(); // beq $k0, $zero, found -- the nop that ends the preamble
+    *patcher_p++ = I_NOP(); // beq $k0, $k1, found
     *patcher_p++ = I_NOP();
 
     io32_t *next_label = patcher_p;
@@ -680,7 +713,8 @@ uint32_t *cheats_emit (uint32_t *cheat_list) {
     *to_next[0]  = I_BNE(REG_K0, REG_K1, next_label - (to_next[0] + 1));
     *to_next[1]  = I_BNE(REG_K0, REG_K1, next_label - (to_next[1] + 1));
     *to_next[2]  = I_BNE(REG_K0, REG_K1, next_label - (to_next[2] + 1));
-    *to_found    = I_BEQ(REG_K0, REG_ZERO, found_label - (to_found + 1));
+    *to_next[3]  = I_BNE(REG_K0, REG_ZERO, next_label - (to_next[3] + 1));
+    *to_found    = I_BEQ(REG_K0, REG_K1, found_label - (to_found + 1));
     *to_notfound = I_BEQ(REG_ZERO, REG_ZERO, notfound_label - (to_notfound + 1));
     *to_join     = I_BEQ(REG_ZERO, REG_ZERO, join_label - (to_join + 1));
 

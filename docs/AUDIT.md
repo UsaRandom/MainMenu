@@ -4577,6 +4577,87 @@ Sizes: text 635,704 against main's 634,232. Host suite 4,001 checks, no failures
 
 ---
 
+## 1ap. The scan hits on Ocarina. Something after it does not.
+
+The beacon's self-test came back **PAINTED** on the console -- VI_ORIGIN sane, an uncached store
+64,000 bytes into it landing and reading back -- so the instrument works here, and the launch that
+showed no band and left the rupees alone means what it says. **The engine never executed.**
+
+That leaves two shapes, and the beacon cannot tell them apart because the colour it would have
+used only appears if the engine runs: the scan missed and fell back to the dead watch, or the scan
+hit and the hook was bypassed.
+
+### Ask the ROM instead of the console
+
+IPL3 copies ROM offset 0x1000 onwards verbatim to the entry address, so `ROM[0x1000 + k]` is
+exactly the RDRAM word the patcher will look at. `tools/preamblescan.py` runs the same masked
+pattern on a PC, over a whole shelf at once, in seconds. Over the 24 N64 ROMs on the reference
+card:
+
+| | ROMs |
+|---|---:|
+| **real** -- target is KSEG0 and exactly +16, which is how libultra links it | 15 |
+| **odd** -- target is KSEG0 but not adjacent | 5 |
+| **BOGUS** -- target is not an address at all | 2 |
+| **MISS** -- nothing preamble-shaped in the first megabyte | 2 |
+
+**Ocarina of Time is `real`**: CIC 6105, preamble at `0x800025f0`, `__osException` at `0x80002600`,
+exactly sixteen bytes on. The scan is not missing. So it is the second shape -- the patch lands and
+the game does not route exceptions through the bytes we patched -- and that is a different and
+much more interesting problem than the one we thought we had.
+
+### The tool was wrong first, in a way that looked like the games being wrong
+
+Five ROMs first read as preambles whose target sits almost exactly one megabyte away. That is not
+a game: it is CIC 6103, which loads a megabyte below the header's entry point, and CIC 6106, which
+loads two. `rom_info.c`'s `fix_boot_address()` is where the console applies the same two numbers,
+and the tool had not. CIC identified by CRC32 of the 4,032-byte IPL3 rather than by the console's
+seeded checksum -- a table lookup against a hundred lines of 64-bit mixing, and they agree on
+everything here.
+
+### And then it found a live bug
+
+Two of the twenty-four match a run of data whose reconstructed target is `0x100071e0` (Conker's Bad
+Fur Day) and `0x700101a0` (GoldenEye 007). Neither is RDRAM. Neither is a preamble.
+
+**The patcher takes the first match and rewrites two words of live game code at it.** On those two
+ROMs it was about to corrupt something arbitrary and hand the result to the game -- one in twelve,
+on the only real shelf of ROMs this project has, and neither would have been diagnosable from the
+symptom. The pattern fixes eight of sixteen bytes and half the rest, which is simply not enough
+over a megabyte.
+
+The emitted scan now checks that `%hi` of the target is `0x80..`, which covers every KSEG0 address
+an 8 MB machine has and rejects both. It costs nothing in the common case: the check sits after
+the four word compares, so a miss branches away before reaching it and the full-window scan still
+measures 53.3 ms. `hooktest` gained a scenario that plants Conker's target and requires the scan
+to walk past it; mutating the check away turns exactly two of its checks red.
+
+### Where the pattern is pinned, and the two homes that did not work
+
+The tool carries the four words as literals because Python cannot include `vr4300_asm.h`, and a
+tool that agrees with itself and disagrees with the console is worse than no tool.
+
+A host test was written first and cannot work: `vr4300_asm.h` assembles through a **bitfield
+union**, and bitfield allocation order follows the target's endianness -- on a little-endian host
+`I_JR(REG_K0)` is `0x20000680`, not `0x03400008`. The macros only mean anything compiled for MIPS.
+A `_Static_assert` cannot do it either, because a compound literal is not a constant expression.
+So the pin is a runtime check in `hooktest`, which is a MIPS build that already exercises the
+scan. 32/32 under ares.
+
+### What is still open
+
+Why Ocarina does not route through the preamble we patched. The likeliest answer is that its
+runtime libultra is not the copy IPL3 loaded -- OoT's `code` segment is loaded and decompressed
+later from ROM, and if `osInitialize` runs from that copy then the boot-segment preamble we
+rewrote is never used. Nothing here can see which, because the branch the patcher took happens
+after the menu is gone and the beacon that would report it needs the engine to run first.
+
+The next instrument is the patcher's own beacon: paint before jumping to the game, when VI_ORIGIN
+still points at the menu's last frame and RDRAM has not been wiped. That reports the branch
+without needing the engine, and it costs one flash of colour at game start.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
