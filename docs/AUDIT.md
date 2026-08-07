@@ -4344,6 +4344,100 @@ Host suite: 245 checks across six binaries, 0 failures. Release ELF text 634,008
 
 ---
 
+## 1an. The licence screen was missing two of the four notices, and eating a URL
+
+Read end to end on the console rather than in the editor, which is where both of these were.
+
+### The Appropriate Legal Notices were incomplete
+
+AGPL-3.0 defines "Appropriate Legal Notices" as four things: a copyright notice, a statement that
+there is no warranty, a statement that the user may redistribute under this licence, and a way to
+view the licence. An interactive program that displays such a notice has to display all four.
+
+The credits screen had two. There was no copyright notice **anywhere in the project** -- not on
+the screen, not in `docs/CREDITS.md`, and not in `LICENSE.md`, which is the unmodified AGPL text
+with the "Copyright (C) <year> <name of author>" line still unfilled in the appendix. And there
+was no warranty disclaimer at all. "You may use it, read it, change it and pass it on" covered the
+third only loosely -- it does not say *under this licence* -- and the source URL covered the
+fourth.
+
+Both are now on the screen, verified by rendering it: copyright 2026 UsaRandom with portions to
+the N64FlashcartMenu contributors, and the sections 15 and 16 disclaimer. The README carries the
+same two lines, because the repository was as silent as the cartridge.
+
+### A URL was being truncated, and it was the fork's source address
+
+`ui_text_wrap()` uses `WRAP_WORD`. A URL contains no spaces, so it is one word, and rdpq's
+response to a word that will not fit is to ellipsise. The credits screen was therefore drawing
+
+    https://github.com/Polprzewodnikowy/N64Flashca...
+
+with the tail missing -- on a screen whose entire job is to say where the source is, in the one
+medium where a reader has to retype what they see. It fits for the 39-character MainMenu address
+and does not for the 52-character upstream one, which is why it survived: the URL the AGPL cares
+about most happened to be short enough.
+
+`ui_text_wrap_url()` uses `WRAP_CHAR` and is used for `U` blocks only. The address now breaks
+across two lines and is complete. Bullets were never affected -- "Name - url" has spaces in it, so
+WRAP_WORD breaks after the dash and the URL lands on a line of its own.
+
+### The attribution sweep
+
+Every third-party thing in the cartridge, checked against the tree rather than against the
+existing list. Two were missing, both because they arrive inside libdragon rather than being
+chosen here and so were invisible to a reading of this project's own dependencies:
+
+- **FatFs, by ChaN** (`libdragon/src/fatfs`), which is the filesystem that reads the card. Its
+  licence asks that the copyright notice be retained; strictly that condition binds source
+  redistribution and not a binary, but it is in the ROM and it is now named.
+- **libcart, by devwizard64** (`libdragon/src/libcart`), the flashcart driver, called directly
+  from `flashcart.c`. The copy inside libdragon carries only a URL and states no licence terms,
+  which is recorded as the fact it is rather than guessed at.
+
+Also corrected: **ares' licence was not stated.** The database is derived from it, so it now
+carries "ISC, copyright (c) 2004-2025 ares team, Near et al" -- read out of
+`lithium64/reference/ares/LICENSE`, not assumed.
+
+Checked and already complete: all 36 icon authors (compared name by name against the corpus's
+36 directories AND its own `license.txt` -- the two extra names in it are directories that
+postdate that file); Firple with Fira Code and IBM Plex; the three Pixabay authors; the 28 CC0
+MIDI files; libspng, miniz, picojpeg, midi64, svg64, acutest; all five emulator cores against the
+core table in `cart_load.c`; libretro-database. `n64_keys.tsv` needs no attribution -- it is
+joined out of `rom_info.c`, not out of a No-Intro DAT, which the module docstring says and which
+is worth having checked.
+
+**One residual.** CC BY 3.0 asks for the URI an author specifies as well as their name, and the
+corpus supplies one for 20 of the 36. Those 20 are now on the credits screen. The other 16 gave
+none, so nothing is owed.
+
+### Odd language, and the one bit that was wrong
+
+The report was that the on-ROM text read oddly. Four rewrites, of which one was a contradiction
+rather than a matter of tone: the closing section said the project is "not affiliated with,
+endorsed by, or connected to ... the upstream project it is forked from", 160 lines after saying
+it is a fork of that project. It cannot be both, and the true half is the fork. It now disclaims
+endorsement, which is what was meant, and says plainly that it IS derived from it.
+
+The others: "the person who gave it to you owes you the source" reads as an accusation and is
+imprecise about who the licence binds; "This program is free software. You may use it, read it,
+change it and pass it on" omits that passing it on is *under the same licence*, which is the whole
+condition; and "Some icons in the corpus are left out of this build. That is a trademark question"
+raised a question on a console screen and then did not answer it.
+
+### The demo art carries no lettering now
+
+Separate report, same screen family. `tools/mkdemo.py` was printing each invented title across the
+bottom of its own cover, an invented studio above it, and a system badge in a pill -- all set in
+the menu's UI font at tile size, so a grid of them read as a screenshot of a screenshot. Gone,
+along with the scrim, which was a black gradient over the bottom third of every picture whose only
+purpose was to be a background for that text. `STUDIOS` and the per-title column that indexed it
+went with it, as did `wrap()` and `fit_font()`.
+
+The pictures are unchanged: `draw_card()` still seeds its RNG from the title, so every game draws
+the scene it always drew. Eight README screenshots regenerated; four of them differ.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
