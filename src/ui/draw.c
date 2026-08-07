@@ -136,6 +136,19 @@ int ui_text_wrap (menu_font_type_t font, int x, int y, int w, int style, const c
     return (int)(m.advance_y + 0.999f);
 }
 
+int ui_text_wrap_url (menu_font_type_t font, int x, int y, int w, int style, const char *s) {
+    if (s == NULL || s[0] == '\0') {
+        return 0;
+    }
+    char escaped[ESCAPE_MAX];
+    s = escape_markup(s, escaped, sizeof(escaped));
+    rdpq_textmetrics_t m = rdpq_text_printn(
+        &(rdpq_textparms_t){ .width = w, .wrap = WRAP_CHAR,
+                             .style_id = style, .disable_aa_fix = true },
+        font, x, y, s, strlen(s));
+    return (int)(m.advance_y + 0.999f);
+}
+
 int ui_text_width (menu_font_type_t font, const char *s) {
     if (s == NULL || s[0] == '\0') {
         return 0;

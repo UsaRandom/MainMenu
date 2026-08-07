@@ -53,6 +53,17 @@ void ui_text_font (menu_font_type_t font, int x, int y, int w, rdpq_align_t alig
 int ui_text_wrap (menu_font_type_t font, int x, int y, int w, int style, const char *s);
 
 /**
+ * @brief Like @ref ui_text_wrap, but breaks mid-word rather than giving up on the line.
+ *
+ * For URLs, and only for URLs. A URL has no spaces in it, so WRAP_WORD cannot break one and rdpq
+ * ellipsises instead: the credits screen was drawing the fork's source address as
+ * "https://github.com/Polprzewodnikowy/N64Flashca..." with the tail missing. An address somebody
+ * has to type by hand is the one string on that screen that must survive whole, and a licence
+ * screen quietly dropping the end of a source link is the worst place to save a line break.
+ */
+int ui_text_wrap_url (menu_font_type_t font, int x, int y, int w, int style, const char *s);
+
+/**
  * @brief How wide @p s is in @p font, in pixels. Draws nothing.
  *
  * The keyboard needs it to put the caret after the text. The face is proportional, so a caret

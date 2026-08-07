@@ -295,8 +295,11 @@ static int draw_block (const theme_t *th, const block_t *b, int y) {
             return ui_text_wrap(FNT_DEFAULT, TEXT_X + 24, y + 16, TEXT_W - 24,
                                 STL_DEFAULT, b->text) + 16 + GAP_TIGHT;
         case 'U':
-            return ui_text_wrap(FNT_DEFAULT, TEXT_X + 8, y + 16, TEXT_W - 8,
-                                STL_ORANGE, b->text) + 16 + GAP_TEXT;
+            /* Broken mid-string rather than word-wrapped: a URL is one word and WRAP_WORD
+             * ellipsises what it cannot fit, which lost the tail of the fork's source address.
+             * See ui_text_wrap_url(). */
+            return ui_text_wrap_url(FNT_DEFAULT, TEXT_X + 8, y + 16, TEXT_W - 8,
+                                    STL_ORANGE, b->text) + 16 + GAP_TEXT;
         case 'T':
             return ui_text_wrap(FNT_DEFAULT, TEXT_X, y + 16, TEXT_W, STL_DEFAULT, b->text)
                    + 16 + GAP_TEXT;
