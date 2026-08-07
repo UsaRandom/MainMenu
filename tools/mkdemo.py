@@ -49,11 +49,9 @@ sys.path.insert(0, HERE)
 from mkfixture import build_header, check_code_for, emit, harvest_games, make_ipl3  # noqa: E402
 
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 except ImportError:
     sys.exit("mkdemo.py needs Pillow (pip install pillow); tools/mkfixture.py does not")
-
-FONT = os.path.join(REPO, "assets", "fonts", "Firple-Bold.ttf")
 
 # The cache tile, and the only size the menu ever holds art at: the grid column the shape earns
 # (src/ui/theme.h) by the height of the system's box (src/library/boxart.h). screen_detail.c blits
@@ -85,9 +83,8 @@ SAVE_TYPES = {                      # rom_save_type_t, for the per-ROM .ini over
     "sram_banked": 4, "sram1m": 5, "flashram": 6,
 }
 
-# Invented studios. Every name here was made up for this file; none is a real publisher.
-STUDIOS = ["HALCYON WORKS", "NINE VOLT", "PALE FOX GAMES", "STUDIO MERIDIAN",
-           "TIN ROOF", "CORMORANT", "LONG WINTER", "BRASS LANTERN"]
+# The invented studio names lived here, and the per-title column that indexed them is gone from
+# the tables below with them. Both went with the lettering they were printed in -- see draw_card().
 
 # Palettes, hand-picked rather than generated. A hue chosen at random from a seed produces
 # muddy neighbours about a third of the time, and a grid of box art is judged on the whole
@@ -104,46 +101,46 @@ PALETTES = [
     ((0x05, 0x14, 0x1A), (0x14, 0x4E, 0x52), (0xC8, 0xF0, 0x5C), (0x03, 0x0C, 0x10), (0x0B, 0x2B, 0x30), (0xEF, 0xFF, 0xCE)),
 ]
 
-# (title, scene, palette, studio, save type). The scene mix is deliberate: three of the eight
-# scenes are horizon-based and would look samey if adjacent titles shared one, and the grid
-# sorts by title, so the scene column below is ordered against the alphabet, not with it.
+# (title, scene, palette, save type). The scene mix is deliberate: three of the eight scenes are
+# horizon-based and would look samey if adjacent titles shared one, and the grid sorts by title,
+# so the scene column below is ordered against the alphabet, not with it.
 N64_GAMES = [
-    ("Aurora Drift",        "grid",    5, 0, "eeprom4k"),
-    ("Basalt Rally",        "sunset",  4, 1, "sram"),
-    ("Cinder Vale",         "forest",  6, 2, "flashram"),
-    ("Dune Skipper",        "sunset",  0, 3, "eeprom4k"),
-    ("Ember Circuit",       "iso",     6, 4, "eeprom16k"),
-    ("Frostline",           "waves",   1, 5, "sram"),
-    ("Glass Meridian",      "space",   5, 6, "flashram"),
-    ("Harbour Watch",       "city",    1, 7, "eeprom4k"),
-    ("Ion Ballet",          "shapes",  2, 0, "none"),
-    ("Jade Locomotive",     "forest",  3, 1, "sram"),
-    ("Kelp Forest Blues",   "waves",   7, 2, "eeprom4k"),
-    ("Lantern Reef",        "space",   1, 3, "eeprom16k"),
-    ("Moth and Marrow",     "forest",  2, 4, "flashram"),
-    ("Nightbus",            "city",    5, 5, "eeprom4k"),
-    ("Obsidian League",     "iso",     0, 6, "sram"),
-    ("Paper Sparrow",       "shapes",  3, 7, "none"),
-    ("Quarry Kings",        "iso",     4, 0, "eeprom16k"),
-    ("Rust Pilgrim",        "sunset",  6, 1, "flashram"),
-    ("Solar Tide",          "grid",    2, 2, "eeprom4k"),
-    ("Thistledown",         "forest",  7, 3, "none"),
-    ("Umber Gate",          "shapes",  4, 4, "sram"),
-    ("Vellum Sky",          "waves",   0, 5, "eeprom4k"),
-    ("Wax Museum Heist",    "city",    3, 6, "flashram"),
-    ("Zinc Garden",         "shapes",  7, 7, "eeprom16k"),
+    ("Aurora Drift",        "grid",    5, "eeprom4k"),
+    ("Basalt Rally",        "sunset",  4, "sram"),
+    ("Cinder Vale",         "forest",  6, "flashram"),
+    ("Dune Skipper",        "sunset",  0, "eeprom4k"),
+    ("Ember Circuit",       "iso",     6, "eeprom16k"),
+    ("Frostline",           "waves",   1, "sram"),
+    ("Glass Meridian",      "space",   5, "flashram"),
+    ("Harbour Watch",       "city",    1, "eeprom4k"),
+    ("Ion Ballet",          "shapes",  2, "none"),
+    ("Jade Locomotive",     "forest",  3, "sram"),
+    ("Kelp Forest Blues",   "waves",   7, "eeprom4k"),
+    ("Lantern Reef",        "space",   1, "eeprom16k"),
+    ("Moth and Marrow",     "forest",  2, "flashram"),
+    ("Nightbus",            "city",    5, "eeprom4k"),
+    ("Obsidian League",     "iso",     0, "sram"),
+    ("Paper Sparrow",       "shapes",  3, "none"),
+    ("Quarry Kings",        "iso",     4, "eeprom16k"),
+    ("Rust Pilgrim",        "sunset",  6, "flashram"),
+    ("Solar Tide",          "grid",    2, "eeprom4k"),
+    ("Thistledown",         "forest",  7, "none"),
+    ("Umber Gate",          "shapes",  4, "sram"),
+    ("Vellum Sky",          "waves",   0, "eeprom4k"),
+    ("Wax Museum Heist",    "city",    3, "flashram"),
+    ("Zinc Garden",         "shapes",  7, "eeprom16k"),
 ]
 
 EMU_GAMES = [
-    ("nes",  ".nes", [("Bit Marsh",      "iso",    3, 2),
-                      ("Copper Kite",    "sunset", 4, 5),
-                      ("Turnip Knight",  "forest", 3, 1)]),
-    ("snes", ".sfc", [("Chrome Lark",    "space",  5, 0),
-                      ("Pocket Aurora",  "waves",  1, 6),
-                      ("Salt Flats",     "grid",   0, 4)]),
-    ("gb",   ".gb",  [("Tin Whistle",    "shapes", 7, 3)]),
-    ("gbc",  ".gbc", [("Neon Sparrow",   "city",   2, 7)]),
-    ("sms",  ".sms", [("Static Ridge",   "sunset", 6, 1)]),
+    ("nes",  ".nes", [("Bit Marsh",      "iso",    3),
+                      ("Copper Kite",    "sunset", 4),
+                      ("Turnip Knight",  "forest", 3)]),
+    ("snes", ".sfc", [("Chrome Lark",    "space",  5),
+                      ("Pocket Aurora",  "waves",  1),
+                      ("Salt Flats",     "grid",   0)]),
+    ("gb",   ".gb",  [("Tin Whistle",    "shapes", 7)]),
+    ("gbc",  ".gbc", [("Neon Sparrow",   "city",   2)]),
+    ("sms",  ".sms", [("Static Ridge",   "sunset", 6)]),
 ]
 
 # Invented cheats for invented games. The addresses and values are arbitrary; nothing here can
@@ -554,31 +551,23 @@ SCENES = {
 
 # --------------------------------------------------------------------------- card
 
-def fit_font(text, size, max_w):
-    """Largest size at or below @size whose @text fits @max_w."""
-    while size > 8:
-        f = ImageFont.truetype(FONT, size)
-        if f.getbbox(text)[2] <= max_w:
-            return f
-        size -= 2
-    return ImageFont.truetype(FONT, 8)
+def draw_card(title, scene, palette, size=None):
+    """A cover: one procedural scene, and nothing written on it.
 
+    It used to carry the game's title across the bottom, an invented studio name above that on a
+    rule, and a system badge in a pill top right -- and under all of it a scrim, a black gradient
+    rising from mid-height, which existed for exactly one reason: so the title stayed readable
+    over a lit window on the city scenes.
 
-def wrap(text, size, max_w):
-    """Split into at most two lines that each fit. Box titles are short; three lines would
-    leave no room for the picture, so a title that will not fit in two is simply shrunk."""
-    f = ImageFont.truetype(FONT, size)
-    if f.getbbox(text)[2] <= max_w:
-        return [text]
-    words = text.split()
-    for split in range(len(words) - 1, 0, -1):
-        a, b = " ".join(words[:split]), " ".join(words[split:])
-        if f.getbbox(a)[2] <= max_w and f.getbbox(b)[2] <= max_w:
-            return [a, b]
-    return [text]
+    All of it is gone. The lettering was set in the menu's own UI font at tile size, so a grid of
+    these read as a screenshot of a screenshot -- the covers were captioned in the same typeface
+    as the footer under them. Every place the title needs to be seen, the menu already draws it:
+    under the selected tile, on the detail sheet, and across the plate a record with no art gets.
+    Dropping the scrim with the text is not a separate decision, it is the same one; it was
+    darkening the bottom third of every picture in order to be a background for words.
 
-
-def draw_card(title, scene, palette, studio, system, size=None):
+    @p title still seeds the RNG, so a given game draws the same picture it always did.
+    """
     aw, ah = size if size else CART_SIZE
     W, H = aw * SS, ah * SS
     pal = PALETTES[palette % len(PALETTES)]
@@ -587,62 +576,6 @@ def draw_card(title, scene, palette, studio, system, size=None):
     img = Image.new("RGB", (W, H), pal[0])
     d = ImageDraw.Draw(img)
     SCENES[scene](img, d, pal, rng)
-    d = ImageDraw.Draw(img)
-
-    # A scrim rather than a solid band. Box art with a hard bar across the bottom loses the
-    # part of the picture that is usually the most interesting, and at 140 px wide the bar is
-    # a third of the tile.
-    #
-    # Two terms: a rise from mid-height, plus extra weight in the bottom-left corner where the
-    # studio line sits. The vertical term alone left "CORMORANT" lying across a lit window on
-    # the city cards, and deepening it enough to fix that swallowed the skyline on every other
-    # card. Computed small and scaled up, so it is smooth without a per-pixel loop at 840x588.
-    mask = Image.new("L", (64, 64))
-    px = mask.load()
-    for my in range(64):
-        v = my / 63.0
-        vert = max(0.0, (v - 0.50) / 0.50) ** 1.7 * 215
-        low = max(0.0, (v - 0.35) / 0.65) ** 1.6
-        for mx in range(64):
-            u = mx / 63.0
-            px[mx, my] = int(min(255.0, vert + (1.0 - u) ** 1.6 * low * 120))
-    scrim = Image.new("RGBA", (W, H), (0, 0, 0, 255))
-    scrim.putalpha(mask.resize((W, H), Image.BICUBIC))
-    img = Image.alpha_composite(img.convert("RGBA"), scrim).convert("RGB")
-    d = ImageDraw.Draw(img)
-
-    pad = int(W * 0.055)
-    lines = wrap(title, int(H * 0.155), W - pad * 2)
-    fonts = [fit_font(l, int(H * 0.155), W - pad * 2) for l in lines]
-    heights = [f.getbbox(l)[3] - f.getbbox(l)[1] for l, f in zip(lines, fonts)]
-    y = H - pad - sum(heights) - int(H * 0.03) * (len(lines) - 1)
-
-    # The studio line sits over the picture, and on the city scenes it landed on a lit window
-    # and became unreadable. A one-pixel offset shadow costs nothing and fixes every scene at
-    # once, which a taller scrim would not -- that would eat the skyline instead.
-    sf = ImageFont.truetype(FONT, int(H * 0.055))
-    sy = y - int(H * 0.085)
-    d.text((pad + SS, sy + SS), studio, font=sf, fill=(0, 0, 0))
-    d.text((pad, sy), studio, font=sf, fill=shade(pal[2], 1.25))
-    d.line([(pad, y - int(H * 0.022)), (pad + int(W * 0.16), y - int(H * 0.022))],
-           fill=pal[2], width=max(1, SS))
-
-    for line, f, h in zip(lines, fonts, heights):
-        # Offset drop shadow, not a blur: the tile is downscaled to 140 px and then quantised
-        # to 256 colours, and a soft shadow spends palette entries on grey ramps nobody sees.
-        d.text((pad + SS * 2, y + SS * 2), line, font=f, fill=(0, 0, 0))
-        d.text((pad, y), line, font=f, fill=(0xF6, 0xF3, 0xEE))
-        y += h + int(H * 0.03)
-
-    if system:
-        pf = ImageFont.truetype(FONT, int(H * 0.050))
-        bb = pf.getbbox(system)
-        bw, bh = bb[2] - bb[0], bb[3] - bb[1]
-        bx, by = W - pad - bw - int(W * 0.03), pad
-        d.rounded_rectangle([bx - int(W * 0.018), by - int(H * 0.014),
-                             bx + bw + int(W * 0.018), by + bh + int(H * 0.026)],
-                            radius=int(H * 0.035), fill=(0, 0, 0), outline=pal[2], width=SS)
-        d.text((bx, by), system, font=pf, fill=pal[2])
 
     return img.resize((aw, ah), Image.LANCZOS)
 
@@ -698,16 +631,16 @@ def main():
     taken = {code for code, _title in harvest_games(os.path.join(REPO, "src", "menu", "rom_info.c"))}
 
     codes = {}
-    for title, _s, _p, _st, _sv in N64_GAMES:
+    for title, _s, _p, _sv in N64_GAMES:
         codes[title] = game_code_for(title, taken)
         taken.add(codes[title])
 
-    for title, scene, pal, studio, save in N64_GAMES:
+    for title, scene, pal, save in N64_GAMES:
         # Blank header title on purpose: see the module docstring. The stub is 4 KB because
         # rom_config_load reads exactly one header and a scan never looks past it.
         emit(root, os.path.join("roms", "n64", "%s.z64" % title),
              build_header(codes[title], "", 0, ipl3))
-        draw_card(title, scene, pal, STUDIOS[studio % len(STUDIOS)], "NINTENDO 64").save(
+        draw_card(title, scene, pal).save(
             os.path.join(root, "roms", "n64", "%s.png" % title))
         # A sidecar .ini so the detail sheet has a save type to show. Without it every invented
         # game reports Automatic, which is correct -- these are not in the database -- but says
@@ -717,17 +650,14 @@ def main():
 
     n_emu = 0
     for folder, ext, entries in EMU_GAMES:
-        label = {"nes": "NES", "snes": "SUPER NES", "gb": "GAME BOY",
-                 "gbc": "GAME BOY COLOR", "sms": "MASTER SYSTEM"}[folder]
-        for i, (title, scene, pal, studio) in enumerate(entries):
+        for i, (title, scene, pal) in enumerate(entries):
             stub = bytes((j * 13 + 0x20) & 0xFF for j in range(2048))
             # Every other SNES stub carries a 512-byte copier header, matching mkfixture:
             # cart_load.c decides whether to strip one from (size & 0x3FF) == 0x200.
             if folder == "snes" and (i % 2) == 1:
                 stub = bytes((j * 7 + 0x40) & 0xFF for j in range(512)) + stub
             emit(root, os.path.join("roms", folder, title + ext), stub)
-            draw_card(title, scene, pal, STUDIOS[studio % len(STUDIOS)], label,
-                      art_size(folder)).save(
+            draw_card(title, scene, pal, art_size(folder)).save(
                 os.path.join(root, "roms", folder, "%s.png" % title))
             n_emu += 1
 

@@ -290,14 +290,11 @@ def main():
 
             # Art beside the ROM, which is thumbcache's rule 2 -- the only rule that reaches an
             # emulated-system title, and perfectly good for an N64 one.
-            label = {"n64": "NINTENDO 64", "nes": "NES", "snes": "SUPER NES",
-                     "gb": "GAME BOY", "gbc": "GAME BOY COLOR", "sms": "MASTER SYSTEM"}[system]
             card = mkdemo.draw_card(
                 title,
                 SCENE_NAMES[seeded(title, "scene") % len(SCENE_NAMES)],
                 seeded(title, "pal") % len(mkdemo.PALETTES),
-                mkdemo.STUDIOS[seeded(title, "studio") % len(mkdemo.STUDIOS)],
-                label, (w, h))
+                (w, h))
 
             # A quarter of the card is JPEG -- dealt, see below -- because the shape probe reads a JPEG by walking its
             # marker chain and a PNG by reading a fixed offset -- two entirely different pieces of
