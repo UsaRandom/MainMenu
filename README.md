@@ -69,6 +69,14 @@ flashcart this fork no longer supports.
 * [libspng](https://github.com/randy408/libspng) - [BSD 2-Clause License](https://github.com/randy408/libspng/blob/master/LICENSE)
 * [miniz](https://github.com/richgel999/miniz) - [MIT License](https://github.com/richgel999/miniz/blob/master/LICENSE)
 * [midi64](src/libs/midi64) - [MIT License](src/libs/midi64/LICENSE) — vendored, not a submodule
+* [svg64](src/libs/svg64) - [MIT License](src/libs/svg64/LICENSE) — vendored, not a submodule
+* [picojpeg](src/libs/picojpeg) - public domain, by Rich Geldreich
+
+## Icons
+The icons players choose from are from [game-icons.net](https://game-icons.net), under
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) (a few authors CC0). That is an
+attribution licence and the cartridge is what redistributes, so all 36 authors are named in
+[docs/CREDITS.md](docs/CREDITS.md) and on the menu's own credits screen.
 
 ## Sounds
 See [License](https://pixabay.com/en/service/license-summary/) for the following sounds:

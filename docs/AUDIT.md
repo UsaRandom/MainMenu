@@ -3286,6 +3286,449 @@ again, and §2.6 records exactly how far from upstream it now sits.
 
 ---
 
+## 1ah. Icons, a keyboard, a licence screen — and a ROM five times bigger
+
+6 Aug 2026. Three things asked for in one sitting: a credits/licence screen, a settings list that
+could outgrow one page, and the profile rework onto a player chip with the handoff's
+`Who's playing?` grid behind it. Planned in [NEXT-PROFILES.md](NEXT-PROFILES.md), with the
+conflicts found while surveying it in [GOTCHAS-PROFILES.md](GOTCHAS-PROFILES.md).
+
+### What it cost
+
+| | before | after | delta |
+|---|---:|---:|---:|
+| `.text` | 571,320 | 606,904 | +35,584 |
+| `.data` | 108,196 | 109,884 | +1,688 |
+| `.bss` | 75,944 | 76,344 | +400 |
+| ROM | 1,638,400 | **8,273,920** | +6,635,520 |
+| `src/screens/` | 5,106 lines | 6,121 lines | +1,015 |
+
+The ROM is 5.05x its previous size and essentially all of it is one file: `icons.pack` is
+6,561,304 bytes of SVG text, 3,894 icons after the IP exclusions. The three new font bakes are
+28,564 together, the credits text 4,836, the category index 8,290.
+
+`.text` is +35,584 for svg64 (documented at 14,552), the icon cache, and three screens.
+
+### svg64 runs here
+
+The first icon this program ever rasterised was the player chip, `tools/inputs/chip.txt` dump 2 —
+a white shield on a red plate. That single frame proves the pack opened, the index byte-swapped,
+the seek landed, the SVG parsed, the recolour hit the right two colours and the cache handed the
+RDP something it could blit. Before it, every one of those was unverified in this tree.
+
+Measured from the boot log on a `ICON_LIMIT=200` fixture:
+
+```
+icon: 200 icons, index 3200 bytes, largest 7910, scratch 14880
+icon: caches 64 x 40 px and 2 x 60 px = 219200 bytes
+```
+
+219,200 bytes is exactly the estimate — 64 x 3,200 plus 2 x 7,200 plus a 14,880-byte scratch.
+
+### What an icon costs here, measured
+
+The first version of this section said the cost was entirely unmeasured. It was, and worse than
+that: **it could not have been measured, because `icon_pump()` sat outside every timing bracket in
+the main loop.** It was called after `bg_us` closed and before nothing, so the one genuinely new
+cost in the program appeared in no column of the FRAME line. The picker duly reported `bg_us=42`,
+which reads as "icons are free" and is precisely the convincing fake number this document exists
+to catch. `app->icon_us` and `app->icons_done` now bracket it.
+
+With that fixed, `tools/inputs/profiles.txt` through the appearance editor, 200-icon fixture:
+
+```
+n=480   f1=38 f2=22 f3=0 f4+=0  worst=29195  bg=19  icon_us=504   icons=5
+n=540   f1=36 f2=24 f3=0 f4+=0  worst=29250  bg=70  icon_us=5477  icons=60
+n=600   f1=34 f2=26 f3=0 f4+=0  worst=28335  bg=70  icon_us=5937  icons=60
+n=660   f1=37 f2=23 f3=0 f4+=0  worst=30131  bg=66  icon_us=6164  icons=58
+n=720   f1=44 f2=16 f3=0 f4+=0  worst=26364  bg=42  icon_us=677   icons=6
+```
+
+`icon_us` is the mean per frame over the window. At peak that is **6,164 us of a 6,000 us budget,
+producing 58 icons in 60 frames** -- one icon per frame, with the budget saturated exactly as
+intended. Per icon: 6,164 x 60 / 58 = **6,377 us**, against svg64's own documented 4,812 us. Same
+order, about a third higher, which is unsurprising for a different build with different flags.
+
+So a full 45-cell page fills in about **0.75 s**, three quarters of a second of cells popping in.
+That is the behaviour the progressive fill was designed to produce and it is what it produces.
+
+**No missed fields are attributable to it.** `f3=0` and `f4+=0` across every window with the
+picker on screen, worst frame 26-30 ms -- the same as a settled grid. The time budget is doing its
+job: one icon per frame is affordable, and the cap is what stops a page trying to be 216 ms.
+
+### The 90 ms frames were the harness, not the picker
+
+Worth recording because it was nearly written down as a finding. An earlier read of the same script
+showed `worst_us` of 80,000-97,000 with `f4+=1` in nine consecutive windows, right through the
+profile screens, and the obvious conclusion was that the picker was dropping five fields a second.
+
+It was the framebuffer dumps. That run was `FBSCALE=1`, so each `fbdump` is a 640x480 surface
+hexdumped to stdout -- about 4 MB of text. Counting windows containing a 4-or-more-field frame:
+
+| run | scale | windows with a 4+ field frame |
+|---|---|---:|
+| `final-profiles` | `FBSCALE=1` | 10 of 15 |
+| `icontime` | default (160x120) | **1 of 15** |
+
+The one remaining is the boot window, which is the library scan and predates all of this. Frame
+numbers from a `FBSCALE=1` run describe the harness as much as the program, and this is the second
+time that class of mistake has nearly landed in here.
+
+**Still unverified: hardware.** Every number above is ares, and svg64's README is explicit that it
+has never run on a console. Given 1ag, an ares green on a new execution path is worth exactly as
+much as it was last time.
+
+### The `-j8` font race
+
+Four faces bake from one `Firple-Bold.ttf`. `mkfont` names its output after its *input* and offers
+no way to override it, so all four rules wrote `build/fontbake/Firple-Bold.font64` and then renamed
+it — and under `make -j8` three won the race and the fourth `mv` found nothing. It presented as
+`FirpleSmall.font64` simply not existing after a build that had printed `[FONT]` for it, which
+reads as a missing rule rather than as a race. Fixed with a scratch directory per target.
+
+### Two tests that could not fail, caught by trying to make them fail
+
+Both are the house rule earning its keep in one afternoon.
+
+1. **The settings overflow assertion was a tautology.** `_Static_assert(LIST_Y + VISIBLE * ROW_H +
+   INFO_H <= FOOTER_Y)` cannot fire, because `VISIBLE` is *derived* from `INFO_H`. Feeding it an
+   `INFO_H` of 160 changed nothing. Replaced with one checking the reservation covers what is drawn
+   into it, which does fire when `INFO_LINES` goes to 3.
+
+2. **The profile-1 save guard was not really tested.** Relaxing `index <= 0` to `index < 0` in
+   `profile_erase_saves()` left the mutant passing — because slot 0's folder name would be `p1`,
+   and nothing has ever written to `saves/p1/`. The guard is belt and braces; what actually
+   protects profile 1 is that its saves are in the *unsuffixed* `saves/` and that function never
+   builds that path. The mutation now also makes the path agree with `profile_save_subdir()`,
+   which is the bug somebody would really write, and three checks go red.
+
+### The format 1 roster is read without renumbering
+
+`profiles.ini` gains a version key. Version 1 had `count` profiles in slots 0..count-1 and closed
+the gap on delete — and the slot number names `saves/pN/`, so deleting player 2 turned player 3's
+folder into player 2's. Version 2 gives every slot a `used` flag and never moves anybody.
+
+Reading version 1 needs no conversion, which is why the old layout could be *adopted*: contiguous
+slots are the new format with the first `count` slots marked used. Nothing moves, so no existing
+card can lose a save by being read by this build. Covered by `test_migration()` in
+`tools/hosttest/test_profile.c`, which writes a real version 1 file and checks all three names,
+the active index and the save subdirectory survive both the read and the rewrite.
+
+Deleting a profile now deletes its saves, warned, with the count on screen before the answer.
+Profile 1 is refused outright at both the UI and the function.
+
+### Where the handoff and the code disagreed
+
+- **L and R already paged the tabs.** The chip became the last stop on the rail rather than a
+  separate control, so nothing was rebound. The rail also stopped wrapping: a modulo wrap would
+  put the player plate one press left of RECENT and make "keep pressing R" cycle past it forever.
+- **The position bar at x=628** is 10 px outside the safe area (`SAFE_X 16, SAFE_W 608`). The grid
+  had already met this and settled on 618; the appearance screen asserts against `POSBAR_X` rather
+  than inventing a second answer.
+- **The category column at 132 px** clipped its own names at 24 px — "Monsters" drew as "Monster",
+  "Abstract" as "Abstrac". Widened to 140 and every display name capped at eight characters.
+- **The handoff's 10 x 10 1-bit paged atlas** is the board's stand-in for browsing; svg64 replaces
+  the storage model entirely and keeps the sizes.
+- **30 categories, 9 rows of space.** The handoff says "flat list, no nesting" and stops there. The
+  list scrolls, with the same window-follows-cursor the settings and lock lists use.
+
+### The cache-key bug that made the picker look broken
+
+`icon_get()` is keyed on (index, ink, paper) — the same icon in two colours is two cached things.
+The appearance screen requested a page in the profile's swatch and drew it in chrome colours, so
+every cell missed forever and the grid stayed empty with nothing in any log to say why. The
+request and the draw now sit as mirrored named locals with a comment saying they must not be
+factored apart.
+
+### Reversed: the argument against a keyboard
+
+`screen_profiles.c` argued that an on-screen keyboard "would be the largest single piece of UI in
+the program in order to be used twice per household". Correct for one screen, wrong for three.
+`screen_keyboard.c` is 387 lines against about 80 for the two odometers it replaced, so
+`src/screens/` is roughly 300 lines heavier — the comment first written in that file claimed the
+directory came out smaller, and measuring said otherwise.
+
+### Second pass, after the first interactive run
+
+Four things came back from actually driving it, and three of them were the design being wrong
+rather than the code.
+
+**The chip needed a press it should not have needed.** R lit it up, A opened it. Two presses to a
+destination with no other purpose -- and while the chip was lit the last tab still drew as
+selected, so the rail showed two selected things at once. `chip_focus` is gone entirely: R past
+the last tab *is* the picker.
+
+**An empty keyboard had no exit.** B deleted, DONE refused an empty field, so opening one by
+accident was a dead end. B on an empty field now leaves, and the footer hint says which of the two
+it currently means.
+
+**DELETE was a key that did what the button under your thumb already did**, sitting exactly where
+a thumb going for SPACE would land. Removed; SPACE and DONE are wider for it. Digits are back as a
+top row on both charsets -- the handoff says a name is letters only, which is right about most
+names and wrong about what a keyboard should refuse when there is no shift key and the cost is
+one row.
+
+**A profile had one colour, not two.** The swatch table paired each plate with a fixed artwork
+colour by luma, which meant white-on-red was not askable for -- the table had already decided
+red-on-white. The palette is now ten (the eight named swatches plus the two neutrals) — *superseded
+by the third pass, which found two of the ten were the same white and cut it to nine* — and the
+plate and the artwork are separate choices from it, on two labelled rows. The pairing survives as
+`profile_default_ink()`, which is what a new slot gets and what a card with no `ink` key reads as,
+so nothing already written changes appearance.
+
+Two things fell out of that:
+
+- Picking the same colour twice makes the artwork vanish into its plate. Refused on apply with a
+  sentence, not prevented in the cursor -- a swatch you cannot land on is a rule nothing on screen
+  explains.
+- The dark neutral is `#101019` on a dark panel, which is the same colour as the gap between
+  swatches. The palette read as nine colours and a hole, and the cursor could sit on a swatch that
+  appeared not to exist. Every swatch now gets a hairline.
+
+Host suite was 98 profile checks at this point, and both profile mutations fired. Superseded: 100
+after the third pass.
+
+Uniqueness grew a third field: (icon, plate, ink). Two people sharing a sprite *and* a plate are
+still distinguishable if the artwork differs, which is the point of splitting them.
+
+---
+
+### Third pass: the picker was two bugs, and only one of them was the one I looked for
+
+"Not all icons are displaying, as you move around which ones are displaying changes, some icons
+are blinking." Two independent faults, both invisible in a single frame, and the obvious one was
+not the bigger one.
+
+**The cache was direct-mapped on the pack index**, on a comment that said "the access pattern is a
+grid cursor walking a contiguous run of indices, so consecutive icons land in consecutive slots
+and a page of 45 into 64 slots collides with nothing". The premise is false. A category is a
+scattered list of pack indices baked by `tools/mkiconmeta.py`, not a run. Counted over the shipped
+`icons.meta`: **87 of the 100 category pages collide, nine cells to a page on average, eighteen on
+the worst** -- Travel page 1 puts 45 icons into 30 slots. Colliding cells evict each other the
+moment either is decoded, forever. Both caches are fully associative with least-recently-touched
+eviction now; a linear scan of 64 entries costs 64 integer compares against a 6,377 us decode.
+
+**The request loop reached at most 22 cells either side of the cursor.** It folded distance and
+direction into one counter -- `cell + (d odd ? -(d+1)/2 : (d+1)/2)` over `d` in 0..44 -- which
+tops out at a distance of 22. With the cursor at cell 0 that is cells 0..22 and no others: the
+bottom half of the page was never *asked for*, so no cache could have held it. This was the
+larger of the two and I would not have found it by reading, because it looks like an ordering
+trick and it is one; it is just also a bound. Distance and direction are two loops now.
+
+**And the cursor cell was rasterised in different colours from the rest**, so every press threw
+away two cached icons and asked for two new ones at 6,377 us each. That is the blinking. Selection
+is geometry now -- a two-pixel lift and a white frame drawn around the cell, touching no pixel
+svg64 produced.
+
+Measured with `tools/inputs/iconcache.txt`, reading the FRAME line's `icons=` column, full corpus
+(`ICON_LIMIT=0`), on a full 45-cell page:
+
+| window | before | after |
+|---|---|---|
+| entering the editor | 24 decodes, then **0 for 240 frames with 21 cells still empty** | 79 decodes over two windows (32-cell page + 45-cell page + 2 previews), then **0** |
+| 300 frames sitting still | n/a -- never reached a full page | **0** |
+| 13 cursor presses | 22 | **13** -- exactly one each, and all of them the 60 px preview |
+| 420 frames after that | n/a | **0** |
+
+The 13 are correct and not a residue: the preview is the thing the cursor points at and has to
+follow it. The 40 px grid is untouched by cursor movement.
+
+**That measurement can go red.** `CACHE_40` is overridable, and `TUNE=-DCACHE_40=32` pins `icons=`
+at 60 per window -- the budget ceiling -- for the entire run and never settles, because 45 cells
+do not fit in 32 entries however they are indexed. Without that check the green above would only
+be evidence that something was happening.
+
+Also from the same pass:
+
+- **The palette had two whites.** `#E6E6DE` and `#F7F7FF` quantise to (28,28,27) and (30,30,31) in
+  RGBA5551 -- three levels apart out of 32, on a palette whose whole job is to be told apart at a
+  glance. The bone one is gone; nine colours, and `PROFILE_PLATES` is seven. Five host checks went
+  red on that, correctly: they were asserting the palette's size in passing by writing `9` where
+  they meant the light neutral. Named now, plus a check that an ink one past the end is refused.
+- **The colour rows were unusable and said so.** "I have no idea how to use it, how do I navigate
+  to it, it's also not obvious which colour is selected." A 2 px ring around one rectangle in a row
+  of rectangles is not a selection mark. Three things say it now: the chosen swatch is a third
+  taller than its neighbours, its ring is white when its row has the cursor and grey when it does
+  not, and the colour is **named in words** at the end of the row. The footer says which way the
+  d-pad goes from wherever the cursor is, because the rows are reached by walking off the bottom of
+  the icon grid and nothing on screen said so.
+- **The footer hint overlapped the B hint** -- "B Back" and "Left / Right: colour" rendered as
+  "BadLeft". The longest of those strings wants about 400 px and the hints already reach x=238,
+  leaving 386. It is a second line now rather than a shorter string, and the refusal message takes
+  that line when it is showing.
+- **`tools/inputs/profiles.txt` was testing nothing on the ink row.** It pressed right 8 times from
+  an ink that already defaulted to the second-to-last swatch, so the row moved one square and
+  stopped against the end. A row that does not appear to move is not a row that has been tested.
+
+### Fourth pass: a keyboard drawn under its own text field, and a name nobody could change
+
+**The digit row was four pixels underneath the field.** The field is `FIELD_Y 44` plus `FIELD_H 64`
+= 108. The handoff gives the first key row y=104, which was correct when the first row was QWERTY
+and the field was somewhere else on the board; adding digits above the letters put a row at 104
+against a field ending at 108, and the top row of keys was drawn inside the box being typed into.
+Nothing caught it because every number in the file was a literal that agreed only with itself.
+
+The rows carry an index now and the Y is computed: `KB_TOP` is the single place the clearance is
+stated, and the block is centred in what is left between the field and the footer. That gives the
+slack to whichever charset has it -- the 4-row name keyboard opens with a **44 px** gap under the
+field where it had **-4**, and the 5-row symbol keyboard gets 20. Keys went 48 px to 42 to make the
+five-row case fit, and the glyph baseline is keyed off `KEY_H` rather than being the literal 36.
+
+`_Static_assert(BLOCK_H(ROWS_TEXT_N) <= KB_BOT - KB_TOP)` is what would have caught it. Checked
+that it can: `FIELD_H` 64 -> 80 fails the build with "the symbol keyboard does not fit between the
+field and the footer".
+
+**`charsetcheck.py` went red on the same change, and correctly.** Its keyboard-row regex matched
+`{"QWERTYUIOP", 32, 156}` -- a string and *two* numbers -- so dropping the Y made it match nothing.
+It printed "found no keyboard rows to check, has the table changed shape?" and returned failure
+rather than reporting a clean run over zero rows. That guard was written on the theory that a
+checker which silently checks nothing is worse than no checker; this is the first time it has been
+the thing that fired.
+
+**A player's name could be set once and never again.** Only at slot creation -- START, or A on an
+empty card. Z went to the appearance editor and the footer called it "Edit", so the button that
+claimed to edit a player offered only colours. Z now opens a two-row menu, Name and Icon and
+colours, and the footer reads "Z Name or icon".
+
+Not a second button, and specifically not R: R past the last tab is how the grid reaches this
+screen, so pressing it twice would land in a rename keyboard pre-filled with your own name, where
+B deletes a letter. A mis-press that silently shortens a name is worse than the extra press the
+menu costs.
+
+Verified end to end in ares with `tools/inputs/rename.txt`: create a player, name it 111, reopen
+via Z, rename to 22, and the roster is still **2 of 10 used** -- a rename and not a second profile.
+
+
+### Fifth pass: the rail follows you into the picker
+
+**The picker used to be a dead end with an answer as its only exit.** Pressing R one too many
+times on the grid put you in front of ten cards, and getting back to a tab meant picking a player.
+The rail now stays drawn there, with the chip lit like an active tab and R walking back out onto
+the tabs -- so the picker is a place on the rail rather than a modal question.
+
+Which meant moving the chip to the **left** end. It was past SMS, which is fine for a door and
+wrong for a cursor position: "keep pressing R" would walk the whole rail to reach the thing you
+touch most, and then have nowhere further to go. L from the first tab opens it now, R comes back,
+neither end wraps. The chip also lost its name text -- at the right end the name was dropped
+whenever the tabs needed the room, and at the left end keeping it would have moved every tab when
+somebody switched to a player with a longer name. The name is in the grid's footer beside the Z
+hint. The tabs start at a fixed `TAB_X0` past the chip, asserted not to overlap it.
+
+Two accent bars, again. The chip and the first tab are adjacent, so a lit chip beside an underlined
+active tab drew one 108 px gold stripe spanning both -- measured, not guessed: gold ran from x=14
+to x=121 at y=62. The plate now says "this is the tab you are on" and the accent bar says "the rail
+cursor is here", which are the same thing on the grid and two different things on the picker.
+
+**A leftover call drew a second, lit chip on the grid.** `draw_chip` was last in the rail function
+because it used to be right-aligned and needed to know where the tabs finished; it took that `x` as
+its new `bool selected` argument. Non-zero always, so the grid drew its own chip and then a lit one
+on top. Nothing warned -- int to bool is a legal conversion -- and it was found by measuring the
+pixel row rather than by reading, because at 640x480 the two chips are the same chip.
+
+Also removed, all as asked: the "Who's playing? / 2 of 10 used" header (the cards say both, and it
+cost the rail its place -- kept only for the boot question, where there is no grid behind the
+screen and R is refused, so a rail would advertise a move that does not work); the "Not saved to
+card" line; and the confirmation's "Slot stays empty. Nobody else is renumbered.", which explained
+a numbering scheme to somebody who had asked to delete a row. Both dialogs shrank to their
+remaining content -- the confirmation had a third of its panel empty above the buttons.
+
+**Black on white is the worst thing this display renders**, and the popups were full of it. Two
+hundred fifty-six levels of nothing: RGBA5551 gives 32 a channel and a CRT blooms a bright field
+into the thin dark strokes crossing it. Every selected-row plate is `panel_alt` with a border now
+and the text brightens instead of inverting -- the edit menu, both confirmation buttons, and the
+appearance screen's category list, which was the largest instance of it anywhere at 24 px.
+
+Not changed, and flagged rather than done quietly: the keyboard's cursor key is still a white plate
+with a near-black 32 px bold glyph. The failure mode is much weaker at that weight, and it is the
+only mark distinguishing one key from thirty-nine identical ones -- a border there is a visibly
+worse cursor. Say the word and it changes.
+
+**The empty cards' dashes stopped six pixels short of the corner.** Stepping a fixed 12 px and
+clipping the last dash to whatever was left put a two-pixel stub at the end of a 158 px edge with a
+hole in front of it, so the bottom of every empty slot read as unfinished. Measured off the
+framebuffer: the vertical run's last full dash ended at y=399 against a bottom edge at 407. The
+pattern is stretched to fit now, landing a whole dash on both ends.
+
+### The picker's cursor was the choice, which is why colours could not be tried
+
+A applied the icon under the cursor and left. So walking down to the colour rows dragged the icon
+with it: there was no way to hold a face still and see it in a colour you were considering, which
+is the only thing the screen is for.
+
+A now *takes* the sprite under the cursor and nothing else -- accent bar under its cell, the same
+bar that marks the active tab and the active profile's card, and the 60 px preview holds it. START
+commits and leaves. **B also commits**: nothing on the screen shows the stored appearance beside
+the working one, so a Back that discarded would be indistinguishable from a Back that saved until
+you were already on the card grid. Both go through `apply()`, so neither can leave with a
+combination that cannot be stored.
+
+That also took the last per-press decode out of the picker. The preview followed the cursor, so
+thirteen presses cost thirteen 60 px rasterisations; it follows the *choice* now, and moving the
+cursor costs nothing at all. `tools/inputs/iconcache.txt` expects zero.
+
+Rename reached the appearance editor through Z's new two-row menu, so `tools/inputs/profiles.txt`
+needed `z, down, a` where it had `z` -- caught because the frame it dumped was a keyboard.
+
+
+
+### Player 10 was called Player 1
+
+Asked in passing -- "what do we call Player 10 by default, that's 9 characters yeah?" -- and it
+was a real collision, twice over.
+
+**The string.** The fallback name is built into a buffer sized `PROFILE_NAME_CAP`, which is nine
+bytes: eight characters and a terminator, because eight is what the keyboard lets anybody type.
+"Player 10" is nine characters, so snprintf truncated it and slot 10 came back as **"Player 1"** --
+the same string slot 1 shows, on the screen whose entire job is telling ten people apart. The cap
+governs typed names; the fallback is neither typed nor stored and had no business sharing it.
+`PROFILE_LABEL_CAP` is ten now, and it is what every layout drawing a name reserves against.
+
+The host test was written first and went red on all three of its checks: the tenth name, no two
+slots sharing one, and the longest being nine characters. 104 profile checks now.
+
+**The box.** Fixing the string moved the clipping rather than removing it. The profile card drew
+its name into `CARD_W - 8` = 104 px and "Player 10" measures **105 px of ink** -- so the card still
+read "Player 1", now by losing a glyph instead of a byte. Found by rendering it, not by reading:
+`tools/hosttest` proves the string and only a frame proves the box. The card's name spans the full
+112 px now, which leaves 7. Eight wide capitals would still overrun it, which is a thing somebody
+does to themselves and sees immediately; "Player 10" is a thing the menu does to a card with ten
+players on it.
+
+### The name is back on the rail's chip
+
+It was dropped when the chip moved to the left end, because a box measured from the current name
+would move every tab whenever somebody switched to a player with a longer one. `CHIP_NAME_W`
+reserves the worst case instead -- nine characters, 108 px -- and the rail had 164 spare. Measured
+after the fact: "Player 10" renders 105 px into that box, unclipped.
+
+The tab run now ends at 626 against a rail reaching 624, with the last tab's own edge at 616
+because the trailing pad is not drawn. That is close enough that a ninth tab or a longer label
+would push SMS off the side of a CRT silently, and the labels come from `library_tab_label()` so
+the width is not a compile-time quantity and cannot be asserted. `screen_grid_draw_rail` says it
+once instead. Checked that it can fire: a 20-character reservation prints
+`GRID tab rail runs to 738, past the rail's 624`.
+
+The grid's footer hint was labelled with the active player's name, because the name had nowhere
+else to live. It says "Players" now -- the chip carries the name, and printing it twice on one
+screen is not information.
+
+
+---
+
+### Not done
+
+- **No hardware run at all.** Boot time is the one users feel and the ROM is 5x bigger; nothing
+  has measured it. The per-icon figure above is ares.
+- **The ~1 icon/frame rate is a consequence of `ICON_BUDGET_US`, not a tuned value.** 6,000 us
+  against a 6,377 us icon means the budget admits exactly one and then stops. Whether a page
+  should fill in 0.75 s or faster has not been decided by anything but the default.
+- **`charsetcheck.py` sees literals, not data.** The sprite-name line on the appearance screen
+  draws a string out of the pack, and nothing checks it against the 84-glyph charset.
+- **The credits screen's scroll is by block index, not pixel.** Total pixel height is the one
+  number that scheme never computes, so the position bar is an approximation over 150 blocks.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon

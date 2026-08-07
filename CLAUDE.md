@@ -14,6 +14,12 @@ tools/mkcheatdb.py --fetch                 # libretro cheats -> build/cheats.db
 tools/mkcheatkeys.py -i build/cht          # -> tools/data/n64_keys.tsv (this one IS committed)
 ```
 
+**The icon corpus is outside the repo too.** `ICON_DIR ?= ../svgicons`, 4,180 CC BY SVGs from
+game-icons.net, of which 286 are excluded by `tools/ip-blocklist.txt` and 3,894 ship. Never vendor
+it: git keeps blobs forever. A build with no corpus still succeeds -- there is simply no picker.
+Attribution is a separate obligation from the exclusions and is discharged in `docs/CREDITS.md`,
+which `tools/mkcredits.py` bakes into the cartridge and the credits screen renders.
+
 `build/` is gitignored in full. The cheat corpus is someone else's work and does not belong in
 this history. `n64_keys.tsv` is committed because it is a table of pure facts -- a filename and
 three header fields.
@@ -94,10 +100,12 @@ src/boot/         bootloader, CIC, Datel cheat engine     — keep verbatim
 src/flashcart/    SC64 driver behind a vtable             — keep verbatim
 src/menu/         rom_info (450-game DB), cart_load, ini_parser, path, settings
 src/app.c         main loop, app_t, screen_t
-src/ui/           draw, input, theme, tween
+src/ui/           draw, input, theme, tween, icon (svg64 cache)
 src/library/      library (index + scan), thumbcache
 src/cheats/       cheatdb -- read-only, group model; see cheatdb.h on why groups not lines
-src/screens/      grid, detail, cheats, settings, launch, fault
+src/screens/      grid, detail, cheats, settings, launch, fault, profiles, appearance,
+                  keyboard, credits
+src/libs/svg64/   SVG rasteriser, vendored MIT; the icon corpus is NOT vendored
 src/dev/          harness only; compiles to nothing without DEV_HARNESS
 tools/            fixture, demo tree, input scripts, regression, video, cheat corpus fetcher
 ```
@@ -124,3 +132,14 @@ tools/            fixture, demo tree, input scripts, regression, video, cheat co
   AUDIT.md 1r for the hardware bring-up order and 1s for the pre-hardware bug scan.
 - **Cheats are toggled as named groups, never per line.** A `D0` conditional and the write it
   guards are one indivisible thing; see AUDIT.md 2.2 for what per-line toggling did.
+- **Three of the five fonts carry an 84-glyph charset.** A character outside it draws as nothing,
+  silently, on a console -- a full-charset bake at 40 px would be about 2.7 MB against 681 KB at
+  20 px. `tools/charsetcheck.py` turns that into a build failure and is run by the host suite; it
+  sees string literals, not data. See GOTCHAS-PROFILES.md section 1.
+- **Profile slots never move.** `profiles.ini` v2 gives every slot a `used` flag. The slot number
+  names `saves/pN/`, so closing a gap on delete handed one player's saves to another -- which is
+  what v1 did. Deleting a profile deletes its saves, and profile 1 is refused at both the UI and
+  the function.
+- **`icon_get()` is keyed on (index, ink, paper).** The same icon in two colours is two cached
+  entries. A screen that requests one pair and draws another misses on every cell forever, with
+  nothing in any log to say why.
