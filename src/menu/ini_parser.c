@@ -539,9 +539,20 @@ void ini_delete_key(ini_t *ini, const char *section, const char *key) {
 }
 
 
+int ini_section_count(ini_t *ini) {
+    return ini ? ini->section_count : 0;
+}
+
+
+const char* ini_section_name(ini_t *ini, int index) {
+    if (!ini || index < 0 || index >= ini->section_count) return NULL;
+    return ini->sections[index].name;
+}
+
+
 bool ini_is_empty(ini_t *ini) {
     if (!ini) return true;
-    
+
     for (int i = 0; i < ini->section_count; i++) {
         for (int j = 0; j < ini->sections[i].pair_count; j++) {
             const char *v = ini->sections[i].pairs[j].value;

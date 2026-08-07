@@ -3,8 +3,8 @@
  * @brief Resident title-card art for the grid.
  * @ingroup library
  *
- * A fixed pool of slots holding decoded 140 x 98 art, filled on demand from the 280 x 196 PNGs
- * on the card and evicted least-recently-requested when the pool is full. The grid asks for
+ * A fixed pool of slots holding decoded box art -- 109 px wide, as tall as the system's box is,
+ * see library/boxart.h -- filled on demand from whatever the PNGs on the card happen to be and evicted least-recently-requested when the pool is full. The grid asks for
  * the art it is about to draw; the cache decides what that costs.
  *
  * ### Why RGBA16 here and CI8 later
@@ -14,7 +14,7 @@
  * over FatFs is 20 ms against 38 ms. That argument only applies once tiles are being *read from
  * a cache file*. This stage has no cache file -- art is decoded from the source PNG straight
  * into a slot -- so the bandwidth in question does not exist and quantising would cost decode
- * time to buy nothing. 20 slots at RGBA16 is 573 KB, which is affordable on 8 MB.
+ * time to buy nothing. 36 slots at RGBA16 is at most 1.19 MB, which is affordable on 8 MB.
  *
  * CI8 and the on-disk atlas arrive together, because that is when the streaming argument bites.
  * The slot API below does not expose the pixel format, so that change stays inside this file.
@@ -33,6 +33,7 @@
 #include <stdint.h>
 #include <surface.h>
 
+#include "boxart.h"
 #include "library.h"
 
 /* 36 slots, up from 20.
@@ -44,9 +45,10 @@
  * back as a placeholder even though its pixels were already on the card.
  *
  * 36 is sixteen visible plus THUMB_PREFETCH_ROWS above and below, and four spare. The cost is
- * bounded and lazy: a slot allocates its 27,440-byte surface only when something lands in it, so
- * a library of eight titles still holds eight. Full, it is 988 KB against the ~3.8 MB free after
- * the framebuffers -- affordable only because the M64 has the Expansion Pak built in. */
+ * bounded and lazy: a slot allocates its surface only when something lands in it, and the surface
+ * is the box shape of that record's system -- 33,790 bytes for an N64 cover at 109 x 155, 23,762
+ * for a square Game Boy one. Full of the tallest shape it is 1.19 MB against the ~3.8 MB free
+ * after the framebuffers -- affordable only because the M64 has the Expansion Pak built in. */
 #define THUMB_SLOTS  36
 
 /* How far past the visible window art is fetched. Two rows either side, so a page of scrolling
@@ -99,6 +101,23 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us);
 bool thumbcache_run_cached (thumbcache_t *tc, library_t *lib, uint32_t budget_us);
 
 /** @brief Slots currently holding decoded art, for diagnostics. */
+/**
+ * @brief Throw every resident tile away, because the shape they were cut to has changed.
+ *
+ * Called when the box art region changes in Settings. Not an invalidation of the atlas -- the
+ * tiles on the card are still perfectly good for whatever shape they were cut at, and if the
+ * region is switched back they are hits again.
+ */
+void thumbcache_reshape (thumbcache_t *tc, library_t *lib);
+
+/**
+ * @brief The tile shape @p rec's art is cut to: its own snapped shape, or its system's.
+ *
+ * The grid needs this for the row height and the detail sheet for its art panel, both of which
+ * happen outside this file, and both of which must agree with what was actually decoded.
+ */
+art_shape_t thumbcache_record_shape (const lib_record_t *rec);
+
 int thumbcache_resident (const thumbcache_t *tc);
 
 /** Split of thumbcache_run's cost: rows actually decoded vs the walk that finds the next image,

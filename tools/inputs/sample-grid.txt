@@ -1,0 +1,39 @@
+# A full card, tab by tab. What the grid looks like when there is enough on it to judge.
+#
+# Run with SAMPLE=1 (and SAMPLE_MIX=true for the control). Every tab here is at least three full
+# rows, which is the point: a tab holding four titles tells you nothing about whether a layout is
+# compact, and every screenshot this project had before this one was of a tab holding four.
+#
+# The interesting frames are 1 and 6. Frame 1 is Recent, the only tab where two tile shapes share
+# a grid. Frame 6 is Game Boy, where the cells are square and a third row fits -- if the row pitch
+# were fixed rather than per-tab, that row would not be there.
+
+wait 400            # boot plate, a 115-title scan, then a screenful of covers
+
+fbdump              # 1: RECENT. Twelve played across six systems, so portrait and square mixed.
+
+press r
+wait 250
+fbdump              # 2: FAVOURITES, also mixed
+
+press r
+wait 400            # 30 covers is six rows; the first two have to land before this means anything
+fbdump              # 3: N64, five columns of portrait boxes
+
+press down x2
+wait 250
+fbdump              # 4: scrolled two rows down a six-row tab
+
+press r
+wait 300
+fbdump              # 5: NES, four rows
+
+press r x2
+wait 300
+fbdump              # 6: GB. Square cells, tighter pitch, three rows on screen
+
+press r x2
+wait 300
+fbdump              # 7: SMS, back to portrait
+
+exit

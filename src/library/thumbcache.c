@@ -11,6 +11,7 @@
 
 #include "menu/image_decoder.h"
 #include "menu/paths.h"
+#include "boxart.h"
 #include "thumbcache.h"
 #include "thumbstore.h"
 #include "ui/theme.h"
@@ -119,6 +120,38 @@ void thumbcache_free (thumbcache_t *tc) {
     free(tc);
 }
 
+void thumbcache_reshape (thumbcache_t *tc, library_t *lib) {
+    if (tc == NULL) {
+        return;
+    }
+    /* Every resident surface was allocated at the old shape, so none of them can be drawn into
+     * the new layout -- and the ones that are only half the height of their cell would not look
+     * like a bug, they would look like art that had been cropped. Drop the lot and let the
+     * ordinary passes refill: the atlas answers most of them for the price of a read, because
+     * thumbstore_fetch() has the shapes and turns a mismatch into a clean miss. */
+    if (tc->decoding_slot >= 0) {
+        image_decoder_abort();
+        if (lib != NULL) {
+            lib->records[tc->decoding_id].art_state = ART_PENDING;
+        }
+        tc->decoding_slot = -1;
+    }
+    for (int i = 0; i < THUMB_SLOTS; i++) {
+        if (tc->slots[i].art != NULL) {
+            if (lib != NULL && tc->slots[i].used) {
+                lib->records[tc->slots[i].rom_id].art_state = ART_PENDING;
+            }
+            surface_free(tc->slots[i].art);
+            free(tc->slots[i].art);
+            tc->slots[i].art = NULL;
+        }
+        tc->slots[i].used = false;
+        tc->slots[i].rom_id = 0xFFFF;
+    }
+    tc->resident = 0;
+    tc->idle = false;
+}
+
 int thumbcache_resident (const thumbcache_t *tc) {
     return tc->resident;
 }
@@ -197,6 +230,57 @@ static const char *basename_of (const char *path) {
  * The winner is remembered in rec->art_file, so this walk happens once per record rather than
  * once per pass.
  */
+/**
+ * @brief The tile this record's art should be cut to.
+ *
+ * Three answers, and the order matters:
+ *
+ *   - a forced table in Settings wins outright, for every record, measured or not;
+ *   - otherwise the cover's own snapped shape, if it has been measured;
+ *   - otherwise #BOXART_FALLBACK_KIND, which is a decision about the artless case rather than a
+ *     claim about any box.
+ */
+art_shape_t thumbcache_record_shape (const lib_record_t *rec) {
+    if (!boxart_automatic()) {
+        return boxart_shape(rec->system);       /* a forced table answers for everything */
+    }
+    if (rec->art_kind != ART_KIND_UNKNOWN) {
+        return boxart_shape_at(rec->art_kind);
+    }
+    /* No cover, or none measured yet. The box measurements are deliberately not consulted here --
+     * see BOXART_FALLBACK_KIND. */
+    return boxart_shape_at(BOXART_FALLBACK_KIND);
+}
+
+/**
+ * @brief Read @p path's dimensions and remember which shape they snap to.
+ *
+ * Once per record per index: the answer goes into library.idx, so a warm card knows every tile's
+ * shape before it draws a frame. Called from the point where the art path has just been resolved
+ * and before anything has been allocated -- the shape decides both the surface to allocate and
+ * whether a cached tile is even a match, so probing after either would be too late.
+ *
+ * A failed probe leaves the record UNKNOWN rather than guessing. It will be retried, which is the
+ * right behaviour for a file that was half-downloaded when we looked at it.
+ */
+static void art_probe_shape (const library_t *lib, lib_record_t *rec, const char *path) {
+    if (rec->art_kind != ART_KIND_UNKNOWN) {
+        return;
+    }
+    int w = 0, h = 0;
+    if (image_probe_size(path, &w, &h) != IMG_OK) {
+        return;
+    }
+    rec->art_kind = boxart_snap(w, h);
+    if (rec->art_kind != ART_KIND_UNKNOWN) {
+        /* The index has to be told, or the probe is repeated on every boot forever -- the same
+         * trap the art path itself fell into; see library_t::dirty. */
+        library_touch((library_t *)lib);
+        static const char *NAME[ART_SHAPES] = { "portrait", "square", "landscape" };
+        debugf("ART %s: %dx%d -> %s\n", basename_of(path), w, h, NAME[rec->art_kind]);
+    }
+}
+
 static int64_t art_resolve (thumbcache_t *tc, const library_t *lib, lib_record_t *rec,
                             char *out, size_t cap) {
     if (rec->art_file != NULL) {
@@ -340,7 +424,8 @@ static void decode_done (img_err_t err, surface_t *decoded, void *data) {
     rec->dominant = dominant_colour(decoded);
     rec->art_age = 0.0f;          /* arms the arrival pop; see screen_grid draw_tile */
 
-    /* The scaler already produced exactly TILE_W x TILE_H, so the surface is taken as-is. */
+    /* The scaler already produced exactly the shape that was asked for, so the surface is taken
+     * as-is -- including its height, which is per system now. */
     slot->art = decoded;
     slot->used = true;
     rec->art_state = ART_READY;
@@ -596,6 +681,11 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
              *
              * thumbstore_has() is a hash and a scan of the resident index. It answers the same
              * question for nothing. See AUDIT.md 1ae. */
+            /* Before the atlas is asked and before anything is allocated. The shape is part of
+             * the atlas key -- a tile cut to a different shape is a miss, not a resize -- so
+             * asking first with the wrong shape would answer the wrong question. */
+            art_probe_shape(lib, rec, path);
+
             if (thumbstore_available() && thumbstore_has(path, art_bytes)) {
                 int slot = claim_slot(tc, lib, (uint16_t)i, visible_only);
                 if (slot < 0) {
@@ -603,7 +693,8 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
                 }
                 surface_t *cached = malloc(sizeof(surface_t));
                 if (cached != NULL) {
-                    *cached = surface_alloc(FMT_RGBA16, TILE_W, TILE_H);
+                    art_shape_t sh = thumbcache_record_shape(rec);
+                    *cached = surface_alloc(FMT_RGBA16, sh.w, sh.h);
                     uint16_t dom = 0;
                     if (cached->buffer != NULL &&
                         thumbstore_fetch(path, art_bytes, cached, &dom)) {
@@ -647,7 +738,13 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
 
             snprintf(tc->decoding_src, sizeof(tc->decoding_src), "%s", path);
             tc->decoding_bytes = art_bytes;
-            img_err_t perr = image_decoder_start_scaled(path, TILE_W, TILE_H, decode_done, rec);
+            /* The destination is this cover's own shape, snapped to one of three -- not one tile
+             * size for everything, and not this system's box either. A 0.702 cover cropped into
+             * the old 1.4286 tile lost 51 % of its own height, and a landscape title card cut
+             * into a portrait tile loses more; the crop happens in here, where nothing downstream
+             * can tell it did. See library/boxart.h. */
+            art_shape_t sh = thumbcache_record_shape(rec);
+            img_err_t perr = image_decoder_start_scaled(path, sh.w, sh.h, decode_done, rec);
             if (perr != IMG_OK) {
                 debugf("THUMB %d: image_decoder_start_scaled(%s) = %d\n", i, path, (int)perr);
                 rec->art_state = ART_NONE;

@@ -112,6 +112,23 @@ FIXTURE_ART = $(if $(DEMO_NO_PLAYSTATE),--no-playstate)
 FIXTURE_GEN = tools/mkdemo.py
 endif
 
+# SAMPLE=1 is the third tree: 115 invented games with mkdemo's original art, enough of them that
+# every tab is a full grid, and covers drawn at a stated spread of ASPECTS rather than all at the
+# right one. It is for looking at layout -- specifically at whether a tile's shape can be read off
+# its cover instead of out of a per-system table -- and it is not a regression tree: the mix is
+# chosen to contain failures, so measuring anything against it measures the mix.
+#
+#   make SAMPLE=1 sc64                 the default realistic mix
+#   make SAMPLE=1 SAMPLE_MIX=true      the control: every cover the right shape
+#   make SAMPLE=1 SAMPLE_MIX=hostile   half the card wrong
+SAMPLE_MIX ?= realistic
+ifdef SAMPLE
+FIXTURE_DIR = $(BUILD_DIR)/sample-$(SAMPLE_MIX)
+FIXTURE_ART = --mix $(SAMPLE_MIX)
+FIXTURE_GEN = tools/mksample.py
+FIXTURE = 1
+endif
+
 ifdef FIXTURE
 N64_MKDFS_ROOT = $(DFS_ROOT_DIR)
 else
@@ -183,6 +200,7 @@ SRCS = \
 	cheats/cheatdb.c \
 	cheats/usercheats.c \
 	cheats/cheatstate.c \
+	library/boxart.c \
 	library/cache.c \
 	library/libindex.c \
 	library/locks.c \
@@ -201,6 +219,7 @@ SRCS = \
 	menu/paths.c \
 	menu/profile.c \
 	menu/image_decoder.c \
+	menu/image_probe.c \
 	menu/music.c \
 	menu/rom_info.c \
 	menu/settings.c \
@@ -422,7 +441,9 @@ dfsroot: $(FILESYSTEM)
 	@# which is exactly what happened after a `make clean` removed a copy that had been generated
 	@# by hand. Generated here so it cannot go missing again.
 	@# Names must exist in the generated tree or the records load and match nothing, which looks
-	@# identical to the file being absent. mkfixture.py's SNES titles are the three below.
+	@# identical to the file being absent. mkfixture.py's SNES titles are three of the four below.
+	@# The Game Boy title is there to make Recent a MIXED tab: its box is square and the SNES ones
+	@# are portrait, which is the only case in the program where two tile shapes share a grid.
 	@# Not for the demo tree, which decides its own play history -- and whose --no-playstate form
 	@# needs there to be NO history at all, so that Recent and Favourites stay hidden and the menu
 	@# opens on N64. Writing the fixture's here would name titles the demo tree does not contain:
@@ -430,6 +451,7 @@ dfsroot: $(FILESYSTEM)
 	@if [ -z "$(DEMO)" ] && [ ! -f $(DFS_ROOT_DIR)/mainmenu/cache/playstate.dat ]; then \
 		python3 tools/mkplaystate.py -o $(DFS_ROOT_DIR)/mainmenu/cache/playstate.dat \
 			--played "Chrono Drift.sfc" --played "Star Relic.sfc" \
+			--played "Pocket Racer.gb" \
 			--favorite "Pixel Knights.sfc" >/dev/null; \
 	fi
 	@# cheats.db is a release artifact built by tools/mkcheatdb.py, never committed. Staged when

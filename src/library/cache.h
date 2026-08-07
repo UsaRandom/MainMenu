@@ -54,7 +54,17 @@
 /* 1 -> 2: usercheats.dat's record grew from 108 to 140 bytes when the name field went from 24 to
  * 64 characters. Only that file changed layout, and only that file's readers could be confused --
  * but the rule above is one number for all of them, and the cost of honouring it is currently
- * zero, because nothing has ever written a cache file to a real card. */
+ * zero, because nothing has ever written a cache file to a real card.
+ *
+ * It was raised to 3 for the box-shape rework and then put back, which is worth recording. The
+ * rework does invalidate thumbs.pak and thumbs.idx -- the slot grew, the index record grew, and
+ * every cached tile is the wrong shape -- but the shared version takes **playstate.dat** with it,
+ * and that is the one file here that cannot be rebuilt from the card: every favourite and every
+ * play count on it. Trading those away to re-cut some art is not a trade.
+ *
+ * So the atlas bumped its own magic instead, exactly as libindex.h already does and for the same
+ * reason. THUMBSTORE_MAGIC and LIBINDEX_MAGIC are per-file invalidation; this number is for a
+ * change that really does affect all of them. */
 
 /** @brief Header on every cache file. 16 bytes, so the payload stays 8-byte aligned. */
 typedef struct __attribute__((packed)) {

@@ -97,6 +97,14 @@ typedef struct {
     char    *art_file;
 
     uint8_t  art_state;         /**< art_state_t */
+    /** Which of the three tile shapes this record's cover snapped to, or #ART_KIND_UNKNOWN.
+     *
+     *  Read off the image header once and then persisted in library.idx, because it is the
+     *  destination size of the decode and the height of the row -- both of which are needed
+     *  before the art exists. A record with no art keeps UNKNOWN forever and falls back to its
+     *  system's shape, which is the right answer for a tile that will only ever be a plate with
+     *  a name on it. See library/boxart.h. */
+    uint8_t  art_kind;
     /** Seconds since this tile's art landed, or >= DUR_TILE_ARRIVAL once it has settled. Drives
      *  the arrival pop; kept per record rather than per cache slot so a tile that scrolls off and
      *  back does not replay it. */

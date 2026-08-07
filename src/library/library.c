@@ -10,6 +10,7 @@
 #include <string.h>
 #include <libdragon.h>
 
+#include "boxart.h"
 #include "library.h"
 #include "menu/path.h"
 
@@ -420,6 +421,10 @@ static int scan_dir (library_t *lib, const char *dir, int depth) {
                     rec->path = strdup(child);
                     rec->title = title_from_filename(info.d_name);
                     rec->art_state = ART_PENDING;
+                    /* Not zero: zero is ART_PORTRAIT, and a record that has never been probed
+                     * must be distinguishable from one whose cover really is portrait -- the
+                     * first falls back to its system's shape, the second does not. */
+                    rec->art_kind = ART_KIND_UNKNOWN;
 
                     if (system == SYS_N64) {
                         index_n64(rec, child);

@@ -37,6 +37,7 @@ static settings_t init = {
     .show_browser_file_extensions = true,
     .show_browser_rom_tags = true,
     .rumble_enabled = false,
+    .boxart_region = "Automatic",
 };
 
 
@@ -94,6 +95,9 @@ void settings_load (settings_t *settings) {
     settings->show_browser_rom_tags = ini_get_bool(ini, "menu", "show_browser_rom_tags", init.show_browser_rom_tags);
     settings->rumble_enabled = ini_get_bool(ini, "menu_beta_flag", "rumble_enabled", init.rumble_enabled);
 
+    free(settings->boxart_region);
+    settings->boxart_region = strdup(ini_get_string(ini, "menu", "boxart_region", init.boxart_region));
+
     ini_free(ini);
 }
 
@@ -113,6 +117,7 @@ void settings_save (settings_t *settings) {
     ini_set_int(ini, "menu", "sfx_volume", settings->sfx_volume);
     ini_set_int(ini, "menu", "music_volume", settings->music_volume);
     ini_set_int(ini, "menu", "music_track", settings->music_track);
+    ini_set_string(ini, "menu", "boxart_region", settings->boxart_region);
 #ifdef FEATURE_AUTOLOAD_ROM_ENABLED
     ini_set_bool(ini, "menu", "autoload_rom_enabled", settings->rom_autoload_enabled);
     ini_set_string(ini, "autoload", "rom_path", settings->rom_autoload_path);

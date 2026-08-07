@@ -187,6 +187,31 @@ bool ini_is_empty(ini_t *ini);
 
 
 /**
+ * @brief How many sections the file has.
+ *
+ * Every other reader in this program knows the section it wants by name. boxart.ini is the one
+ * that does not: its sections *are* the choices the Settings screen offers, so the file has to be
+ * enumerable rather than merely queryable. See library/boxart.h.
+ *
+ * @param ini INI structure
+ * @return section count, or 0 for a NULL structure
+ */
+int ini_section_count(ini_t *ini);
+
+
+/**
+ * @brief Name of section @p index, or NULL out of range.
+ *
+ * The returned pointer belongs to the INI structure and dies with ini_free().
+ *
+ * @param ini INI structure
+ * @param index 0 .. ini_section_count() - 1
+ * @return section name, or NULL
+ */
+const char* ini_section_name(ini_t *ini, int index);
+
+
+/**
  * @brief Save INI structure to disk
  * 
  * Writes the INI structure to the specified file path.

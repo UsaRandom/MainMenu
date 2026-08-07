@@ -48,10 +48,17 @@ PI_DOM1_BIG_ENDIAN = 0x80371240    # what fix_rom_header_endianness treats as al
 CLOCK_RATE = 0x0000000F
 BOOT_ADDRESS = 0x80246000
 
-# The title-card asset spec from docs/design/README.md section 7: 280x196, exactly 2x the
-# 140x98 tile, so the detail sheet shows it 1:1 and the grid downsamples once, offline.
-# Upstream's 158x112 box-art size is not what this project consumes.
-BOXART_W, BOXART_H = 280, 196
+# Exactly 2x a grid tile, so the detail sheet shows it 1:1 and the grid downsamples once.
+#
+# Portrait, because that is what a box is: 218 x 310 is 0.703, the cartridge-box aspect the menu
+# now cuts tiles to (src/library/boxart.h). It was 280 x 196 landscape, which meant every fixture
+# frame was testing the cover-crop rather than the layout -- the game code stamped across the art
+# lost its last two characters off the sides, which is exactly the mapping check the code is
+# stamped there to provide.
+BOXART_W, BOXART_H = 218, 310
+# Game Boy boxes are square, so the handheld stubs get square art. Same width, so the two shapes
+# differ only in the way the grid has to cope with.
+BOXART_SQ = 218
 
 # Guest ROMs for the emulated-system tabs. cart_load_emulator picks the core by extension.
 EMU_SYSTEMS = [
@@ -342,10 +349,49 @@ def main():
             emit(root, os.path.join("roms", folder, sanitize(t) + ext), stub)
             n_emu += 1
 
+            # Art beside the ROM, which is thumbcache's rule 2 and the only rule that reaches an
+            # emulated-system title -- they have no N64 game code, so the metadata tree cannot
+            # name them. Without this the NES, SNES, GB, GBC and SMS tabs were walls of
+            # placeholders and the square-tile path had no pixels to be wrong about.
+            if not args.no_art:
+                square = folder in ("gb", "gbc")
+                aw = BOXART_SQ if square else BOXART_W
+                ah = BOXART_SQ if square else BOXART_H
+                write_png(os.path.join(root, "roms", folder, sanitize(t) + ".png"),
+                          aw, ah, boxart_for(sanitize(t)[:4].upper(), aw, ah))
+                n_art += 1
+
     emit(root, os.path.join("mainmenu", "config.ini"),
          b"[menu]\n"
          b"default_directory=/roms\n"
          b"pal60_enabled=false\n")
+
+    # Two extra box-shape sections, so the Settings row has somewhere to go.
+    #
+    # These are NOT measurements and are not labelled as a region. Real PAL and Japanese box
+    # dimensions are not ours to invent -- see library/boxart.h -- and a fixture that shipped
+    # invented ones would put five fabricated numbers where a reader would take them for facts.
+    # What the fixture needs is two tables that are visibly different from the built-in one and
+    # from each other, which is what "tall" and "squat" are.
+    emit(root, os.path.join("mainmenu", "boxart.ini"),
+         b"; Fixture data. Shapes chosen to be obviously different, not to be correct.\n"
+         b"[tall]\n"
+         b"n64 = 100x160\n"
+         b"nes = 100x160\n"
+         b"snes = 100x160\n"
+         b"sms = 100x160\n"
+         b"gb = 100x120\n"
+         b"gbc = 100x120\n"
+         b"\n"
+         b"[squat]\n"
+         b"n64 = 140x100\n"
+         b"nes = 140x100\n"
+         b"snes = 140x100\n"
+         b"; Out of range on purpose: 109 x 12 is below TILE_H_MIN, so this key is\n"
+         b"; rejected with a log line and SMS keeps its built-in shape.\n"
+         b"sms = 900x100\n"
+         b"gb = 140x100\n"
+         b"gbc = 140x100\n")
     emit(root, os.path.join("saves", ".gitkeep"), b"")
 
     # Emulator cores, as stubs. Not runnable -- under ares the flashcart is the dummy vtable whose

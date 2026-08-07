@@ -14,13 +14,19 @@
  * whenever a tile is added and the atlas is only ever appended to; keeping them together would
  * mean rewriting a header in the middle of a 16 MB file.
  *
- * **Slot size is 32,768 bytes, and that number is chosen, not rounded.** The test card's FAT32
+ * **Slot size is 49,152 bytes, and that number is chosen, not rounded.** The test card's FAT32
  * volume has a 16,384-byte allocation unit, and libdragon's FatFs clips every `disk_read` at a
  * cluster boundary (`ff.c:3978`). A slot that is an exact multiple of the cluster therefore never
  * straddles one, so a tile is one seek and one contiguous run instead of two reads with a FAT
- * walk between them. The payload is 140 × 98 × 2 = 27,440 bytes, so 16 % is wasted -- 5.3 MB
- * across 500 titles, on a card with 29 GB free. The header occupies slot 0's space for the same
- * alignment reason.
+ * walk between them. Three clusters rather than two because a tile is a box shape now and the
+ * tallest is 109 × 176 = 38,368 bytes; the biggest actually in use, an N64 cover at 109 × 155, is
+ * 33,790. So 31 % of a slot is padding -- 24.6 MB across 500 titles, on a card with 29 GB free --
+ * where it used to be 16 %. The header occupies slot 0's space for the same alignment reason.
+ *
+ * **A slot does not imply a tile size.** Every tile is TILE_W wide, because that is the grid
+ * column, but the height is the system's box aspect and a Game Boy cover is square. The index
+ * carries each tile's own dimensions and a fetch into a differently-shaped surface is refused as
+ * a miss rather than read at the wrong stride.
  *
  * **RGBA16, not CI8.** DESIGN.md picks CI8, on a scroll-bandwidth argument that is real. It is
  * also worth about 3.6 ms per tile, and it costs a median-cut quantizer, a 32 KB inverse LUT and
@@ -45,8 +51,17 @@
 #include <stdint.h>
 #include <surface.h>
 
-/** @brief 'M64T' */
-#define THUMBSTORE_MAGIC 0x4D363454
+/** @brief 'M64U'.
+ *
+ * Was 'M64T' (0x4D363454) until tiles became box shapes. Everything about the atlas changed: the
+ * slot grew from 32,768 to 49,152 bytes, the index record from 16 to 20, and every tile already
+ * in it is 140 x 98 landscape against covers that are now portrait or square.
+ *
+ * Its own magic rather than MENU_CACHE_FORMAT_VER, for the reason cache.h now spells out: the
+ * shared version would take playstate.dat with it, and every favourite and play count on the card
+ * with it. The atlas can be rebuilt from the covers; a play history cannot be rebuilt from
+ * anything. */
+#define THUMBSTORE_MAGIC 0x4D363455
 
 /** @brief Open the atlas and its index. Safe to call on read-only storage. */
 void thumbstore_open (void);
@@ -61,7 +76,7 @@ bool thumbstore_available (void);
  * @brief Is there a tile for @p src_path, without reading it?
  *
  * An index lookup and nothing else -- the index is resident, so this costs a hash and a scan of a
- * few hundred rows. It exists so a caller can find out before committing to the 27,440-byte
+ * few hundred rows. It exists so a caller can find out before committing to the ~34,000-byte
  * surface a fetch needs: thumbcache.c used to allocate one, attempt the fetch, and free it again
  * on every miss, which on a cold card is an allocate-and-free of a whole tile per candidate per
  * pass. See AUDIT.md 1ae.
@@ -71,7 +86,8 @@ bool thumbstore_has (const char *src_path, int64_t src_size);
 /**
  * @brief Read the tile for @p src_path into @p dst, if one is cached and still matches.
  *
- * @p dst must already be a TILE_W x TILE_H FMT_RGBA16 surface.
+ * @p dst must already be an FMT_RGBA16 surface of the shape the caller wants. A cached tile of a
+ * different shape is reported as a miss -- see the note on shapes above.
  * @p dominant receives the cached wash colour so it does not have to be recomputed.
  *
  * @return true on a hit. A miss is not an error.

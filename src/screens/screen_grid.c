@@ -26,6 +26,7 @@
 #include "menu/image_decoder.h"
 #include "menu/profile.h"
 #include "menu/sound.h"
+#include "library/boxart.h"
 #include "library/playstate.h"
 #include "screens.h"
 #include "screens/boot_plate.h"
@@ -65,12 +66,63 @@ static int rows_total (void) {
     return (view_count + GRID_COLS - 1) / GRID_COLS;
 }
 
+/**
+ * @brief How tall a row of this tab is, and why it is a tab-wide number.
+ *
+ * A cell is as tall as the tallest box in the tab, and art shorter than that is centred in it
+ * rather than stretched or cropped -- so the Game Boy tab is a tight grid of squares, the N64 tab
+ * a tight grid of portrait boxes, and Recent, which mixes them, keeps the portrait row height and
+ * shows a square cover with a little plate above and below.
+ *
+ * Per tab rather than per row, which would be a masonry layout: row heights that change as you
+ * scroll make the scroll position stop meaning anything, and every tile below a short row would
+ * shift when a favourite was added. Per tab costs one pass over the view when the tab changes.
+ */
+static int cell_h = TILE_H_MAX;
+
+static int row_pitch (void) {
+    return cell_h + TILE_GAP;
+}
+
+/** @brief Top of row @p r in content space, before scroll. Includes the overhang pad. */
+static int row_y (int r) {
+    return GRID_Y + GRID_PAD_TOP + r * row_pitch();
+}
+
 static float scroll_max (void) {
     /* The pads are part of the content, not of the window: the last row has to be able to scroll
      * GRID_PAD_BOT further than its cell needs, or its shadow lands under the scissor. */
-    int content = rows_total() * ROW_PITCH - TILE_GAP + GRID_PAD_TOP + GRID_PAD_BOT;
+    int content = rows_total() * row_pitch() - TILE_GAP + GRID_PAD_TOP + GRID_PAD_BOT;
     float m = (float)(content - GRID_H);
     return m > 0.0f ? m : 0.0f;
+}
+
+/**
+ * @brief Recompute #cell_h from what the tab actually holds.
+ *
+ * An unmeasured record contributes BOXART_FALLBACK_KIND, which is landscape and therefore the
+ * shortest of the three. That has a consequence worth stating: the FIRST visit to a tab on a cold
+ * card is pitched from the fallback, so a tab whose covers all turn out portrait opens with short
+ * rows and re-pitches on the next visit. The tiles are not cropped while that is true -- the draw
+ * clamps by scaling, not by cutting -- they are just small for one visit.
+ *
+ * The alternative was to take the tallest shape whenever anything is unknown, which never
+ * under-pitches and always over-pitches: a tab of genuinely artless games would be rows of tall
+ * cells holding short plates, permanently, to avoid a transient. Guessing the fallback and being
+ * briefly wrong is the cheaper mistake.
+ */
+static void measure_cells (app_t *app) {
+    int tall = 0;
+    for (int i = 0; i < view_count; i++) {
+        int h = thumbcache_record_shape(&app->lib->records[view[i]]).h;
+        if (h > tall) {
+            tall = h;
+        }
+    }
+    /* An empty tab takes the tallest shape there is. It draws nothing, but scroll_max() and the
+     * position bar are computed from the pitch either way, and a zero pitch divides by zero in
+     * the prefetch loop. */
+    cell_h = (tall > 0) ? tall : boxart_tallest();
 }
 
 static void rebuild_view (app_t *app) {
@@ -87,14 +139,15 @@ static void rebuild_view (app_t *app) {
     if (cursor >= view_count) {
         cursor = view_count > 0 ? view_count - 1 : 0;
     }
+    measure_cells(app);
 }
 
 /** @brief Centre the selected row, clamped, snapped to whole pixels. */
 static void retarget_scroll (void) {
     int row = cursor / GRID_COLS;
-    /* GRID_PAD_TOP appears here because ROW_Y() carries it: the scroll that puts row r's cell at
+    /* GRID_PAD_TOP appears here because row_y() carries it: the scroll that puts row r's cell at
      * a given screen y is larger by the pad than the cell arithmetic alone would say. */
-    float want = (float)(GRID_PAD_TOP + row * ROW_PITCH) - (float)(GRID_H - TILE_H) * 0.5f;
+    float want = (float)(GRID_PAD_TOP + row * row_pitch()) - (float)(GRID_H - cell_h) * 0.5f;
     scroll_target = roundf(clampf(want, 0.0f, scroll_max()));
 }
 
@@ -150,9 +203,13 @@ static void draw_tile (app_t *app, const lib_record_t *rec, uint16_t rom_id,
         } else {
             rdpq_set_mode_copy(false);
         }
+        /* Scaled against the surface's own size, not against a TILE_W x TILE_H constant. Tiles
+         * are per-system shapes now -- a Game Boy cover is 109 x 109 where an N64 one is
+         * 109 x 155 -- and dividing by the wrong constant does not fail, it silently draws the
+         * square art at 1.4x its height. */
         rdpq_tex_blit(art, ax, ay, &(rdpq_blitparms_t){
-            .scale_x = (float)aw / (float)TILE_W,
-            .scale_y = (float)ah / (float)TILE_H,
+            .scale_x = (float)aw / (float)art->width,
+            .scale_y = (float)ah / (float)art->height,
         });
     } else if (rec->art_state == ART_NONE) {
         /* No art: bg_alt fill, 2 px inner border, and the title. Nothing else.
@@ -193,7 +250,7 @@ static void draw_tile (app_t *app, const lib_record_t *rec, uint16_t rom_id,
     }
 }
 
-static void draw_badges (app_t *app, const lib_record_t *rec, int x, int y, int w) {
+static void draw_badges (app_t *app, const lib_record_t *rec, int x, int y, int w, int h) {
     const theme_t *th = app->theme;
 
     /* Two marks, two corners, so there is no precedence to resolve. Save is a game state and
@@ -214,7 +271,9 @@ static void draw_badges (app_t *app, const lib_record_t *rec, int x, int y, int 
          * directly on the art with no slot behind it -- and box art is as often pale as dark. A
          * white padlock on a bright card was legible only if you knew it was there. */
         int lx = x + BADGE_INSET;
-        int ly = y + TILE_H - BADGE_INSET - BADGE_SLOT;
+        /* Off the tile's own height, not off a constant. The padlock sat at a fixed 98 - 24 from
+         * the top, which on a 155 px portrait tile is the middle of the cover. */
+        int ly = y + h - BADGE_INSET - BADGE_SLOT;
         ui_padlock(lx + 1, ly + 1, BADGE_SLOT - 4, BADGE_SLOT, RGBA5551(0, 0, 0));
         ui_padlock(lx, ly, BADGE_SLOT - 4, BADGE_SLOT, th->text);
     }
@@ -796,8 +855,8 @@ static void grid_render (app_t *app, surface_t *fb) {
      * be evicted. */
     {
         int sy0 = (int)roundf(scroll_y);
-        int lo = sy0 / ROW_PITCH - THUMB_PREFETCH_ROWS;
-        int hi = (sy0 + GRID_H) / ROW_PITCH + THUMB_PREFETCH_ROWS;
+        int lo = sy0 / row_pitch() - THUMB_PREFETCH_ROWS;
+        int hi = (sy0 + GRID_H) / row_pitch() + THUMB_PREFETCH_ROWS;
         for (int row = lo; row <= hi; row++) {
             for (int col = 0; col < GRID_COLS; col++) {
                 int idx = row * GRID_COLS + col;
@@ -835,8 +894,8 @@ static void grid_render (app_t *app, surface_t *fb) {
      * horizontally by 6 px and must not be cut. */
     rdpq_set_scissor(0, GRID_Y, SCREEN_W, GRID_Y + GRID_H);
 
-    int first_row = sy / ROW_PITCH;
-    int last_row = (sy + GRID_H) / ROW_PITCH;
+    int first_row = sy / row_pitch();
+    int last_row = (sy + GRID_H) / row_pitch();
 
     for (int pass = 0; pass < 2; pass++) {
         for (int row = first_row; row <= last_row; row++) {
@@ -854,20 +913,34 @@ static void grid_render (app_t *app, surface_t *fb) {
 
                 const lib_record_t *rec = &app->lib->records[view[idx]];
                 int x = COL_X(col);
-                int y = ROW_Y(row) - sy;
+                int cy = row_y(row) - sy;
+
+                /* The cell is the tab's row height; the art is this system's shape, centred in
+                 * it. On a single-system tab the two are the same and the centring is a no-op --
+                 * which is the point of taking the tallest shape rather than a fixed one. */
+                int ah = thumbcache_record_shape(rec).h;
+                /* Clamped, because #cell_h is only recomputed when the view is rebuilt and a
+                 * cover probed since then can be taller than the row it is in. Scaling to fit
+                 * rather than cropping: the whole point of the shape is that nothing is cut, and
+                 * a tile that is briefly a little small is a far smaller lie than one that has
+                 * had its top and bottom taken off. Transient -- the next visit to the tab has
+                 * the right pitch. */
+                if (ah > cell_h) {
+                    ah = cell_h;
+                }
+                int y = cy + (cell_h - ah) / 2;
 
                 if (selected) {
-                    int gx = x + SEL_DX, gy = y + SEL_DY;
                     float t = ease_bezier(tween_t01(&grow), EASE_TILE_GROW);
-                    int w = (int)lerpf(TILE_W, SEL_W, t);
-                    int h = (int)lerpf(TILE_H, SEL_H, t);
-                    gx = x + (TILE_W - w) / 2;
-                    gy = y + (TILE_H - h) / 2;
+                    int w = (int)lerpf(TILE_W, TILE_W + SEL_GROW_W, t);
+                    int h = (int)lerpf(ah, ah + SEL_GROW_H, t);
+                    int gx = x + (TILE_W - w) / 2;
+                    int gy = y + (ah - h) / 2;
 
                     ui_wash(gx + SEL_SHADOW_DX, gy + SEL_SHADOW_DY, w, h,
                          th->sel_shadow, th->sel_shadow_a);
                     draw_tile(app, rec, view[idx], gx, gy, w, h, true);
-                    draw_badges(app, rec, gx, gy, w);
+                    draw_badges(app, rec, gx, gy, w, h);
 
                     /* Hue crossfade rather than a brightness blink, so the tile stays equally
                      * visible at every point in the cycle. */
@@ -885,8 +958,8 @@ static void grid_render (app_t *app, surface_t *fb) {
                     rdpq_fill_rectangle(gx - SEL_OUTLINE, gy, gx, gy + h);
                     rdpq_fill_rectangle(gx + w, gy, gx + w + SEL_OUTLINE, gy + h);
                 } else {
-                    draw_tile(app, rec, view[idx], x, y, TILE_W, TILE_H, false);
-                    draw_badges(app, rec, x, y, TILE_W);
+                    draw_tile(app, rec, view[idx], x, y, TILE_W, ah, false);
+                    draw_badges(app, rec, x, y, TILE_W, ah);
                 }
             }
         }

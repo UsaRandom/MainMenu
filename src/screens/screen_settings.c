@@ -19,7 +19,9 @@
 #include "app.h"
 #include "menu/enginetest.h"
 #include "menu/fonts.h"
+#include "library/boxart.h"
 #include "library/cache.h"
+#include "library/thumbcache.h"
 #include "menu/music.h"
 #include "menu/parental.h"
 #include "menu/settings.h"
@@ -89,6 +91,7 @@ _Static_assert(INFO_H >= INFO_GAP + INFO_LINES * INFO_LINE_H,
 typedef enum {
     ROW_PROFILES = 0,
     ROW_THEME,
+    ROW_BOXART,
     ROW_SFX,
     ROW_MUSIC,
     ROW_TRACK,
@@ -254,6 +257,27 @@ static void settings_update (app_t *app, float dt) {
                  * is not a repeat-until-it-lands control the way the volume meters are. */
                 profile_set_theme(profile_active(), app->theme->name);
                 profile_save();
+            }
+            break;
+        case ROW_BOXART:
+            /* Nothing to step through unless the card defines sections beyond the built-in one,
+             * and a row that plays a confirmation sound and changes nothing is worse than a row
+             * that does nothing. It still draws, because it is how anybody finds out that
+             * boxart.ini exists -- see library/boxart.h. */
+            if ((delta != 0 || toggle) && boxart_region_count() > 1) {
+                sound_play_effect(SFX_SETTING);
+                int n = boxart_region_count();
+                int i = boxart_region_current() + (delta != 0 ? delta : 1);
+                boxart_set_region(((i % n) + n) % n);
+
+                free(app->settings.boxart_region);
+                app->settings.boxart_region = strdup(boxart_region_name(boxart_region_current()));
+                settings_save(&app->settings);
+
+                /* Every tile in the pool is the old shape. Dropping them here rather than
+                 * letting the grid discover it means the grid never draws a frame of art at a
+                 * height its cell no longer is. */
+                thumbcache_reshape(app->thumbs, app->lib);
             }
             break;
         case ROW_SFX: {
@@ -424,6 +448,7 @@ static void settings_render (app_t *app, surface_t *fb) {
 
     draw_row(app, ROW_PROFILES, "Players", profile_name(profile_active()));
     draw_row(app, ROW_THEME, "Theme", th->name);
+    draw_row(app, ROW_BOXART, "Box art", boxart_region_name(boxart_region_current()));
     draw_volume_row(app, ROW_SFX, "Sound effects", app->settings.sfx_volume);
     draw_volume_row(app, ROW_MUSIC, "Music", app->settings.music_volume);
     draw_row(app, ROW_TRACK, "Track", music_track_name(app->settings.music_track));

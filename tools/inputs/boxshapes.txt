@@ -1,0 +1,61 @@
+# Box shapes: five portrait columns, and a square tab that is square.
+#
+# The grid drew every game into a 140 x 98 landscape tile, which is the shape of the reference
+# mockup's card and of no box that has ever existed. A 0.702 cover cover-cropped into it lost
+# 51 % of its own height. Tiles are the system's box aspect now -- see library/boxart.h -- so
+# these frames are the two shapes and the one place they meet.
+#
+# What to look at, in order: an N64 tab of 109 x 155 portrait cells, a GB tab of 109 x 109 square
+# ones with a tighter row pitch, and Recent, which holds both and keeps the portrait row height
+# with the square art centred in it rather than cropped to fit.
+
+wait 300            # boot plate, then let the first rows decode
+fbdump              # 1: opens on RECENT, which the fixture's playstate makes non-empty
+
+press r x2          # -> N64
+wait 200            # portrait art is a bigger decode than the old tile; give it a screenful
+fbdump              # 2: five columns of 109 x 155, two rows and a sliver of the third
+
+press down x2       # into the second row, so the scroll moves by a portrait pitch
+wait 120
+fbdump              # 3: scrolled by 167 px, not the old 110
+
+press r x3          # -> GB
+wait 200
+fbdump              # 4: squares. Same columns, shorter rows, more of them on screen
+
+press start         # Settings
+wait 40
+press down x2       # Players, Theme, Box art
+wait 20
+fbdump              # 5: the Box art row, reading "Automatic" -- shapes come from the covers
+
+# The row cycles Automatic, NTSC, then whatever sections the card's boxart.ini defines. The
+# fixture defines two, and they are not regions and not measurements -- see mkfixture.py -- they
+# are two tables obviously unlike the built-in one, which is what a switch needs in order to be
+# provably doing something.
+press a x2          # Automatic -> NTSC -> tall
+wait 20
+fbdump              # 6: the row reads "tall"
+
+press b             # back to the grid, which opens on the tab it left
+wait 250            # every resident tile was the old shape and was dropped; they come back
+fbdump              # 7: 109 x 174 cells, forced -- the covers no longer get a say
+
+press start
+press down x2
+press a             # -> squat
+wait 20
+press b
+wait 250
+fbdump              # 8: 109 x 78 landscape cells, four rows of them
+
+press start
+press down x2
+press a             # -> wraps back to Automatic
+wait 20
+press b
+wait 250
+fbdump              # 9: square again, because these covers are square and now they decide
+
+exit

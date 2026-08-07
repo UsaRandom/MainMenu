@@ -10,7 +10,7 @@
  * therefore never executed anywhere.** The first machine to run them was going to be the console.
  *
  * So run them here. thumbstore.c needs `surface_t`, three timing macros and `debugf` from
- * libdragon, all shimmed, plus TILE_W/TILE_H from the real ui/theme.h. The file itself is
+ * libdragon, all shimmed, plus TILE_W and TILE_H_MAX from the real ui/theme.h. The file itself is
  * compiled unmodified.
  *
  * What this covers: create, append, close, reopen, fetch, the size-changed miss, padded strides,
@@ -34,8 +34,11 @@
 #include "library/thumbstore.h"
 #include "ui/theme.h"
 
-#define TILE_BYTES  (TILE_W * TILE_H * 2)
-#define SLOT_BYTES  32768
+/* The shape most of this suite uses: the NTSC N64 box at 109 x 155. A tile is a per-system box
+ * shape now, so there is no one TILE_H to test against -- the square case gets its own test. */
+#define TILE_H      155
+#define TILE_SQ     109
+#define SLOT_BYTES  49152
 
 /* ------------------------------------------------------------------ shims */
 
@@ -81,10 +84,10 @@ static const char *testdir (void) {
  * offset, sheared by a stride bug, or truncated by a short read cannot accidentally compare
  * equal. A surface of one flat colour would pass all three.
  */
-static surface_t make_tile (uint16_t seed, uint16_t stride) {
-    surface_t s = { .width = TILE_W, .height = TILE_H, .stride = stride };
-    s.buffer = calloc(1, (size_t)stride * TILE_H);
-    for (int y = 0; y < TILE_H; y++) {
+static surface_t make_tile_h (uint16_t seed, uint16_t stride, int height) {
+    surface_t s = { .width = TILE_W, .height = height, .stride = stride };
+    s.buffer = calloc(1, (size_t)stride * height);
+    for (int y = 0; y < height; y++) {
         uint16_t *row = (uint16_t *)((uint8_t *)s.buffer + (size_t)y * stride);
         for (int x = 0; x < TILE_W; x++) {
             row[x] = (uint16_t)(seed * 7919u + (uint32_t)y * TILE_W + x);
@@ -93,9 +96,16 @@ static surface_t make_tile (uint16_t seed, uint16_t stride) {
     return s;
 }
 
+static surface_t make_tile (uint16_t seed, uint16_t stride) {
+    return make_tile_h(seed, stride, TILE_H);
+}
+
 /** @brief Compare only the used part of each row, so padding bytes are not part of the claim. */
 static bool tiles_equal (const surface_t *a, const surface_t *b) {
-    for (int y = 0; y < TILE_H; y++) {
+    if (a->width != b->width || a->height != b->height) {
+        return false;
+    }
+    for (int y = 0; y < a->height; y++) {
         const uint8_t *pa = (const uint8_t *)a->buffer + (size_t)y * a->stride;
         const uint8_t *pb = (const uint8_t *)b->buffer + (size_t)y * b->stride;
         if (memcmp(pa, pb, TILE_W * 2) != 0) {
@@ -208,6 +218,34 @@ int main (void) {
     check(thumbstore_fetch("sd:/art/wide.png", 4444, &tight_got, &dom) &&
           tiles_equal(&wide, &tight_got), "a padded write is readable into a tight surface");
     check(file_size("thumbs.pak") == 5 * SLOT_BYTES, "a padded tile still occupies one slot");
+
+    /* -------------------------------------------------- two shapes in one atlas */
+    printf("\nbox shapes\n");
+    /* A slot no longer implies a tile size: a Game Boy cover is 109 x 109 in the same 48 KB slot
+     * an N64 cover fills 109 x 155 of. The index carries each tile's own dimensions, and this is
+     * what says so -- without it the square tile reads back as the top two thirds of itself
+     * followed by 46 rows of whatever the slot's padding held, which is a picture rather than an
+     * error and would have shipped. */
+    surface_t sq = make_tile_h(6, TILE_W * 2, TILE_SQ);
+    thumbstore_put("sd:/art/square.png", 6666, &sq, 0x4444);
+    surface_t sq_got = make_tile_h(96, TILE_W * 2, TILE_SQ);
+    check(thumbstore_fetch("sd:/art/square.png", 6666, &sq_got, &dom) &&
+          tiles_equal(&sq, &sq_got) && dom == 0x4444,
+          "a square tile round-trips beside portrait ones");
+    check(file_size("thumbs.pak") == 6 * SLOT_BYTES,
+          "a square tile occupies the same one slot as a tall one");
+
+    /* The shape is part of the key, not a hint. Switching the box art region reshapes every tile
+     * while the atlas still holds the old ones, and a read at the wrong height does not fail --
+     * so a mismatch has to be turned into a miss here, where the dimensions are known. */
+    surface_t tall_got = make_tile(95, TILE_W * 2);
+    check(!thumbstore_fetch("sd:/art/square.png", 6666, &tall_got, &dom),
+          "fetching a square tile into a portrait surface is a miss, not a sheared read");
+    check(!thumbstore_fetch("sd:/art/alpha.png", 12345, &sq_got, &dom),
+          "and the other way round");
+    /* Still there for whoever asks at the right shape, because a region can be switched back. */
+    check(thumbstore_fetch("sd:/art/square.png", 6666, &sq_got, &dom) && tiles_equal(&sq, &sq_got),
+          "a shape miss does not evict the tile");
 
     thumbstore_close();
 

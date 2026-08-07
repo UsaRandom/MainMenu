@@ -63,6 +63,12 @@ typedef struct {
     /** @brief Enable rumble feedback within the menu */
     bool rumble_enabled;
 
+    /** @brief Where tile shapes come from: "Automatic" reads each cover's own aspect, "NTSC" is
+     *         the built-in table, anything else names a section of menu/boxart.ini. A name rather
+     *         than an index, because the sections a card defines can change between boots and an
+     *         index would then silently select a different one. */
+    char *boxart_region;
+
     /* The parental code, its failure count and its schedule used to be four fields here. They
      * moved to /mainmenu/parental.ini so that forgetting the code is recovered by deleting one
      * file, without losing everything else a parent has set. See menu/parental.h. */

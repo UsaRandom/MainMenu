@@ -55,6 +55,20 @@ typedef void img_callback_t (img_err_t err, surface_t *decoded_image, void *call
 img_err_t image_decoder_start (char *path, int max_width, int max_height, img_callback_t *callback, void *callback_data);
 
 /**
+ * @brief Read @p path's dimensions without decoding it.
+ *
+ * An fopen, a few hundred bytes and an fclose -- no decoder state, no allocation, and it does not
+ * claim the single global decoder, so it is safe to call while a decode is in flight. PNG and
+ * JPEG, sniffed from the magic rather than the extension.
+ *
+ * Exists because a tile's shape is taken from its cover's aspect (see library/boxart.h) and the
+ * shape is the decode's destination size, so it has to be known first.
+ *
+ * @return IMG_OK with @p w and @p h set, or an error with both zeroed.
+ */
+img_err_t image_probe_size (const char *path, int *w, int *h);
+
+/**
  * @brief Decode a PNG straight into a @p dst_w x @p dst_h surface, scaled and cover-cropped.
  *
  * Accepts any source size and aspect, which the real art corpus requires: it ranges from

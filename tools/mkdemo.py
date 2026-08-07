@@ -55,15 +55,25 @@ except ImportError:
 
 FONT = os.path.join(REPO, "assets", "fonts", "Firple-Bold.ttf")
 
-# The cache tile, and the only size the menu ever holds art at: TILE_W x TILE_H from
-# src/ui/theme.h. screen_detail.c blits that same cached tile at scale 2 to fill its 280x196
-# panel, so there is nothing above this for a larger source to serve.
+# The cache tile, and the only size the menu ever holds art at: TILE_W from src/ui/theme.h, and
+# the height of the system's box from src/library/boxart.h. screen_detail.c blits that same
+# cached tile at scale 2, so there is nothing above this for a larger source to serve.
 #
-# Emitting at the target rather than at 280x196 means the menu decodes a quarter of the pixels
-# and then does no downscale at all, so what reaches the screen is what Lanczos produced here
-# rather than what the runtime box filter made of it afterwards. A card drawn to be looked at
-# should not go through a resampler twice.
-ART_W, ART_H = 140, 98
+# Emitting at the target means the menu decodes exactly these pixels and does no downscale at
+# all, so what reaches the screen is what Lanczos produced here rather than what the runtime box
+# filter made of it afterwards. A card drawn to be looked at should not go through a resampler
+# twice.
+#
+# It was a single 140 x 98 landscape pair, which was the shape of the old tile and of no box that
+# has ever existed. The scenes are all drawn against img.size, so nothing below had to change to
+# turn them portrait.
+ART_W = 109
+ART_H_CART = 155                    # NTSC cartridge box, 127 x 181 mm
+ART_H_SQUARE = 109                  # Game Boy and Game Boy Color, 126 x 126 mm
+
+def art_size(system):
+    """The tile shape for a folder name, matching boxart.c's built-in table."""
+    return (ART_W, ART_H_SQUARE if system in ("gb", "gbc") else ART_H_CART)
 
 # Drawn at 6x and reduced once with Lanczos. Circles and the diagonals in the perspective
 # scenes alias badly at 140 px, and the menu's own quantiser then spends palette entries on
@@ -569,8 +579,9 @@ def wrap(text, size, max_w):
     return [text]
 
 
-def draw_card(title, scene, palette, studio, system):
-    W, H = ART_W * SS, ART_H * SS
+def draw_card(title, scene, palette, studio, system, size=None):
+    aw, ah = size if size else (ART_W, ART_H_CART)
+    W, H = aw * SS, ah * SS
     pal = PALETTES[palette % len(PALETTES)]
     rng = Rng(seed_of(title))
 
@@ -634,7 +645,7 @@ def draw_card(title, scene, palette, studio, system):
                             radius=int(H * 0.035), fill=(0, 0, 0), outline=pal[2], width=SS)
         d.text((bx, by), system, font=pf, fill=pal[2])
 
-    return img.resize((ART_W, ART_H), Image.LANCZOS)
+    return img.resize((aw, ah), Image.LANCZOS)
 
 
 # --------------------------------------------------------------------------- cheats
@@ -716,7 +727,8 @@ def main():
             if folder == "snes" and (i % 2) == 1:
                 stub = bytes((j * 7 + 0x40) & 0xFF for j in range(512)) + stub
             emit(root, os.path.join("roms", folder, title + ext), stub)
-            draw_card(title, scene, pal, STUDIOS[studio % len(STUDIOS)], label).save(
+            draw_card(title, scene, pal, STUDIOS[studio % len(STUDIOS)], label,
+                      art_size(folder)).save(
                 os.path.join(root, "roms", folder, "%s.png" % title))
             n_emu += 1
 

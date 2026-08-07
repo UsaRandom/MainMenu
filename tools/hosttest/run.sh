@@ -42,6 +42,19 @@ $CC $CFLAGS tools/hosttest/test_thumbstore.c src/library/cache.c src/library/thu
 TESTDIR="$OUT/thumbdir" "$OUT/test_thumbstore" 2>/dev/null
 
 echo
+echo "== box art: reading a size, and snapping it to a shape"
+rm -rf "$OUT/boxartdir"
+mkdir -p "$OUT/boxartdir"
+# boxart.c pulls in the ini parser and paths because a card may override the fallback table; the
+# probe pulls in nothing, which is the whole reason it is its own file. library.c is NOT linked --
+# library_tab_label() is the only symbol boxart.c wants from it and the stub below is a tenth of
+# the dependency the real one drags in.
+$CC $CFLAGS tools/hosttest/test_boxart.c src/library/boxart.c src/menu/image_probe.c \
+    src/menu/ini_parser.c src/menu/paths.c tools/hosttest/shim/tab_label.c \
+    tools/hosttest/shim/fs_probe.c -o "$OUT/test_boxart"
+TESTDIR="$OUT/boxartdir" "$OUT/test_boxart" 2>/dev/null
+
+echo
 echo "== fonts: every literal drawn in a restricted charset"
 # Three of the five faces carry an 84-glyph charset rather than the body font's 7,931, because a
 # full-charset bake at 40 px is about 2.7 MB. A character outside it draws as nothing, silently,

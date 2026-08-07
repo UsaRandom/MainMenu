@@ -23,6 +23,7 @@
 #include "menu/cheatcheck.h"
 #include "cheats/cheatstate.h"
 #include "cheats/usercheats.h"
+#include "library/boxart.h"
 #include "library/playstate.h"
 #include "menu/fonts.h"
 #include "menu/parental.h"
@@ -39,12 +40,18 @@
 #define SHEET_H         (SCREEN_H - SHEET_TOP)
 
 #define ART_X           (SHEET_X + 24)
-#define ART_W           280                      /**< 2x the cached tile, exact integer scale */
-#define ART_H           196
+/* 2x the cached tile, an exact integer scale. The width is fixed because every tile is one
+ * column wide; the height is the record's own box shape doubled, so the info column beside it
+ * never moves between a portrait N64 cover and a square Game Boy one. */
+#define ART_W           (TILE_W * 2)
+#define ART_H_MAX       (TILE_H_MAX * 2)
 #define ART_Y_OFF       28                       /**< from the sheet's own top edge */
 
 #define INFO_X          (ART_X + ART_W + 24)
 #define INFO_W          (SHEET_X + SHEET_W - 24 - INFO_X)
+
+_Static_assert(SHEET_TOP + ART_Y_OFF + ART_H_MAX <= SCREEN_H,
+               "the tallest box art runs off the bottom of the detail sheet");
 
 #define ROW_H           26
 #define GLYPH_W         12       /**< Firple-Bold at size 20, near enough monospace */
@@ -285,14 +292,17 @@ static void detail_render (app_t *app, surface_t *fb) {
     /* Art, 2x the cached thumbnail. An exact integer scale, so nearest-neighbour upscaling
      * doubles pixels cleanly instead of shimmering along a fractional edge. */
     int art_y = sheet_y + ART_Y_OFF;
+    /* Twice the tile the cache actually holds, so the sheet cannot disagree with the grid about
+     * what shape this cover is. */
+    int art_h = 2 * (rec != NULL ? thumbcache_record_shape(rec).h : boxart_shape(SYS_N64).h);
     surface_t *art = (rec != NULL)
                    ? thumbcache_get(app->thumbs, app->lib, (uint16_t)app->launch.rom_id) : NULL;
     if (art != NULL) {
         rdpq_set_mode_copy(false);
         rdpq_tex_blit(art, ART_X, art_y, &(rdpq_blitparms_t){ .scale_x = 2.0f, .scale_y = 2.0f });
     } else {
-        ui_fill(ART_X, art_y, ART_W, ART_H, th->bg_alt);
-        ui_border(ART_X, art_y, ART_W, ART_H, 2, th->panel_alt);
+        ui_fill(ART_X, art_y, ART_W, art_h, th->bg_alt);
+        ui_border(ART_X, art_y, ART_W, art_h, 2, th->panel_alt);
     }
 
     int y = art_y;
@@ -358,7 +368,11 @@ static void detail_render (app_t *app, surface_t *fb) {
         /* The engine cannot hook this ROM, so whatever is in the database for it would be ticked
          * and then silently ignored. Saying so where the count would go is the only place a
          * player looks before deciding to bother. */
-        y = info_row(INFO_X, y, INFO_W, "Cheats", "Not supported for this game");
+        /* "ROM", not "game", and it is two characters shorter for a reason: at 12 px a glyph the
+         * old wording measured 324 px against a 318 px column and lost its last letter, so the
+         * sheet read "Not supported for this gam". It is also the more accurate word -- the
+         * engine hooks a ROM image, and the same game in another region may well be fine. */
+        y = info_row(INFO_X, y, INFO_W, "Cheats", "Not supported for this ROM");
     } else if (app->cheats.group_count == 0) {
         y = info_row(INFO_X, y, INFO_W, "Cheats", "None available");
     } else {

@@ -68,6 +68,23 @@ def record(key: int, last_played: int, play_count: int, flags: int) -> bytes:
     return struct.pack(">QIIHHI", key, last_played, play_count, flags, 0, 0)
 
 
+def build(entries) -> bytes:
+    """The whole file: header, records, CRC. One definition of the layout.
+
+    Split out of main() so tools/mksample.py can write a playstate for a hundred titles without
+    passing a hundred filenames on a command line -- and, more to the point, without keeping a
+    second copy of the header format. The comment on cache_format_ver() above is about exactly
+    this failure mode: a duplicated constant that stops matching produces no error, just a file
+    the menu quietly rejects.
+
+    @p entries is an iterable of [key, last_played, play_count, flags].
+    """
+    payload = b"".join(record(*e) for e in entries)
+    head = struct.pack(">IHHII", MAGIC, FORMAT_VER, 0, len(payload),
+                       zlib.crc32(payload) & 0xFFFFFFFF)
+    return head + payload
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -111,15 +128,13 @@ def main() -> int:
         print("nothing to write; pass --played or --favorite")
         return 1
 
-    payload = b"".join(record(*e) for e in entries.values())
-    header = struct.pack(">IHHII", MAGIC, FORMAT_VER, 0, len(payload),
-                         zlib.crc32(payload) & 0xFFFFFFFF)
+    blob = build(entries.values())
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "wb") as f:
-        f.write(header + payload)
+        f.write(blob)
 
-    print(f"{args.output}: {len(entries)} records, {len(payload) + len(header)} bytes")
+    print(f"{args.output}: {len(entries)} records, {len(blob)} bytes")
     for name, key in zip(args.played + args.played_code, played):
         print(f"  played    {name}  key={key:#018x}")
     for name, key in zip(args.favorite + args.favorite_code, favorite):

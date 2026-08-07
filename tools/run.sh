@@ -2,6 +2,9 @@
 # Build the fixture ROM and launch it in ares, interactively.
 #
 #     tools/run.sh                              # browse the synthetic library by hand
+#     tools/run.sh --sample                     # a full card of box art at realistic shapes
+#     tools/run.sh --sample true                # ... with every cover the right shape
+#     tools/run.sh --demo                       # the invented library the README is made from
 #     tools/run.sh --script browse-roms         # replay a scripted run and watch it
 #     tools/run.sh --no-build                   # reuse whatever is in output/
 #
@@ -16,12 +19,21 @@ ARES="${ARES:-/Volumes/Storage/tools/ares-v148/ares-v148/ares.app/Contents/MacOS
 SETTINGS="${ARES_SETTINGS:-$HOME/Library/Application Support/ares/settings.bml}"
 BUILD=1
 SCRIPT=
+TREE="FIXTURE=1"
 
-usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --script) SCRIPT=tools/inputs/$2.txt; shift 2 ;;
+        # The mix is optional and must not swallow the next flag: `--sample --no-build` has to
+        # mean the realistic mix, not a mix called "--no-build" and a tree that does not exist.
+        --sample)
+            case "${2:-}" in
+                true|realistic|hostile) TREE="SAMPLE=1 SAMPLE_MIX=$2"; shift 2 ;;
+                *) TREE="SAMPLE=1"; shift ;;
+            esac ;;
+        --demo) TREE="DEMO=1"; shift ;;
         --no-build) BUILD=0; shift ;;
         -h|--help) usage 0 ;;
         *) echo "unknown option $1" >&2; usage 1 ;;
@@ -50,9 +62,11 @@ done
 if [ "$BUILD" = 1 ]; then
     if [ -n "$SCRIPT" ]; then
         [ -f "$SCRIPT" ] || { echo "no such script: $SCRIPT" >&2; exit 1; }
-        make FIXTURE=1 DEV_HARNESS=1 INPUT_SCRIPT="$SCRIPT" sc64 -j8
+        # shellcheck disable=SC2086  # TREE is a deliberate word list of make variables
+        make $TREE DEV_HARNESS=1 INPUT_SCRIPT="$SCRIPT" sc64 -j8
     else
-        make FIXTURE=1 sc64 -j8
+        # shellcheck disable=SC2086
+        make $TREE sc64 -j8
     fi
 fi
 

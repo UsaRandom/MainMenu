@@ -46,7 +46,7 @@ typedef struct __attribute__((packed)) {
     uint8_t  version;
     uint8_t  system;
     uint8_t  save_type;
-    uint8_t  reserved;
+    uint8_t  art_kind;          /**< art_kind_t, or ART_KIND_UNKNOWN; was a reserved byte */
     uint16_t feat;
     uint16_t flags;
     uint16_t dominant;
@@ -274,6 +274,7 @@ bool libindex_load (library_t *lib, const char *storage_prefix, const char *root
         r->feat      = recs[i].feat;
         r->flags     = recs[i].flags;
         r->dominant  = recs[i].dominant;
+        r->art_kind  = recs[i].art_kind;
 
         const char *s;
         if ((s = str_at(strtab, h->strtab_bytes, recs[i].path_off))  != NULL) r->path     = strdup(s);
@@ -369,6 +370,7 @@ bool libindex_save (const library_t *lib, const char *storage_prefix, const char
         recs[i].save_type = r->save_type;
         recs[i].feat      = r->feat;
         recs[i].dominant  = r->dominant;
+        recs[i].art_kind  = r->art_kind;
 
         /* The favourite bit is playstate.dat's to own. Writing it here too would give two files
          * an opinion, and on the boot after the user un-favourites something the loser would win.

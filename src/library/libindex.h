@@ -43,8 +43,14 @@
 
 #include "library.h"
 
-/** @brief 'M64L' */
-/* 'M64M'. Was 'M64L' (0x4D36344C) until art paths started being resolved at scan time rather
+/** @brief 'M64N' */
+/* 'M64N'. Was 'M64M' until a record carried the shape its cover snapped to. That field was a
+ * reserved byte, so an index written by the old build reads back as art_kind 0 -- which is
+ * ART_PORTRAIT, not "unknown". Every square Game Boy cover on the card would be declared portrait
+ * and never re-probed, and nothing would look wrong enough to investigate.
+ *
+ * 'M64M' was itself a bump from 'M64L' (0x4D36344C), when art paths started being resolved at scan
+ * time rather
  * than lazily per tile. An index written by the old build carries no art at all, and nothing in
  * the staleness check would notice -- the directories have not changed, so it would be believed
  * forever and every boot after the first would show a library with no art.
@@ -55,7 +61,7 @@
  * play count. The index can be rebuilt; a scan is what it is for. So only the index is
  * invalidated, and it is invalidated the way cache.c already handles: magic mismatch, delete,
  * rebuild. */
-#define LIBINDEX_MAGIC 0x4D36344D
+#define LIBINDEX_MAGIC 0x4D36344E
 
 /**
  * @brief Fill @p lib from the cache, if the cache is present and still matches the card.

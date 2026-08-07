@@ -12,6 +12,7 @@
 #include "app.h"
 #include "cheats/cheatstate.h"
 #include "cheats/usercheats.h"
+#include "library/boxart.h"
 #include "library/cache.h"
 #include "library/libindex.h"
 #include "library/locks.h"
@@ -195,6 +196,12 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
         app_fault(app, flashcart_convert_error_message(ferr));
         return;
     }
+
+    /* Box shapes before the library, because everything that touches art asks for a shape: the
+     * grid for its row height, the thumbnail cache for the size to decode into, the atlas for
+     * whether a cached tile still fits. Reading one small ini before any of them exist is
+     * cheaper than making all three cope with not knowing yet. */
+    boxart_init(app->storage, app->settings.boxart_region);
 
     app->lib = library_init();
     if (app->lib == NULL) {
