@@ -10,8 +10,8 @@
  * therefore never executed anywhere.** The first machine to run them was going to be the console.
  *
  * So run them here. thumbstore.c needs `surface_t`, three timing macros and `debugf` from
- * libdragon, all shimmed, plus TILE_W and TILE_H_MAX from the real ui/theme.h. The file itself is
- * compiled unmodified.
+ * libdragon, all shimmed, plus the two column widths and TILE_H_MAX from the real ui/theme.h.
+ * The file itself is compiled unmodified.
  *
  * What this covers: create, append, close, reopen, fetch, the size-changed miss, padded strides,
  * multi-slot offset arithmetic, a corrupt header, an index pointing past the end of the pak, and
@@ -34,10 +34,14 @@
 #include "library/thumbstore.h"
 #include "ui/theme.h"
 
-/* The shape most of this suite uses: the NTSC N64 box at 109 x 155. A tile is a per-system box
- * shape now, so there is no one TILE_H to test against -- the square case gets its own test. */
+/* The shape most of this suite uses: the NTSC N64 box at 109 x 155, which lives in the narrow
+ * grid column. A tile is a box shape now and BOTH of its dimensions vary -- square and landscape
+ * art earn the wider 140 px column -- so there is no one tile size to test against. The square
+ * case below is 140 x 140 and is a genuinely different width, not just a different height. */
+#define TILE_W      TILE_W_NARROW
 #define TILE_H      155
-#define TILE_SQ     109
+#define SQ_W        TILE_W_WIDE
+#define SQ_H        140
 #define SLOT_BYTES  49152
 
 /* ------------------------------------------------------------------ shims */
@@ -84,20 +88,20 @@ static const char *testdir (void) {
  * offset, sheared by a stride bug, or truncated by a short read cannot accidentally compare
  * equal. A surface of one flat colour would pass all three.
  */
-static surface_t make_tile_h (uint16_t seed, uint16_t stride, int height) {
-    surface_t s = { .width = TILE_W, .height = height, .stride = stride };
+static surface_t make_tile_wh (uint16_t seed, uint16_t stride, int width, int height) {
+    surface_t s = { .width = width, .height = height, .stride = stride };
     s.buffer = calloc(1, (size_t)stride * height);
     for (int y = 0; y < height; y++) {
         uint16_t *row = (uint16_t *)((uint8_t *)s.buffer + (size_t)y * stride);
-        for (int x = 0; x < TILE_W; x++) {
-            row[x] = (uint16_t)(seed * 7919u + (uint32_t)y * TILE_W + x);
+        for (int x = 0; x < width; x++) {
+            row[x] = (uint16_t)(seed * 7919u + (uint32_t)y * width + x);
         }
     }
     return s;
 }
 
 static surface_t make_tile (uint16_t seed, uint16_t stride) {
-    return make_tile_h(seed, stride, TILE_H);
+    return make_tile_wh(seed, stride, TILE_W, TILE_H);
 }
 
 /** @brief Compare only the used part of each row, so padding bytes are not part of the claim. */
@@ -206,7 +210,7 @@ int main (void) {
 
     /* -------------------------------------------------- padded stride */
     printf("\npadded stride\n");
-    /* surface_alloc() is free to pad, and 140 RGBA16 pixels happen to need none today. "Happens
+    /* surface_alloc() is free to pad, and 109 RGBA16 pixels happen to need none today. "Happens
      * to" is not a contract; a shear here would read as a corrupt decoder, not a stride bug. */
     surface_t wide = make_tile(4, TILE_W * 2 + 32);
     thumbstore_put("sd:/art/wide.png", 4444, &wide, 0x3333);
@@ -221,14 +225,17 @@ int main (void) {
 
     /* -------------------------------------------------- two shapes in one atlas */
     printf("\nbox shapes\n");
-    /* A slot no longer implies a tile size: a Game Boy cover is 109 x 109 in the same 48 KB slot
+    /* A slot no longer implies a tile size: a Game Boy cover is 140 x 140 in the same 48 KB slot
      * an N64 cover fills 109 x 155 of. The index carries each tile's own dimensions, and this is
-     * what says so -- without it the square tile reads back as the top two thirds of itself
-     * followed by 46 rows of whatever the slot's padding held, which is a picture rather than an
-     * error and would have shipped. */
-    surface_t sq = make_tile_h(6, TILE_W * 2, TILE_SQ);
+     * what says so -- without it the square tile reads back sheared, at the wrong stride AND the
+     * wrong row count, which is a picture rather than an error and would have shipped.
+     *
+     * Both dimensions differ here on purpose. When this was written the two shapes shared a width
+     * and only the height was in question, so a fetch that compared heights alone passed; the
+     * wide column made the width vary too and that version would not have noticed. */
+    surface_t sq = make_tile_wh(6, SQ_W * 2, SQ_W, SQ_H);
     thumbstore_put("sd:/art/square.png", 6666, &sq, 0x4444);
-    surface_t sq_got = make_tile_h(96, TILE_W * 2, TILE_SQ);
+    surface_t sq_got = make_tile_wh(96, SQ_W * 2, SQ_W, SQ_H);
     check(thumbstore_fetch("sd:/art/square.png", 6666, &sq_got, &dom) &&
           tiles_equal(&sq, &sq_got) && dom == 0x4444,
           "a square tile round-trips beside portrait ones");
@@ -246,6 +253,17 @@ int main (void) {
     /* Still there for whoever asks at the right shape, because a region can be switched back. */
     check(thumbstore_fetch("sd:/art/square.png", 6666, &sq_got, &dom) && tiles_equal(&sq, &sq_got),
           "a shape miss does not evict the tile");
+
+    /* Same height, different width -- which is the case the three built-in shapes cannot produce
+     * and a boxart.ini can. A 0.78-aspect box is too tall for the wide column, so it lands at
+     * 109 x 140 beside a square cover's 140 x 140.
+     *
+     * Written because mutating the fetch to compare heights alone left this suite entirely green:
+     * every other pair here differs in both dimensions, so the width comparison was load-bearing
+     * and unexercised. Reading 140 px of source into a 109 px surface is a shear, not a failure. */
+    surface_t narrow_got = make_tile_wh(94, TILE_W_NARROW * 2, TILE_W_NARROW, SQ_H);
+    check(!thumbstore_fetch("sd:/art/square.png", 6666, &narrow_got, &dom),
+          "a same-height tile of a different width is a miss too");
 
     thumbstore_close();
 
