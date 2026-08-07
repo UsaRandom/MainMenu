@@ -20,9 +20,10 @@ Unchanged from the pre-spec working set except the left margin. All device pixel
 | Safe rect | 608 × 448 at 16,16. Backgrounds bleed past; text and controls do not. |
 | Tab rail | 608 × 48 at 16,16 |
 | Grid viewport | 596 × 352 at 16,72. **Clips top and bottom only** — 8 px horizontal bleed. |
-| Tile | **109 wide, box-shaped.** 109 × 155 for a cartridge box, 109 × 109 for a handheld one. |
-| Column origins | 16, 137, 258, 379, 500 (pitch 121 = 109 + 12) |
-| Row origins | 78, 245, 412 on a portrait tab (pitch 167 = 155 + 12), including the overhang pad |
+| Tile | **Box-shaped, in one of two column widths.** 109 × 155 portrait, 140 × 140 square, 140 × 98 landscape. The rule is *the fewest columns that still show two whole rows*, so a tile may be at most 162 px tall to earn the wide column. |
+| Column origins | five narrow: 16, 137, 258, 379, 500 (pitch 121). four wide: 16, 168, 320, 472 (pitch 152, using all 596 px exactly) |
+| Row origins | 78, 245, 412 on a portrait tab (pitch 167); 78, 188, 298, 408 on a landscape one (pitch 110), including the overhang pad |
+| Tab layout | one cell for the whole tab, taken from the tallest shape it holds. A taller shape never gets a wider column, so every other shape in a mixed tab is drawn *smaller* than it is cached — never larger. |
 | Overhang pad | 6 px top, 10 px bottom, added to the scrolled content — see below |
 | Selected tile | **+12 wide, +8 tall, centred on the cell. Whole pixels, not a scale factor.** |
 | Selection shadow | the same rect at +4 x, +6 y. Solid, no blur. |
@@ -85,7 +86,7 @@ Derived from §1; changing any number there changes these.
 | | bytes |
 |---|---|
 | TLUT | 512 (256 × uint16 RGBA5551) |
-| Pixels | 33,790 for the tallest tile in use (155 rows × 218 bytes; 109 px, no padding needed) |
+| Pixels | 39,200 for the largest tile in use (a 140 × 140 square; 140 rows × 280 bytes, no padding needed). 33,790 for a 109 × 155 portrait one, 27,440 for a 140 × 98 landscape one. |
 | **Resident per tile** | **14,624** |
 | **Working set, 20 tiles** | **292,480** |
 | On-disk slot | 15,360 (30 × 512 B sectors, so every slot and sub-block is sector-aligned) |
@@ -106,6 +107,7 @@ pre-spec estimate did not account for. Rough numbers at 62.5 MHz, 1 cycle per bl
 | pass | pixels | ≈ ms |
 |---|---|---|
 | 10 tile blits (109 × 155) | 168,950 | 2.7 |
+| — or 12 of them at 140 × 98, which is what a landscape tab draws | 164,640 | 2.6 |
 | `tile_dim` over ~15 unselected tiles | 205,800 | 3.3 |
 | ambient wash, 420 × 300 dithered quad | 126,000 | 2.0 |
 | background + rail + footer | ~150,000 | 2.4 |

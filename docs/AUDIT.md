@@ -4209,12 +4209,138 @@ Being briefly wrong is the cheaper mistake, and it is one constant to reverse.
 - **No real corpus.** `build/artcache` is still empty; every number above is against a mixture
   whose composition was chosen. The *ranking* is stable across a 2x change in that mixture
   (1ak), which is the most that can be claimed.
+  <br>**Superseded in part by 1am**: there is now one real corpus, the SD card's own 28 covers,
+  and its composition is nothing like any of the modelled mixtures.
 - **The probe's cost is not measured.** One extra `fopen` and a few hundred bytes per record per
   index rebuild, on a path the AUDIT already records a 180-probe cautionary tale about. Under ares
   the DFS makes it free and the number would be a lie.
 - **The Settings row survives on purpose.** "Automatic" is first and is the default; the tables
   are the escape hatch for whoever the snapping gets wrong, and there is no measurement yet of how
   often that is on a card somebody actually owns. It is the thing to delete once there is one.
+
+---
+
+## 1am. Five columns was the wrong answer for the only real card there is
+
+1aj cut the tile from 140 x 98 landscape to 109 x 155 portrait and moved the grid from four
+columns to five, on the argument that a box is portrait. The argument is correct about boxes. It
+is wrong about the card.
+
+**Every cover on the SD card is landscape.** Measured, all 28 of them:
+
+| aspect | source size | count |
+|---:|---|---:|
+| 1.369 | 256 x 187 | 24 |
+| 1.378 | 357 x 259 | 1 |
+| 1.404 | 375 x 267 | 1 |
+| 1.457 | 357 x 245 | 1 |
+| 1.469 | 357 x 243 | 1 |
+
+Not one portrait scan. Every one of them snaps to `ART_LANDSCAPE`, and at five columns that is a
+109 x 76 tile: **8,284 pixels where the four-column tile it replaced gave 13,720**. The snap was
+doing exactly what 1al built it to do -- reading the shape off the art and refusing to crop -- and
+the result was that the whole screen shrank by 40 %. Which is what the report was: "5 per row
+looks too small".
+
+This is the corpus the "Still not measured" note in 1al was asking for, and it does not resemble
+any of the mixtures `mksample.py` models. Those were built around the assumption that most covers
+are box scans with some proportion of failures. On this card there are no box scans at all.
+
+### The column count follows the shape
+
+One width cannot serve both ends: 109 is the widest a portrait tile can be and still show two rows
+in a 352 px window, and 140 is what a landscape tile wants. So there are two of them, and a rule
+that picks:
+
+> **the fewest columns that still show two whole rows.**
+
+Two rows and a gap inside the padded window is `(352 - 6 - 10 - 12) / 2 = 162` px, so a tile
+earns the wide column if it is 162 px or shorter at 140 wide:
+
+| shape | at 140 wide | verdict | tile | cols | rows visible |
+|---|---:|---|---|---:|---:|
+| portrait 0.702 | 200 px | too tall | 109 x 155 | 5 | 2.01 |
+| square 1.000 | 140 px | fits | 140 x 140 | 4 | 2.21 |
+| landscape 1.429 | 98 px | fits | 140 x 98 | 4 | 3.05 |
+
+Landscape lands back on 140 x 98 exactly, which is the tile the four-column grid had before any of
+this started. Square gains 65 % more pixels. Portrait is untouched.
+
+Three rather than two rows was considered and rejected: a three-row ceiling is 108 px, which sends
+square art back to the narrow column and gives back most of what this buys. Two rows is what a
+portrait grid has always shown here, so the rule asks nothing of the wide shapes that the narrow
+one does not already accept.
+
+### Why this is safe, and it is one property
+
+A tab is laid out on one cell, taken from the tallest shape it holds. That only works because the
+rule is **monotone: a taller shape never gets a wider column.** The tallest shape in a tab
+therefore also has the narrowest column in it, so every other shape in that tab is drawn *smaller*
+than the size it is cached at — never larger. Nothing is upscaled out of the atlas, which is the
+entire point of caching at the drawn size.
+
+It is asserted twice, once at compile time in `theme.h` and once in `test_boxart.c`, because it is
+the kind of property that would break silently: the symptom is slightly soft art, not a fault.
+
+The draw also changed from clamping to fitting. It used to pin the height to the cell and leave
+the width alone, which squashes; it now scales both. That only shows up in the transient where a
+cover is measured after its tab was laid out, but a distorted cover is a worse lie than a small
+one, and both are worse than the crop this whole scheme exists to avoid.
+
+### What it cost elsewhere
+
+- **The atlas is invalidated again.** `THUMBSTORE_MAGIC` 'M64U' -> 'M64V'. Every square and
+  landscape tile on a card is cached 28 % narrower than it is about to be drawn. Nothing in the
+  file is *wrong*, which is why it needs a magic and not a check: the pixels would read back fine
+  and be upscaled. `LIBINDEX_MAGIC` is untouched, so `art_kind` survives and a card that has
+  already been scanned lays out correctly on the very first frame — only the covers re-decode.
+- **The slot did not have to grow.** The largest tile is now a 140 x 140 square at 39,200 bytes
+  against the 109 x 176 ceiling's 38,368, and both fit the existing 49,152-byte slot. The bound is
+  written per width because a wide tile is capped by the two-row rule at 140 x 162 = 45,360, not
+  by `TILE_H_MAX`.
+- **The thumbnail pool grew from 1.19 MB to 1.35 MB** at its worst case, 36 slots of 140 x 140.
+  Against ~3.8 MB free. Slot count is unchanged: a landscape tab straddling rows shows 16 tiles,
+  which is the number 36 was sized for in the first place.
+- **The detail sheet did not get the wide column, and that was measured.** Reserving two of the
+  widest tile (280 px) is the tidy answer — exact 2x for every shape, no resampling — and it
+  squeezes the info column from 318 px to 256. Rendered: the cheat row draws as
+  "Not supported for thi" and any title over 21 characters loses its tail. `ui_label` clips rather
+  than ellipsising and this sheet has already lost the tail of two strings that way. So the sheet
+  keeps its 218 px column and fits a wide tile into it at 1.557x. Still better than before, which
+  upscaled a 109 x 76 tile 2x to reach the same box.
+
+### The cold-card transient got bigger
+
+1al recorded that the first visit to a tab on a cold card is pitched from the fallback and
+re-pitches on the next visit. That is still true and now moves tiles sideways as well: the
+fallback is landscape, which is one of the two *widest* shapes, so a tab whose covers all turn out
+portrait opens at four columns of 140 x 98 and re-lays to five of 109 x 155.
+
+Captured on the sample card's Recent tab: four columns of 140 x 140 cells, with the portrait
+covers that had been measured drawn at 98 x 140 inside them — whole, centred, and smaller than
+they will be next visit. Not cropped, because the draw fits rather than cuts.
+
+This does not reach the SD card. `library.idx` is not invalidated, so every `art_kind` on it is
+already known and the layout is right from the first frame. It is a first-scan phenomenon only.
+
+### Checked that it can fail
+
+Three mutations, each producing exactly the predicted failures and nothing else:
+
+| mutation | predicted | got |
+|---|---|---|
+| `fit_aspect` ignores the two-row ceiling, so every shape takes the wide column | portrait column, the bounds checks, both fit-into cases | 6 red |
+| `boxart_fit_into` ignores the cell height | the squeeze case only | 1 red |
+| `thumbstore` fetch compares height and not width | the shape-mismatch checks | **0 red** |
+
+The third one is the finding. The atlas suite went entirely green with the width comparison
+removed, because every pair of shapes in it differed in *both* dimensions — the width check was
+load-bearing and unexercised. A `boxart.ini` can produce a 0.78-aspect box, which the rule puts at
+109 x 140, beside a square cover's 140 x 140: same height, different width, and reading one into
+the other is a shear rather than a failure. A check for that case was added and the mutation now
+produces exactly one red.
+
+Host suite: 245 checks across six binaries, 0 failures. Release ELF text 634,008, up 480 bytes.
 
 ---
 
