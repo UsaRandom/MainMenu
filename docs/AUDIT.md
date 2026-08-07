@@ -4450,6 +4450,80 @@ because the clock in it reads a different day. The four with no box art on them 
 
 ---
 
+## 1ao. An instrument, before another mechanism
+
+1ag spent a day on a hook that went green end to end under ares -- on *executed emitted code*, with
+a working mutation control -- and did nothing on the M64, leaving four explanations that could not
+be told apart: the scan matched the wrong sixteen bytes, it matched nothing and fell back to the
+dead watch, it matched and the game does not route exceptions through the preamble we found, or the
+writes landed at addresses wrong for that ROM revision. The finding recorded there is that the
+strongest evidence this harness can produce was not sufficient. The finding recorded *here* is that
+the missing thing was never a mechanism. It was a readout.
+
+Everything from the launch screen to the game's first frame runs after the menu is gone: no
+display, no filesystem, and on this cart no USB. So the engine reports on itself, through the only
+output device guaranteed to exist and guaranteed to be aimed at something.
+
+### The beacon
+
+`VI_ORIGIN` always holds the address of whatever the **game** is currently displaying. The engine
+reads it, converts to KSEG1, and writes 256 words of solid colour into the top of that buffer --
+emitted at the exact instruction the `bne` lands on when the exception is not a watch, which is the
+definition of "the engine ran". Ten instructions plus an unrolled run of stores, no knowledge of the
+game, no channel.
+
+| what you see | what it means |
+|---|---|
+| green bar | the engine is running, hooked through the game's own handler |
+| red bar | the engine is running, hooked through the Datel watch -- which 1af measured as absent, so this would be news |
+| no bar | the engine never executed |
+
+The colour comes from a word the patcher writes and the engine only displays, so one launch reports
+both *that* it ran and *which way* it hooked. Unrolled rather than looped because a loop needs a
+third register to hold its limit, and the engine's contract with the game is $k0 and $k1 and
+nothing else. Off unless `[menu] cheat_beacon = true` is in config.ini; it draws over the game.
+
+### It found its first bug before hardware, which is the point
+
+`hooktest.c` gained a third scenario: point `VI_ORIGIN` at the test's own megabyte of `.bss`, run
+the emitted engine, and compare every word against `BEACON_GREEN`. It refused to run and said why
+-- **the arena sits below the beacon's origin floor.**
+
+The floor was one megabyte, on the reasoning that `VI_ORIGIN` that low is `VI_ORIGIN` unset. This
+whole ROM is 824 KB, so its own `.bss` is under that line, and so is a small game's framebuffer. A
+floor that suppresses the beacon is worse than no floor, because **a bar that never appears is
+exactly what "the engine never ran" looks like** -- the instrument would have produced the answer
+we already have and we would have believed it. 64 KB clears every real framebuffer and still
+catches an unset origin.
+
+That is the whole argument for building the instrument first, arriving one day early.
+
+### Checked that it can fail
+
+| mutation | predicted | got |
+|---|---|---|
+| drop the unrolled store run | the paint check | **1 red**, exactly that check |
+| drop the KSEG1 conversion | the paint check | **the console wedged; no result at all** |
+
+The second one is not a pass and is recorded as what it is. Writing the physical address as if it
+were virtual faults into KUSEG, the fault re-enters the engine, and the loop never ends -- a
+failure mode `hooktest.c`'s own header already warns about from a previous mutation. It proves the
+conversion is load-bearing and it proves nothing about the check. A harness that hangs reports
+nothing.
+
+Scenario 3 also asserts what the beacon must *not* disturb: `0x80000180` unchanged, the watch
+unarmed, and control still reaching the fake `__osException` with `$k0` exact. 21/21 under ares.
+
+### What this does not do
+
+It does not make cheats work, and it is not evidence that they will. It makes the next hardware
+launch produce a fact instead of a shrug. The mechanism it will be measuring is 1ag's, restored
+unchanged on the `cheats` branch, still believed exactly as much as 1ag left it.
+
+Sizes: text 635,352 against main's 634,232. Host suite 4,001 checks, no failures.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon

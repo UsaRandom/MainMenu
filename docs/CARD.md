@@ -35,6 +35,21 @@ are not in there** and are never touched by deleting it. The three places above 
 looked for inside `/mainmenu/`, and in a `/menu/` folder if you have one from an older version, so
 an existing card needs no rearranging.
 
+**Turning the cheat beacon on.** If cheats are ticked and nothing happens in game, add this to
+`/mainmenu/config.ini` and launch again:
+
+```ini
+[menu]
+cheat_beacon = true
+```
+
+The cheat engine will then paint a bar across the top of whatever you are playing, every frame it
+runs. **Green** means the engine is running and hooked itself through the game's own exception
+handler. **Red** means it hooked through the Datel watch trap instead, which this console is not
+supposed to support, so red is a surprise worth reporting. **No bar at all** means the engine never
+executed, which is the failure being chased. It draws over the game on purpose and it is off by
+default; take the line back out when you are done.
+
 ## Players
 
 Up to ten people can share a card. A card with one player looks exactly like a card from before

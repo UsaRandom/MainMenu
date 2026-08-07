@@ -10,6 +10,7 @@
 #include <libdragon.h>
 
 #include "app.h"
+#include "boot/cheats.h"
 #include "cheats/cheatdb.h"
 #include "library/library.h"
 #include "flashcart/flashcart.h"
@@ -353,6 +354,11 @@ static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
         enginetest_detail(wd, sizeof(wd));
         launchlog_line("hook     preamble scan first, Datel watch hook as fallback");
         launchlog_line("watch    %s (%s)", enginetest_text(), wd);
+        /* Which path the patcher takes still happens after this program is gone. The beacon is
+         * what reports it, and the log says whether anyone will be able to read it. */
+        launchlog_line("beacon   %s", app->settings.cheat_beacon
+                       ? "armed -- green bar = handler hook, red bar = watch fired, none = engine never ran"
+                       : "off ([menu] cheat_beacon in config.ini)");
     }
     launchlog_line("database %d games; %d groups from the database, %d hand-entered",
                    cheatdb_game_count(),
@@ -464,6 +470,10 @@ static void do_load (app_t *app) {
     }
 
     bp->cheat_list = build_cheat_list(app);
+
+    /* Set here rather than at boot() because this is the last place a setting can be read: boot()
+     * runs after the filesystem is gone. See cheats.c on why the beacon exists at all. */
+    cheats_set_beacon(app->settings.cheat_beacon);
 
     /* Last thing before the point of no return. app->running = false returns to main(), which
      * calls boot() immediately -- there is no later. */

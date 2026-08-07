@@ -37,6 +37,7 @@ static settings_t init = {
     .show_browser_file_extensions = true,
     .show_browser_rom_tags = true,
     .rumble_enabled = false,
+    .cheat_beacon = false,
     .boxart_region = "Automatic",
 };
 
@@ -94,6 +95,7 @@ void settings_load (settings_t *settings) {
     settings->show_browser_file_extensions = ini_get_bool(ini, "menu", "show_browser_file_extensions", init.show_browser_file_extensions);
     settings->show_browser_rom_tags = ini_get_bool(ini, "menu", "show_browser_rom_tags", init.show_browser_rom_tags);
     settings->rumble_enabled = ini_get_bool(ini, "menu_beta_flag", "rumble_enabled", init.rumble_enabled);
+    settings->cheat_beacon = ini_get_bool(ini, "menu", "cheat_beacon", init.cheat_beacon);
 
     free(settings->boxart_region);
     settings->boxart_region = strdup(ini_get_string(ini, "menu", "boxart_region", init.boxart_region));

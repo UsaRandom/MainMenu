@@ -223,5 +223,71 @@ void hooktest_run (void) {
                (unsigned long)(TIMER_MICROS(scan_ticks)));
     }
 
+    /* Scenario 3: the beacon. It is the instrument the next hardware run depends on, so it gets
+     * the same treatment as the mechanism it measures -- executed, and checked against exact
+     * bytes rather than against "something happened".
+     *
+     * VI_ORIGIN is pointed at the arena for the duration instead of at the real framebuffer, so
+     * the engine paints into memory this test owns and the check can be exact. The VI scans out
+     * the arena for the frame or two this takes; that is a dev build drawing garbage briefly, and
+     * it is worth it for a check that cannot pass by accident. */
+    {
+        volatile uint32_t *vi_origin = (volatile uint32_t *)VI_ORIGIN_ADDRESS;
+        uint32_t origin_before = *vi_origin;
+        uint32_t arena_phys = (uint32_t)(arena) & 0x1FFFFFFF;
+
+        /* The engine refuses to paint below BEACON_MIN_ORIGIN_SHIFT, on the reasoning that
+         * VI_ORIGIN that low is VI_ORIGIN unset. If .bss ever moves under that line the beacon
+         * silently does nothing and this scenario would report it as a failure to paint -- so the
+         * precondition is a check of its own, and it names itself. It has already earned its
+         * keep: the floor was a megabyte and this is what said so. */
+        check((arena_phys >> BEACON_MIN_ORIGIN_SHIFT) != 0,
+              "the arena is above the beacon's origin floor");
+
+        memset(arena, 0, 4096);
+        plant(I_JR(REG_K0));
+
+        cheats_set_beacon(true);
+        patcher = cheats_emit(list);
+        cheats_set_beacon(false);
+        check(patcher != NULL, "emit (beacon scenario)");
+
+        if (patcher != NULL && (arena_phys >> BEACON_MIN_ORIGIN_SHIFT) != 0) {
+            disable_interrupts();
+            run_patcher(patcher, arena);
+
+            uint32_t got0 = vec[0], got1 = vec[1];
+            uint32_t armed = READ_WATCHLO();
+            WRITE_WATCHLO(0);
+            WRITE_WATCHHI(0);
+            vec[0] = vec0;
+            vec[1] = vec1;
+            data_cache_hit_writeback_invalidate((void *)(vec), 8);
+            inst_cache_hit_invalidate((void *)(vec), 8);
+
+            *vi_origin = arena_phys;
+            run_vector(&arena[8]);
+            *vi_origin = origin_before;
+            enable_interrupts();
+
+            /* Read uncached: the engine wrote through KSEG1 and this core's data cache has no
+             * reason to know. Reading it cached would compare against whatever was there before
+             * and fail for the wrong reason. */
+            volatile uint32_t *painted = (volatile uint32_t *)(0xA0000000u | arena_phys);
+            bool all_green = true;
+            for (int i = 0; i < BEACON_WORDS; i++) {
+                if (painted[i] != BEACON_GREEN) {
+                    all_green = false;
+                }
+            }
+            check(all_green, "the beacon painted every word of its bar");
+            check(painted[BEACON_WORDS] == 0, "and stopped at the end of it");
+            check(got0 == vec0 && got1 == vec1, "the beacon did not disturb 0x80000180");
+            check(armed == watch_before, "the beacon did not arm the watch");
+            check(osexc_hit == (uint32_t)(&arena[4]),
+                  "control still reached __osException with the beacon in the way");
+        }
+    }
+
     debugf("HOOKTEST %d/%d ok\n", checks - failures, checks);
 }

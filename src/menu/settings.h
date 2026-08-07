@@ -63,6 +63,13 @@ typedef struct {
     /** @brief Enable rumble feedback within the menu */
     bool rumble_enabled;
 
+    /** @brief Paint a bar over the running game when the cheat engine executes. Diagnostic.
+     *
+     *  Not in the Settings UI on purpose. It draws over whatever you are playing, it exists to
+     *  answer one question on hardware, and it is edited on the card by whoever is chasing that
+     *  question. See src/boot/cheats.c. */
+    bool cheat_beacon;
+
     /** @brief Where tile shapes come from: "Automatic" reads each cover's own aspect, "NTSC" is
      *         the built-in table, anything else names a section of menu/boxart.ini. A name rather
      *         than an index, because the sections a card defines can change between boots and an

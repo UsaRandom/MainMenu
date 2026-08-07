@@ -7,6 +7,7 @@
 #ifndef CHEATS_H__
 #define CHEATS_H__
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "cic.h"
 
@@ -27,6 +28,64 @@ int cheats_ipl3_patch_offset (cic_type_t cic_type);
  * False means the engine cannot hook this ROM and cheats will not run.
  */
 bool cheats_ipl3_layout_ok (cic_type_t cic_type, uint32_t word_at_offset);
+
+/* ------------------------------------------------------------------ the beacon
+ *
+ * Everything from here to the game's first frame happens after the menu is gone: no display, no
+ * filesystem, and on this cart no USB either. AUDIT 1ag is what that costs -- the handler hook
+ * went green end to end under ares on executed emitted code, did nothing on the console, and
+ * left four candidate explanations that could not be told apart. A day, and no fact.
+ *
+ * So the engine reports on itself, through the one output device that is guaranteed to exist and
+ * guaranteed to be pointed at something: the video interface. VI_ORIGIN always holds the address
+ * of whatever the GAME is currently displaying, so the engine reads it and writes a bar of solid
+ * colour into the top of that framebuffer. Ten instructions plus a run of stores, no knowledge of
+ * the game, no channel, no logs. If the engine executes inside Ocarina of Time, a coloured bar
+ * appears over Ocarina of Time. If it does not, there is no bar. That is the whole question, and
+ * it is answered in one launch.
+ *
+ * The colour says which way the patcher went, because the patcher writes it and the engine only
+ * displays it:
+ *
+ *   green   the preamble scan found libultra's handler and the game installed our hook
+ *   red     the scan missed and the Datel watch hook was armed instead -- so a red bar means the
+ *           watch DID fire, which on this console would itself be news
+ *   none    the engine never executed
+ *
+ * Off unless `[menu] cheat_beacon = true` is in config.ini on the card. It draws over the game,
+ * which is the point, and nobody should meet it by accident.
+ */
+#define VI_ORIGIN_ADDRESS   (0xA4400004)
+
+
+/* One kilobyte, which is 512 pixels at 16 bpp -- most of one row on a 320-wide game and half a
+ * row on a 640-wide one. Doubled into a 32-bit word so it reads as the same colour whether the
+ * game's framebuffer is 16 or 32 bits per pixel. */
+#define BEACON_WORDS        256
+#define BEACON_GREEN        0x07C107C1u     /* RGBA5551 (0,31,0) twice */
+#define BEACON_RED          0xF801F801u     /* RGBA5551 (31,0,0) twice */
+
+/* VI_ORIGIN below 64 KB is not a framebuffer -- it is VI_ORIGIN before the game set it, and
+ * writing there would land in the exception vectors or in the low memory a 0x20 code clears. One
+ * `srl` by this much and a branch on zero rejects both that and an origin of zero.
+ *
+ * It was a one-megabyte floor first, which is wrong in the direction that matters. hooktest's
+ * beacon scenario refused to run and said why: this whole ROM is 824 KB, so its own .bss sits
+ * below the line -- and a small game's framebuffer can sit there too. A floor that suppresses the
+ * beacon is worse than no floor at all, because a bar that never appears is exactly how "the
+ * engine never ran" looks. 64 KB clears every real framebuffer and still catches an unset one. */
+#define BEACON_MIN_ORIGIN_SHIFT  16
+
+/**
+ * @brief Make the engine paint a bar over the running game, so we can see whether it ran.
+ *
+ * A diagnostic, off by default, turned on with `[menu] cheat_beacon = true` in config.ini. See
+ * the long comment at the top of cheats.c for what the colours mean and why the video interface
+ * is the only reporting channel available past this point.
+ *
+ * Call before cheats_install(); it changes what gets emitted, not what happens afterwards.
+ */
+void cheats_set_beacon (bool enabled);
 
 /**
  * @brief Assemble the patcher and engine into RDRAM without touching the IPL3.

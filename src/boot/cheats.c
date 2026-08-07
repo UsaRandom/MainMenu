@@ -26,6 +26,18 @@
 #define ENGINE_TEMPORARY_ADDRESS (PATCHER_ADDRESS + 0x10000)
 #define DEFAULT_ENGINE_ADDRESS (0x807C5C00)
 
+/* Written by the patcher, read by the engine. Below the default engine address rather than
+ * inside the engine, so a 0xDE code that relocates the engine does not move it and the two
+ * halves cannot disagree about where it is. Both accesses are cached and this is the only
+ * writer, so no cache maintenance is owed. */
+#define BEACON_STATE_ADDRESS (DEFAULT_ENGINE_ADDRESS - 16)
+
+static bool beacon_enabled;
+
+void cheats_set_beacon (bool enabled) {
+    beacon_enabled = enabled;
+}
+
 /* Worst-case words a single cheat entry can emit. A 0x50 repeater carries an 8-bit count and
  * emits three instructions per iteration, so 255 * 3 = 765, plus the four-word tail this function
  * always appends. Checked BEFORE each entry rather than after each write, because the write is
@@ -44,6 +56,16 @@
  * enforced this before: a long enough list of boot-writes walked straight into the staging
  * buffer and corrupted the engine it was about to copy. */
 #define PATCHER_MAX_WORDS ((ENGINE_TEMPORARY_ADDRESS - PATCHER_ADDRESS) / 4)
+
+
+/** @brief Emit the four words that stamp @p colour into the beacon's state word. */
+static io32_t *emit_beacon_stamp (io32_t *p, uint32_t colour) {
+    *p++ = I_LUI(REG_K0, colour >> 16);
+    *p++ = I_ORI(REG_K0, REG_K0, colour);
+    *p++ = I_LUI(REG_K1, A_BASE(BEACON_STATE_ADDRESS));
+    *p++ = I_SW(REG_K0, A_OFFSET(BEACON_STATE_ADDRESS), REG_K1);
+    return p;
+}
 
 /** @brief Cheat structure */
 typedef struct {
@@ -297,6 +319,41 @@ uint32_t *cheats_emit (uint32_t *cheat_list) {
 
     // Return from the exception
     *engine_p++ = I_ERET();
+
+    /* Everything below here runs on EVERY exception the engine sees -- the `bne` above skips the
+     * watch-relocation block and lands exactly on this instruction. Which is why the beacon goes
+     * here and not at the top: reaching this point is the definition of "the engine ran". */
+    if (beacon_enabled) {
+        io32_t *beacon_start = engine_p;
+
+        *engine_p++ = I_LUI(REG_K0, A_BASE(VI_ORIGIN_ADDRESS));
+        *engine_p++ = I_LW(REG_K1, A_OFFSET(VI_ORIGIN_ADDRESS), REG_K0);
+
+        /* Nothing below a megabyte is a framebuffer. $k0 is scratch either way. */
+        *engine_p++ = I_SRL(REG_K0, REG_K1, BEACON_MIN_ORIGIN_SHIFT);
+        io32_t *skip = engine_p;
+        *engine_p++ = I_NOP();              /* back-patched to beq $k0, $zero, past the stores */
+        *engine_p++ = I_NOP();              /* branch delay slot */
+
+        /* Uncached, so the bar reaches the screen without depending on a writeback the game has
+         * no reason to perform. The OR covers all three ways VI_ORIGIN is written -- physical,
+         * KSEG0 or KSEG1 -- because every one of them ORs to the same KSEG1 address. */
+        *engine_p++ = I_LUI(REG_K0, 0xA000);
+        *engine_p++ = I_OR(REG_K1, REG_K1, REG_K0);
+
+        *engine_p++ = I_LUI(REG_K0, A_BASE(BEACON_STATE_ADDRESS));
+        *engine_p++ = I_LW(REG_K0, A_OFFSET(BEACON_STATE_ADDRESS), REG_K0);
+
+        /* Unrolled rather than looped, because a loop needs a third register to hold its limit
+         * and the engine's contract with the game is that it touches $k0 and $k1 and nothing
+         * else. 256 stores cost 256 words of an engine that has hundreds of kilobytes. */
+        for (int i = 0; i < BEACON_WORDS; i++) {
+            *engine_p++ = I_SW(REG_K0, i * 4, REG_K1);
+        }
+
+        *skip = I_BEQ(REG_K0, REG_ZERO, (int)(engine_p - (skip + 1)));
+        debugf("cheats: beacon armed, %u words\n", (unsigned)(engine_p - beacon_start));
+    }
 
     cheat_entry_t cheat;
 
@@ -572,6 +629,11 @@ uint32_t *cheats_emit (uint32_t *cheat_list) {
     *patcher_p++ = I_CACHE(HIT_WRITE_BACK_D, 4, REG_T3);
     *patcher_p++ = I_CACHE(HIT_INVALIDATE_I, 4, REG_T3);
 
+    /* Green: the game will install our hook for us. The engine paints this if it ever runs. */
+    if (beacon_enabled) {
+        patcher_p = emit_beacon_stamp(patcher_p, BEACON_GREEN);
+    }
+
     to_join = patcher_p;
     *patcher_p++ = I_NOP(); // beq $zero, $zero, join -- found path arms no watch
     *patcher_p++ = I_NOP();
@@ -596,6 +658,14 @@ uint32_t *cheats_emit (uint32_t *cheat_list) {
     *patcher_p++ = I_ORI(REG_K1, REG_ZERO, EXCEPTION_HANDLER_ADDRESS | WATCHLO_W);
     *patcher_p++ = I_MTC0(REG_K1, C0_REG_WATCH_LO);
     *patcher_p++ = I_MTC0(REG_ZERO, C0_REG_WATCH_HI);
+
+    /* Red, and it is the more interesting of the two. This path only reaches the engine if the
+     * watch exception fires, which is the thing 1af measured as absent on both machines we can
+     * ask -- so a red bar is not a fallback working as designed, it is the watch working after
+     * all, and it would change what we believe about this console. */
+    if (beacon_enabled) {
+        patcher_p = emit_beacon_stamp(patcher_p, BEACON_RED);
+    }
 
     // Jump back to the game code
     io32_t *join_label = patcher_p;
