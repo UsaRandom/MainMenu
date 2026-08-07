@@ -3811,6 +3811,413 @@ boot to the 3.00 s ceiling.
 
 ---
 
+## 1ai. Half the framebuffer is never displayed, and it is the odd half
+
+7 Aug 2026. "When an empty profile box is not selected, the bottom dashes on the rectangle aren't
+displayed." A dashed rectangle missing one edge, and the edge in question had been rewritten a
+day earlier (1ah, fifth pass) after a report that it was "cut off a bit at the bottom". That fix
+was correct and it did not fix this, which is the tell.
+
+### The dashes were there
+
+`tools/inputs/profiles.txt` frame 0, `FBSCALE=1`, counting `#52525A` pixels across each empty
+card's top and bottom edge:
+
+    slot 1  top 60  bot 60      slot 5  top 60  bot 60
+    slot 2  top 60  bot 60      slot 6  top 60  bot 60
+    ...
+
+Ten dashes of six pixels on both edges of all nine empty cards. The framebuffer is correct and
+has been correct the whole time.
+
+### The VI shows one framebuffer row in two
+
+`display_init()` is called with `{640, 480, INTERLACE_OFF}`. The VI output area for the NTSC
+preset is 240 lines, so `vi_set_yscale(480)` programs `VI_Y_SCALE = 480/240 = 2048/1024`.
+Measured rather than derived -- a probe compiled into `app.c` for one run, reading the register at
+frame 60 rather than at `display_init()`, where `vi_write_begin()` has not yet flushed it:
+
+    VIPROBE out y 35..515 lines=240 yscale=2048/1024
+
+Two framebuffer rows per scanline. With interlacing off the sampling offset never alternates
+between fields, so the VI scans rows 0, 2, 4, ... forever and **the odd rows of the framebuffer
+are never displayed at all.**
+
+A one-pixel horizontal line is therefore a coin flip. A card is 158 tall on a 172 px pitch, so
+every top edge lands on an even row (78, 250) and every bottom edge on an odd one (235, 407). The
+card was drawn as a four-sided box and displayed as a three-sided one, every frame, on purpose,
+by arithmetic.
+
+Selected cards were fine because they lift by 3 px *and* gain a solid two-pixel outline, which
+covers all four edges whatever the parity. So the one state that proved the code worked was the
+one state that could not show the bug.
+
+### Why the harness could not see it
+
+`DBG_FBDUMP` copies RDRAM. It shows every row and hashes rows nobody can see as though they were
+on screen -- which is why measuring the dashes themselves, twice, produced a clean bill of health.
+`tools/fbdump2png.py --vi` keeps the even rows only, and is what the console shows. Opt-in, so it
+does not silently rewrite every hash in the suite. Run against the *pre-fix* log it reproduces the
+report exactly:
+
+    slot 1  top fb y=78   60      bottom fb y=235   2
+    slot 6  top fb y=250  60      bottom fb y=407   2
+
+Two, not zero, because the corners of the vertical dashes survive. After the fix, all nine cards
+read 60 and 60.
+
+### The fix is a constant
+
+`HAIRLINE` was 1 and is now 2. Two pixels always covers one even row, so a hairline is one visible
+scanline wherever it is put, and it costs nothing -- a 1 px line at an even y is also one
+scanline. `dashed_rect()` hangs its bottom edge from `y + h - HAIRLINE` so a thicker line grows
+inwards and the card keeps the height its neighbours were laid out against.
+
+The other four `HAIRLINE` users -- the settings, parental and cheat-editor separators, and the
+footer rule -- all happen to sit at even y today, checked by arithmetic: `LIST_Y + VISIBLE *
+ROW_H + INFO_GAP` is 96 + 238 + 24 = 358, and `ROW_H` being even makes that true for any row
+count. So none of them was broken, and all of them were one layout change away from it.
+
+### Not resolved
+
+**Every horizontal detail in this program is at half the vertical resolution it is drawn at, and
+that is the mode's fault rather than a bug.** `app.c` says progressive-not-`INTERLACE_HALF` is
+"the starting point for the A/B described in DESIGN.md, not a settled answer -- measure it, do not
+argue it". That A/B has still not been run, and this finding is the first hard number in it: the
+cost of `INTERLACE_OFF` at 480 lines is not "some shimmer avoided", it is **half the rendered rows
+discarded**. `--vi` is now the tool for looking at the other half of the trade.
+
+The remaining 1 px *horizontal* draws are the favourite triangle's staircase
+(`screen_grid.c:227`) and the tab star's row table (`screen_grid.c:302`). Both are shapes made of
+many rows rather than a single line, so they degrade to a coarser silhouette instead of vanishing.
+Not measured on the VI view. Vertical hairlines are unaffected: the output area is 640 px wide
+against a 640 px framebuffer, so x is not decimated.
+
+---
+
+## 1aj. Box art is portrait, and the tile never was
+
+7 Aug 2026. "The rectangle itself isn't ideal for all systems", with a table of front-face
+measurements taken off box protectors. Practically two shapes: ~0.70 portrait for every cartridge
+box, 1:1 square for Game Boy.
+
+### What the old tile cost
+
+140 x 98 is aspect 1.4286. `image_decoder_start_scaled()` scales to cover and crops -- correctly,
+per DESIGN.md section 7 -- so a 0.702 cover was scaled to 140 wide, which makes it 199 tall, and
+then had 101 of those rows thrown away. **51 % of every cartridge cover on the card**, top and
+bottom, before anything reached the screen. It was not a rendering compromise; it was in the
+decoder, where nothing downstream could tell it had happened.
+
+The fixture had been hiding it. `mkfixture.py` drew 280 x 196 landscape art, so the fixture was
+the one library on earth whose covers fitted the tile.
+
+### Five columns, and the art got bigger
+
+A portrait tile cannot be four columns wide: 140 wide is 199 tall, and 199 + 12 into a 352 px
+window is one and a half rows. Five columns is (596 - 4x12)/5 = 109.2 -> 109, so 109 x 155.
+
+| | old | new |
+|---|---:|---:|
+| tile | 140 x 98 | 109 x 155 |
+| pixels | 13,720 | 16,895 |
+| of the cover kept | 49 % | 100 % |
+| visible | 12 + 16 px peek | 10 + 12 px peek |
+
+Measured off the rendered frame rather than asserted -- `tools/inputs/boxshapes.txt` frame 1,
+scanning for the gaps:
+
+    row y=100:  16..124 art, 12 gap, 137..245, 12, 258..366, 12, 379..487, 12, 500..608
+    col x=150:  6 pad, 78..232 art (155), 12 gap, 245..399 art (155), 12 gap, 412..423 peek (12)
+
+Columns 109 wide on a 121 pitch, rows 155 tall on a 167 pitch, and the position bar clear at 618.
+
+### A row is as tall as the tallest box in the tab
+
+Not per row -- that is masonry, and row heights that change as you scroll make the scroll position
+stop meaning anything, and make every tile below a short row move when a favourite is added. Per
+tab, computed in one pass when the view is rebuilt. So the N64 tab is a tight grid of portrait
+boxes, the Game Boy tab a tight grid of squares, and Recent, which mixes them, keeps the portrait
+pitch and centres the square cover in it with plate showing above and below. Nothing is ever
+cropped to match a neighbour. `Makefile`'s fixture playstate gained `Pocket Racer.gb` for exactly
+this: without it Recent held three SNES titles and the mixed case had no frame.
+
+### The atlas had to grow, and the index had to learn the shape
+
+`thumbs.pak`'s slot was 32,768 bytes -- two 16 KB FAT clusters, so a tile is one contiguous read.
+The tallest tile is now `TILE_W x TILE_H_MAX` = 109 x 176 = 38,368, which does not fit. Two ways
+out: trim the tile until it does (107 x 152 would have) or take a third cluster. Distorting the
+art to suit a filesystem is the wrong way round, so the slot is 49,152 and 31 % of it is padding
+where 16 % used to be -- 24.6 MB across 500 titles against 16.4 MB, on a card with 29 GB free.
+
+`ti_record_t` grew from 16 to 20 bytes to carry each tile's own dimensions. Deriving them from the
+record's system instead would have been free and wrong: a ROM moved between folders, or a region
+switched in Settings, changes the shape while the atlas still holds the old tile, and reading
+109 x 109 of pixels into a 109 x 155 surface does not fail -- it returns the picture followed by
+46 rows of slot padding. A mismatch is a miss now, which costs one decode and produces the right
+picture. Two host checks say so and both go red when the comparison is removed:
+
+    FAIL  fetching a square tile into a portrait surface is a miss, not a sheared read
+    FAIL  and the other way round
+
+`MENU_CACHE_FORMAT_VER` 2 -> 3. This is a bump that genuinely has to discard art rather than one
+honoured on principle: every cached tile is the wrong shape.
+
+### Regions live on the card, because the numbers are not ours
+
+The built-in table is the US retail measurements above. PAL NES boxes are taller and thinner, PAL
+Master System stock changed mid-generation, and Japanese SFC, N64 and Game Boy boxes are smaller
+than their US counterparts -- and none of that is a number this project has. Inventing five
+plausible aspects and shipping them as a `[pal]` table would put fabricated measurements where a
+reader takes them for facts, which is the one thing this file exists to prevent.
+
+So `menu/boxart.ini` holds named sections of `system = WxH`, `ini_parser` gained section
+enumeration, and the Settings row offers whatever the card defines plus the built-in. A section is
+a whole table, which answers "PAL for certain sections" without a per-system setting: a card can
+define one that is NTSC for N64 and PAL for NES and pick it.
+
+Only the ratio is read. Every tile is one grid column wide and cannot be anything else, so
+`127x181` and `254x362` are the same instruction. Out of range is refused with a line rather than
+clamped, because a tile quietly pinned to the ceiling looks like the file being ignored --
+exercised by the fixture, which carries a deliberately bad key:
+
+    BOXART region 'NTSC': tallest 155 px
+    BOXART region 'tall': tallest 174 px
+    BOXART 900x100 is 12 px tall, outside 64..176 -- ignored
+    BOXART region 'squat': tallest 152 px
+
+Switching the region drops every resident tile (`thumbcache_reshape`), because they were all cut
+to the old shape. The atlas keeps them, so switching back is a read rather than a decode.
+
+### Found on the way
+
+`screen_detail.c` printed "Not supported for this game" into a 318 px column at 12 px a glyph --
+324 px of ink -- and the sheet read "Not supported for this gam". Pre-existing and worse before,
+since the art panel was 280 wide and the column 256. "ROM" is two characters shorter and the more
+accurate word: the engine hooks a ROM image, and the same game in another region may be fine.
+
+### Not done
+
+- **No hardware run.** Every number here is ares. The atlas slot growth is the one that matters
+  on a real card and cannot be checked here -- the DFS is read-only, so nothing has ever written
+  a 49,152-byte slot to FatFs.
+- **Decode cost per tile has not been re-measured.** 16,895 pixels against 13,720 is 23 % more
+  destination, and the source rect is bigger too because less is cropped away. The 259,633 us
+  figure in 1f is now a lower bound of unknown tightness.
+- **The no-art placeholder clips its title.** A 109 px tile leaves 101 px for the name, where a
+  140 px one left 132. The tile is 155 tall and could carry three lines, but `ui_text` does not
+  wrap.
+- **`TILE_H_MAX` is 176 by choice, not by measurement.** It is an aspect of 0.62, taller than any
+  box anybody has claimed, and it sets the atlas slot size. A real PAL NES measurement could
+  move it.
+
+---
+
+## 1ak. A sample card, and what it says about reading the shape off the art
+
+7 Aug 2026. "Why not variable size box art on every tab? Only support certain sizes, but it would
+remove the need to have PAL/Japanese in settings." The right answer depends on how cleanly real
+cover aspects cluster, `build/artcache` is empty on this machine, and the only prior measurement
+-- the 40-card stratified sample recorded in `image_decoder.c` -- is of a corpus that is landscape
+title cards by spec. So: `tools/mksample.py`, a third tree, 115 invented games with mkdemo's
+original art at a **stated** spread of aspects.
+
+Not a regression tree. The mix is chosen to contain failures, so anything measured against it
+measures the mix; what it is for is looking at layout, and for sensitivity analysis.
+
+### Two bugs in the generator, both of which would have produced a convincing corpus
+
+**`crc32 % 100` never landed in 80..99.** Over the 115 generated titles, the four wrong-shape
+kinds had a combined weight of 20 % and were generated **zero times**. The tree came out 76 `true`
+and 39 `margin` -- mostly-correct art with some margin on it, which is exactly what the mix is
+supposed to produce most of, so nothing looked wrong. CRC32 is linear and its residues mod a small
+number stay correlated across inputs differing in a few bytes, which "Amber Drift" and "Basalt
+Skipper" do. Fixed with fmix32.
+
+**115 titles were 32 distinct names.** `FIRST[n % 32]` with `SECOND[(n * 7 + 3) % 32]` -- 7 is
+coprime with 32 so the second word strides, but with period 32, the same as the first, so the
+*pair* repeats every 32. Duplicate filenames across systems and a playstate keyed on a name
+meaning several games. Striding the flattened index by 37 mod 1024 makes it a bijection.
+
+Then the sampling itself went: a corpus is not a population. Even with a good hash, 115 draws
+against a 3 % weight produced `tall` zero times, so `--mix realistic` claimed to contain a
+PAL-shaped cover and did not. Kinds are dealt by exact quota now, in hash order so they interleave
+across systems.
+
+Both bugs are the same shape as the harness traps in 1b and 1u, and both are why the histogram is
+printed on every run rather than assumed.
+
+### What the sample shows before anything is changed
+
+`tools/inputs/sample-grid.txt`, `SAMPLE=1` against `SAMPLE_MIX=true` as the control. The control
+is clean -- every tab compact, nothing cropped, titles readable. The realistic mix visibly is
+not: Recent renders "Obsidian Skipper" as `osidian kipper` and "Pewter Harvest" as `ter vest`,
+because those covers were drawn landscape and the per-system table cut them into a square Game Boy
+tile. That is the failure the proposal removes, and it is in the first frame.
+
+### The measurement
+
+Crop loss is `1 - min(As,At)/max(As,At)` for source aspect As into tile aspect At. Over all 115
+covers:
+
+| policy | mean crop | covers losing >10 % | worst |
+|---|---:|---:|---:|
+| **realistic mix** | | | |
+| per-system table (today) | 8.1 % | 19 | 61.4 % |
+| snap to {0.70, 1.00} | 5.0 % | 12 | 45.1 % |
+| **snap to {0.70, 1.00, 1.43}** | **2.3 %** | **4** | 25.9 % |
+| snap to {0.62, 0.70, 1.00, 1.43} | 2.2 % | 4 | 21.5 % |
+| **hostile mix** | | | |
+| per-system table (today) | 20.3 % | 59 | 61.4 % |
+| snap to {0.70, 1.00} | 11.0 % | 36 | 45.1 % |
+| **snap to {0.70, 1.00, 1.43}** | **2.9 %** | **8** | 25.9 % |
+| snap to {0.62, 0.70, 1.00, 1.43} | 2.4 % | 8 | 21.5 % |
+
+Three conclusions, and the useful thing is that all three hold across both mixes -- so they are
+properties of the policy rather than of the mixture I chose:
+
+1. **Snapping beats the table by 3.5x on a realistic card and 7x on a bad one.** The table is
+   right about the box and wrong about the file, and the file is what gets drawn.
+2. **Two shapes is not enough.** {0.70, 1.00} only halves the loss, because the worst case is a
+   landscape "cover" -- a title screen, a cartridge photo, the old asset spec -- cut into a
+   portrait tile, and neither bucket is anywhere near it. The landscape bucket is what does the
+   work.
+3. **A fourth shape buys nothing.** 2.3 % against 2.2 %. A dedicated PAL-tall bucket at 0.62 moves
+   the mean by a tenth of a percent and does not reduce the count of covers losing more than 10 %
+   at all. So "only support certain sizes" resolves to **exactly three**.
+
+### Still not measured
+
+**The mix is stated, not observed.** Every number above is a sensitivity analysis against
+composition I chose. What it cannot say is how often a real pack actually produces each kind --
+`build/artcache` is empty here, and until it is pointed at a pack the weights are a guess whose
+shape happens not to change the conclusion. The conclusion is robust across a 2x change in the
+mixture; it has not been tested against reality.
+
+**Nothing has been implemented.** The shape still comes from the table. Snapping needs the aspect
+known before layout and before the decode, which means resolving it on first decode and persisting
+it in `library.idx` -- the atlas already carries per-tile dimensions, so a warm card has it free.
+The cell height must keep coming from the table or one square-padded scan reflows the whole tab.
+
+**The Settings row should be deleted last.** It is the escape hatch for whoever the snapping gets
+wrong, and there is no measurement yet of how often that is.
+
+---
+
+## 1al. The shape comes off the cover, and it is measurably better
+
+7 Aug 2026. Built on 1ak's numbers: a tile's shape is now read from its own art and snapped to one
+of three, with the per-system table demoted to a fallback.
+
+### Measured on the card, not on the model
+
+1ak predicted 8.1 % -> 2.3 % mean crop from the mixture. Running the built menu against
+`tools/mksample.py`'s realistic card and taking the numbers out of the console's own log -- every
+`ART <file>: WxH -> shape` line, 58 covers actually probed during the run -- gives:
+
+| | mean crop | covers losing >10 % |
+|---|---:|---:|
+| per-system table | 8.9 % | 11 |
+| snapped | **2.1 %** | **2** |
+
+Close enough to the prediction to say the model was measuring the right thing. The two survivors
+are the deliberate `odd` covers at aspect 1.82, which snap to landscape and still lose 27 % --
+there is no bucket for a cover that shape and 1ak established that adding one is not worth it.
+
+Visible rather than only numerical: on the realistic card, Recent used to render "Obsidian
+Skipper" as `osidian kipper` and the Game Boy tab rendered "Glass Signal" as `lass Signal`. Both
+are landscape covers that were being cut into square tiles. Both read correctly now.
+
+### Log space, not linear
+
+The three aspects are a geometric run -- 0.702, 1.000, 1.4286, each about 1.43x the last -- so a
+linear nearest-neighbour puts the portrait/square boundary at 0.851, which is 21 % away from
+portrait and 15 % from square. A cover at 0.845 would be called square and cropped harder than the
+candidate that lost. Comparing `max(a/b, b/a)` orders identically to `|log(a/b)|` and needs no
+libm. Two host checks pin the boundaries at 0.838 and 1.195 and both go red when the comparison is
+made linear.
+
+### The probe is its own file because it is the part that fails silently
+
+`image_probe_size()` reads a PNG's IHDR at a fixed offset and walks a JPEG's marker chain. Getting
+the JPEG walk wrong does not crash: it returns an error, the record falls back to its system's box
+shape, and every JPEG cover on the card is shaped by a table instead of by itself, with nothing on
+screen to say so. So it lives in `src/menu/image_probe.c` with no dependency beyond `stdio.h`,
+`tools/hosttest/test_boxart.c` compiles it natively, and the suite feeds it a PNG named `.jpg`, a
+progressive JPEG, one behind six application segments, one with standalone markers, a truncated
+one and an empty one. Deleting the standalone-marker skip turns exactly one check red.
+
+`tools/mksample.py` now writes a quarter of its covers as JPEG for the same reason -- the two
+formats are two entirely different pieces of code and only one of them is easy.
+
+### Where the shape is kept
+
+Probed once, in `art_resolve`'s caller, *before* the atlas is consulted -- the shape is part of the
+atlas key, so asking first with the wrong one answers the wrong question -- and stored in
+`lib_record_t::art_kind`, which persists into `library.idx`. A warm card knows every tile's shape
+before it draws a frame.
+
+That byte was `idx_record_t::reserved`, which is zero in an index written by the old build. Zero is
+`ART_PORTRAIT`, not "unknown", so every square Game Boy cover on an existing card would have been
+declared portrait and never re-probed. `LIBINDEX_MAGIC` bumped 'M64M' -> 'M64N'.
+
+### A version bump that was quietly the wrong one
+
+1aj raised `MENU_CACHE_FORMAT_VER` 2 -> 3 for the atlas rework. That is the shared version, and it
+takes **playstate.dat** with it -- every favourite and every play count on the card, and the one
+cache here that cannot be rebuilt from the card's contents. Trading those away to re-cut some art
+is not a trade, and the fix was already precedent: `libindex.h` bumps its own magic for exactly
+this reason and says so. `THUMBSTORE_MAGIC` 'M64T' -> 'M64U', shared version back to 2.
+
+### Row height, and the one thing that could still reflow
+
+`cell_h` is the tallest resolved shape in the tab, recomputed only when the view is rebuilt. Not
+per frame: a cover probed since the tab was opened can be taller than the row it is in, and
+recomputing live would move every tile under the cursor mid-scroll. The drawn height is clamped to
+the cell instead, which scales the tile down rather than cropping it -- a tile briefly a little
+small is a far smaller lie than one with its top and bottom removed -- and the next visit to the
+tab has the right pitch. Only reachable on a cold card, and only for a cover whose shape is not
+its system's.
+
+### The fallback is landscape, by request, and it shows on a cold card
+
+`BOXART_FALLBACK_KIND` is what a record gets under Automatic when it has no cover, or none
+measured yet. It is `ART_LANDSCAPE`, set deliberately rather than derived: the measured table still
+says every cartridge box is portrait, and that table is still what a *forced* region uses. This is
+a separate decision about the case where there is no box to be right about.
+
+It has a visible consequence and it is worth stating rather than discovering. On a cold card the
+placeholder tiles are 109 x 76 and each one grows to its cover's shape as that cover is measured,
+so the first fill of a tab is tiles changing height as well as gaining art. Captured: entering the
+N64 tab 210 frames in shows nine short plates and one finished portrait cover, in 155 px rows --
+`cell_h` was already 155 because one N64 title had been measured while the Recent tab was up, and
+a single measured portrait record pulls the whole tab's pitch. So the pitch is usually right even
+when the tiles are not, which is the better half of the two to get right.
+
+A tab with *nothing* measured pitches from the fallback too, which is short. That is transient --
+`measure_cells()` runs when the view is rebuilt, so leaving the tab and coming back fixes it -- and
+the drawn height is clamped by scaling rather than cropping, so a tile in an under-pitched row is
+small but whole. A warm card never sees any of this: every shape is in `library.idx` before the
+first frame.
+
+Taking the tallest shape whenever anything is unknown would remove the transient and add a
+permanent one: a tab of genuinely artless games would be tall cells holding short plates forever.
+Being briefly wrong is the cheaper mistake, and it is one constant to reverse.
+
+### Still not measured
+
+- **No real corpus.** `build/artcache` is still empty; every number above is against a mixture
+  whose composition was chosen. The *ranking* is stable across a 2x change in that mixture
+  (1ak), which is the most that can be claimed.
+- **The probe's cost is not measured.** One extra `fopen` and a few hundred bytes per record per
+  index rebuild, on a path the AUDIT already records a 180-probe cautionary tale about. Under ares
+  the DFS makes it free and the number would be a lie.
+- **The Settings row survives on purpose.** "Automatic" is first and is the default; the tables
+  are the escape hatch for whoever the snapping gets wrong, and there is no measurement yet of how
+  often that is on a card somebody actually owns. It is the thing to delete once there is one.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon

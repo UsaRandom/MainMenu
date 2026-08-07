@@ -40,6 +40,7 @@ fields. The corpus itself is not.
 | `INPUT_SCRIPT=` | the compiled input script to replay |
 | `FBSCALE=n` | framebuffer dump scale; 4 by default, 1 for full 640 × 480 |
 | `DEMO=1` | swaps the fixture for `mkdemo.py`'s tree of invented games |
+| `SAMPLE=1` | swaps it for `mksample.py`'s full card of 115 games; `SAMPLE_MIX=true\|realistic\|hostile` |
 | `PLAIN_ART=1` | builds the fixture from procedural cards instead of the real art corpus |
 | `FIXTURE_DIR=` | use a fixture tree built elsewhere |
 
@@ -58,6 +59,14 @@ Every number in AUDIT.md was taken against it.
 **`tools/mkdemo.py` is the one for pictures.** It invents every title, code and cheat and draws
 original box art, because its output goes in the README. Every title in it misses the database on
 purpose, so a scan measured against it measures the miss path. Never measure against it.
+
+**`tools/mksample.py` is the one for layout.** 115 invented games with mkdemo's art, enough that
+every tab is at least three full rows, and covers drawn at a *stated spread of aspects* rather
+than all at the right one — because how well a tile shape can be read off its cover is a property
+of art packs, not of code. `SAMPLE_MIX=true` is the control and the only one worth looking at for
+"does this layout look good"; `realistic` and `hostile` are for finding out what a bad pack does
+to it. Never measure a scan or a frame time against any of them: the mix is chosen to contain
+failures, so anything measured against it measures the mix. See AUDIT.md 1ak.
 
 **`build/artcache` has to be populated by hand** and nothing fetches it. Any tree of
 `<GAMECODE>/boxart_front.png` works. Without it every fixture rebuild swaps real cards for

@@ -26,6 +26,18 @@ press right x2
 wait 120             # let the covers decode
 fbdump               # 2: the grid, with ANA's face at the left of the rail
 
+press a              # -> the detail sheet for Moth and Marrow
+wait 90
+fbdump               # 3: the sheet. Its art panel is the cached tile at 2x, so it is the box
+                     #    shape too -- 218 x 310 where it used to be a 280 x 196 letterbox
+
+press z              # -> the cheats screen, which the sheet's own footer offers
+wait 60
+fbdump               # 4: cheats, as named groups rather than raw codes
+press b
+press b              # sheet -> grid
+wait 60
+
 press l x3           # back along the rail and off its left end, into the picker
 wait 40
 press z              # the edit menu
@@ -35,14 +47,14 @@ press a              # -> the appearance editor
 # up to a full one: 45 drawings reads as a corpus, 32 reads as a screen that failed to finish.
 press l
 wait 420             # 45 sprites at about one a frame, plus the preview
-fbdump               # 3: choosing a face and two colours
+fbdump               # 5: choosing a face and two colours
 
 press b              # keeps the appearance, back to the cards
 wait 40
 press z              # the edit menu again
 press a              # -> the keyboard, pre-filled with ANA
 wait 40
-fbdump               # 4: the keyboard
+fbdump               # 6: the keyboard
 
 press b x4           # empty the field, then leave
 wait 30
@@ -52,13 +64,13 @@ press start              # settings
 wait 40
 press down x6        # down the list, far enough that the window has scrolled
 wait 30
-fbdump               # 5: settings
+fbdump               # 7: settings
 
 press down x4        # to the Credits row
 press a
 wait 60
 press down x5        # into the licence text
 wait 40
-fbdump               # 6: credits and licences
+fbdump               # 8: credits and licences
 
 exit

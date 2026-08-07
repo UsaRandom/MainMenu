@@ -20,19 +20,33 @@ Unchanged from the pre-spec working set except the left margin. All device pixel
 | Safe rect | 608 × 448 at 16,16. Backgrounds bleed past; text and controls do not. |
 | Tab rail | 608 × 48 at 16,16 |
 | Grid viewport | 596 × 352 at 16,72. **Clips top and bottom only** — 8 px horizontal bleed. |
-| Tile | 140 × 98, aspect 1.4286 : 1 |
-| Column origins | 16, 168, 320, 472 (pitch 152 = 140 + 12) |
-| Row origins | 78, 188, 298, 408 (pitch 110 = 98 + 12), including the overhang pad |
+| Tile | **109 wide, box-shaped.** 109 × 155 for a cartridge box, 109 × 109 for a handheld one. |
+| Column origins | 16, 137, 258, 379, 500 (pitch 121 = 109 + 12) |
+| Row origins | 78, 245, 412 on a portrait tab (pitch 167 = 155 + 12), including the overhang pad |
 | Overhang pad | 6 px top, 10 px bottom, added to the scrolled content — see below |
-| Selected tile | **152 × 106 at −6, −4 from its cell. Whole pixels, not a scale factor.** |
-| Selection shadow | 152 × 106 at +4 x, +6 y from the selected rect. Solid, no blur. |
-| Selection outline | 2 px, drawn outside the 152 × 106 rect |
+| Selected tile | **+12 wide, +8 tall, centred on the cell. Whole pixels, not a scale factor.** |
+| Selection shadow | the same rect at +4 x, +6 y. Solid, no blur. |
+| Selection outline | 2 px, drawn outside the grown rect |
 | Position bar | 6 × 352 at 616,72, thumb min 24 px, hidden when nothing scrolls |
 | Footer | 640 × 56 at 0,424; content in the top 40 px |
 | Radius | **0 everywhere**, except baked button glyphs |
 | Spacing scale | 4 · 8 · 12 · 16 · 32. Nothing between, nothing outside. |
 
-12 tiles fully visible plus a 16 px peek of row 4.
+10 tiles fully visible plus a 12 px peek of row 3, on a portrait tab. A square tab fits three
+rows: pitch 121, rows at 78, 199, 320, and 92 px of a fourth.
+
+**Tile shape is per system, and this replaced a single 140 × 98 landscape tile.** That was the
+reference mockup's title card and the shape of no box that has ever existed: the decoder scales to
+cover and crops, so a 0.702 cartridge cover lost **51 % of its own height** on the way in. Four
+columns cannot carry a portrait tile — 140 wide makes it 199 tall, which is one and a half rows of
+a 352 px window — so the column count went to five and the tile got *bigger* as well as whole:
+16,895 pixels against 13,720. The measurements and the regional override file are in
+`src/library/boxart.h`; what a card can put in `menu/boxart.ini` is in CARD.md.
+
+A row is as tall as the tallest box in the tab, so a mixed tab — Recent, Favourites, Most Played —
+keeps the portrait pitch and centres a square cover in it. Per tab and not per row: row heights
+that change as you scroll are a masonry layout, and they make the scroll position stop meaning
+anything.
 
 **Overhang pad.** A selected tile reaches outside its own cell: 4 px at each end from growing
 centred to 152 × 106, then 2 px more above for the outline and 6 px more below for the shadow
@@ -71,7 +85,7 @@ Derived from §1; changing any number there changes these.
 | | bytes |
 |---|---|
 | TLUT | 512 (256 × uint16 RGBA5551) |
-| Pixels | 14,112 (98 rows × 144 stride; 140 used, padded to 8-byte alignment) |
+| Pixels | 33,790 for the tallest tile in use (155 rows × 218 bytes; 109 px, no padding needed) |
 | **Resident per tile** | **14,624** |
 | **Working set, 20 tiles** | **292,480** |
 | On-disk slot | 15,360 (30 × 512 B sectors, so every slot and sub-block is sector-aligned) |
@@ -91,7 +105,7 @@ pre-spec estimate did not account for. Rough numbers at 62.5 MHz, 1 cycle per bl
 
 | pass | pixels | ≈ ms |
 |---|---|---|
-| 12 tile blits (140 × 98) | 164,640 | 2.6 |
+| 10 tile blits (109 × 155) | 168,950 | 2.7 |
 | `tile_dim` over ~15 unselected tiles | 205,800 | 3.3 |
 | ambient wash, 420 × 300 dithered quad | 126,000 | 2.0 |
 | background + rail + footer | ~150,000 | 2.4 |

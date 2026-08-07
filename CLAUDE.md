@@ -24,11 +24,17 @@ which `tools/mkcredits.py` bakes into the cartridge and the credits screen rende
 this history. `n64_keys.tsv` is committed because it is a table of pure facts -- a filename and
 three header fields.
 
-**`tools/mkdemo.py` is not `tools/mkfixture.py`.** mkfixture harvests real game codes and titles
+**There are three trees, and `tools/mkdemo.py` is not `tools/mkfixture.py`.** mkfixture harvests real game codes and titles
 out of `rom_info.c` so a scan exercises the real database; mkdemo invents every title, code and
 cheat and draws original box art, because its output goes in the README. `make DEMO=1` packs it
 instead of the fixture — never measure against it, every title in it misses the database on
 purpose. See AUDIT.md 1w.
+
+**`tools/mksample.py` is the third.** 115 invented games with mkdemo's art, every tab at least
+three full rows, and covers drawn at a *stated spread of aspects* rather than all at the right
+one. `make SAMPLE=1`, with `SAMPLE_MIX=true|realistic|hostile`. For looking at layout and for
+sensitivity analysis; never for measurement, because the mix is chosen to contain failures. See
+AUDIT.md 1ak.
 
 **`build/artcache` has to be populated by hand** and nothing fetches it. Any tree of
 `<GAMECODE>/boxart_front.png` works. Without it every fixture rebuild swaps real cards for

@@ -101,13 +101,73 @@ Worth knowing:
 - Options 1 and 3–5 need an N64 game code, which **NES, SNES, Game Boy, Master System and Game
   Gear titles do not have**. Option 2 is the one that works for them: name the image after the
   game file.
-- Any size and either shape is fine — everything is scaled and cropped on the way in.
+- Any size and either shape is fine — everything is scaled to fill the tile and cropped on the
+  way in, never letterboxed and never squashed. Crops are centred left-to-right and taken from
+  40 % down, which is what keeps a logo on a tall scan.
+- **Tiles take the shape of the cover**, snapped to portrait, square or landscape, so a cover of
+  any sane shape loses almost nothing. See **Box art shapes** below.
 - A game with no cover gets a plain tile with its name on it. That is how it is meant to look, not
   a sign that something is missing.
 
 The first time a card is read, each cover takes **about a quarter of a second**, and longer for a
 very large image. This happens once: covers are saved into `/mainmenu/cache` and every later start
 reads them straight back. Expect the grid to fill in over the first minute on a new card.
+
+### Box art shapes
+
+The grid draws each game at the shape of its own cover, so a shelf of covers looks like a shelf.
+A cover is measured when it is first read and snapped to one of three:
+
+| shape | tile | what it usually is |
+|---|---|---|
+| portrait | 109 × 155 | a cartridge box: N64, SNES, NES, Master System |
+| square | 109 × 109 | a Game Boy or Game Boy Color box |
+| landscape | 109 × 76 | a title card, a screenshot, a cartridge photo |
+
+**You do not have to set anything for this,** including for PAL or Japanese boxes: a PAL box
+photographed as a PAL box is still portrait, and a card that mixes regions needs no setting at
+all. Measured over a 115-cover test card, snapping loses **2.1 %** of the average cover to
+cropping where a fixed per-system table loses **8.9 %**.
+
+Three shapes and not more. Two is not enough — the worst thing you can do to a cover is cut a
+landscape one into a portrait tile — and a fourth was measured and moved the average by a tenth
+of a percent.
+
+A tab of one shape is a regular grid. Recent, Favourites and Most Played mix shapes, and so does
+any tab whose covers are not all the same, so they take the tallest shape they hold and centre the
+shorter covers in it. Nothing is ever cropped to match a neighbour.
+
+#### If the shapes come out wrong
+
+**Settings ▸ Box art** normally reads **Automatic**, which is the above. Set it to anything else
+and covers stop deciding: **NTSC** uses US retail box measurements for every game by system, and
+any further entries are sections you have written into `/mainmenu/boxart.ini`:
+
+```ini
+[pal]
+nes  = 135x190
+snes = 127x181
+gb   = 126x126
+
+[mine]          ; a section is a whole table, so it can mix
+n64  = 127x181  ; NTSC
+nes  = 135x190  ; PAL
+```
+
+- Section names are yours; each one becomes a choice in Settings.
+- Keys are `n64`, `nes`, `snes`, `gb`, `gbc`, `sms`. A key you leave out keeps its built-in value,
+  so a section only has to say what it changes.
+- Only the **ratio** matters. Every tile is one grid column wide and cannot be anything else, so
+  `127x181` and `254x362` are the same instruction. Millimetres, pixels or inches all work as long
+  as both numbers use the same one.
+- A ratio that would make a tile shorter than 64 px or taller than 176 px is ignored and that
+  system keeps its built-in shape.
+- Under **Automatic**, a game with **no cover at all** gets a wide plate rather than a tall one —
+  there is no box to take a shape from, and a wide plate fits more of the name on one line. The
+  built-in table is what a game with no cover gets only when a fixed table is selected.
+
+Changing this re-cuts every cover. The old ones stay in the cache, so switching back is instant
+and switching to a shape you have never used takes about a quarter of a second per cover, once.
 
 ## Cheats
 
