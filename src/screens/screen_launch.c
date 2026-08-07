@@ -343,11 +343,15 @@ static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
     launchlog_line("memory   %d bytes, expansion pak %s",
                    get_memory_size(), is_memory_expanded() ? "present" : "ABSENT");
     /* Recorded here as well as shown on Settings, because the log is what survives a launch and
-     * the screen is not. If this says the watch exception does not fire, no cheat below can run
-     * however correct the rest of the log looks. See enginetest.h. */
+     * the screen is not. Since the preamble hook (cheats.c) a dead watch no longer kills cheats
+     * outright -- the patcher rewrites the game's own handler template first and only falls back
+     * to the watch when the scan finds nothing -- but which path a launch took happens after this
+     * program is gone, so the log records the hook order and the one fact that decides the
+     * fallback's fate. See enginetest.h. */
     {
         char wd[96];
         enginetest_detail(wd, sizeof(wd));
+        launchlog_line("hook     preamble scan first, Datel watch hook as fallback");
         launchlog_line("watch    %s (%s)", enginetest_text(), wd);
     }
     launchlog_line("database %d games; %d groups from the database, %d hand-entered",

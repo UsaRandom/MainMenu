@@ -27,10 +27,18 @@
 #define DEFAULT_ENGINE_ADDRESS (0x807C5C00)
 
 /* Worst-case words a single cheat entry can emit. A 0x50 repeater carries an 8-bit count and
- * emits three instructions per iteration, so 255 * 3 = 765, plus the two-word tail this function
+ * emits three instructions per iteration, so 255 * 3 = 765, plus the four-word tail this function
  * always appends. Checked BEFORE each entry rather than after each write, because the write is
  * `*engine_p++ =` in a dozen places and a check at each one is a dozen chances to miss one. */
-#define ENGINE_WORST_ENTRY_WORDS (765 + 2)
+#define ENGINE_WORST_ENTRY_WORDS (765 + 4)
+
+/* The top halves of the first two instructions of libultra's __osExceptionPreamble --
+ * `lui $k0, %hi(__osException)` and `addiu $k0, $k0, %lo(__osException)` -- followed by
+ * `jr $k0` and a nop. Only the two address halves vary between games, which is what makes the
+ * preamble findable by a masked scan of the loaded game image. See the long comment above the
+ * scan emission in cheats_emit(). */
+#define PREAMBLE_LUI_K0_HI16   (I_LUI(REG_K0, 0) >> 16)
+#define PREAMBLE_ADDIU_K0_HI16 (I_ADDIU(REG_K0, REG_K0, 0) >> 16)
 
 /* The patcher region runs from PATCHER_ADDRESS up to where the engine is staged. Nothing
  * enforced this before: a long enough list of boot-writes walked straight into the staging
@@ -231,16 +239,9 @@ static void cheats_update_cache (volatile void *start, volatile void *end) {
     inst_cache_hit_invalidate(start, (end - start));
 }
 
-/**
- * @brief Install the cheat engine.
- * 
- * @param cic_type The CIC type.
- * @param cheat_list Pointer to the cheat list.
- * @return true if successful, false otherwise.
- */
-bool cheats_install (cic_type_t cic_type, uint32_t *cheat_list) {
+uint32_t *cheats_emit (uint32_t *cheat_list) {
     if (!cheat_list) {
-        return false;
+        return NULL;
     }
 
     io32_t *engine_start = (io32_t *)(ENGINE_TEMPORARY_ADDRESS);
@@ -248,10 +249,6 @@ bool cheats_install (cic_type_t cic_type, uint32_t *cheat_list) {
 
     io32_t *patcher_start = (io32_t *)(PATCHER_ADDRESS);
     io32_t *patcher_p = patcher_start;
-
-    if (cheats_patch_ipl3(cic_type, patcher_start)) {
-        return false;
-    }
 
     io32_t *final_engine_address = cheats_get_engine_address(cheat_list);
 
@@ -321,12 +318,12 @@ bool cheats_install (cic_type_t cic_type, uint32_t *cheat_list) {
         if ((size_t)(engine_p - engine_start) + ENGINE_WORST_ENTRY_WORDS > engine_max_words) {
             debugf("cheats: engine full at %u words (max %u), refusing to install\n",
                    (unsigned)(engine_p - engine_start), (unsigned)engine_max_words);
-            return false;
+            return NULL;
         }
         if ((size_t)(patcher_p - patcher_start) + ENGINE_WORST_ENTRY_WORDS > PATCHER_MAX_WORDS) {
             debugf("cheats: patcher full at %u words, refusing to install\n",
                    (unsigned)(patcher_p - patcher_start));
-            return false;
+            return NULL;
         }
 
         switch (c->type) {
@@ -417,7 +414,22 @@ bool cheats_install (cic_type_t cic_type, uint32_t *cheat_list) {
         }
     }
 
-    *engine_p++ = I_J(RELOCATED_EXCEPTION_HANDLER_ADDRESS);
+    /* The tail is four words and both hooks share it:
+     *
+     *     lui   $k0, hi        \ default: 0x80000120, the relocated game handler,
+     *     addiu $k0, $k0, lo   / which is where the watch hook parks the game's own code
+     *     jr    $k0
+     *     nop
+     *
+     * In preamble mode the patcher overwrites the first two words with the two words it found at
+     * the top of the game's __osExceptionPreamble -- which are themselves a lui/addiu pair
+     * computing __osException into $k0 -- so the tail becomes a verbatim replay of the handler
+     * the game believes it installed. No address arithmetic happens at runtime, and no register
+     * beyond $k0 is touched, which is the same contract the preamble itself honours. */
+    uint32_t tail_offset_words = (uint32_t)(engine_p - engine_start);
+    *engine_p++ = I_LUI(REG_K0, A_BASE(RELOCATED_EXCEPTION_HANDLER_ADDRESS));
+    *engine_p++ = I_ADDIU(REG_K0, REG_K0, A_OFFSET(RELOCATED_EXCEPTION_HANDLER_ADDRESS));
+    *engine_p++ = I_JR(REG_K0);
     *engine_p++ = I_NOP();
 
     uint32_t j_engine_from_handler = I_J((uint32_t)(final_engine_address));
@@ -451,7 +463,124 @@ bool cheats_install (cic_type_t cic_type, uint32_t *cheat_list) {
     *patcher_p++ = I_BGTZ(REG_T6, -4);
     *patcher_p++ = I_ADDIU(REG_T5, REG_T5, D_CACHE_LINE_SIZE);
 
-    // Write jump instruction to the exception handler
+    /* Two ways to get the engine into the game's exception path, tried in this order:
+     *
+     * 1. Rewrite the game's own handler template. At this point in the patcher the game's first
+     *    1 MB is already in RDRAM -- copying it there is the one thing IPL3 does -- and somewhere
+     *    in it sits libultra's __osExceptionPreamble, the four instructions osInitialize will
+     *    copy onto every exception vector. Rewrite its lui/addiu to compute the engine's address
+     *    instead, and the game installs the hook itself; the engine's tail replays the original
+     *    two words to reach the real __osException. Nothing here needs the watch exception, which
+     *    is the point: two machines out of two available to this project (ares, and the ModRetro
+     *    M64 per AUDIT.md 1af) hold the watch register but never deliver the trap, so the Datel
+     *    hook below has never once run.
+     *
+     * 2. The Datel watch hook, kept as the fallback for the scan finding nothing -- a game not
+     *    built on libultra, or one whose kernel lives outside the first megabyte.
+     *
+     * The scan covers [$t1, $t1 + 1 MB): $t1 is where IPL3 was about to jump, which is where it
+     * loaded the game. A false match would hijack sixteen bytes that merely look like the
+     * preamble -- accepted as unlikely rather than impossible, since the pattern fixes eight of
+     * the sixteen bytes and half the rest, and real preambles sit in libultra .text near the
+     * front of the image, ahead of any data that could imitate them. */
+
+    io32_t *tail0 = final_engine_address + tail_offset_words;
+    io32_t *tail1 = tail0 + 1;
+
+    /* What the top of the preamble becomes: the same two-instruction shape, aimed at the engine. */
+    uint32_t hook_w0 = I_LUI(REG_K0, A_BASE((uint32_t)final_engine_address));
+    uint32_t hook_w1 = I_ADDIU(REG_K0, REG_K0, A_OFFSET((uint32_t)final_engine_address));
+
+    /* Forward branches are emitted as placeholders and filled in below once their targets
+     * exist -- a branch offset counts instructions from its own delay slot, and the distance is
+     * not known until the target is emitted. Backpatching beats hand-counted offsets because a
+     * hand count silently rots the first time an instruction is added between branch and target. */
+    io32_t *to_next[3];
+    io32_t *to_found;
+    io32_t *to_notfound;
+    io32_t *to_join;
+
+    *patcher_p++ = I_OR(REG_T3, REG_T1, REG_ZERO);
+    *patcher_p++ = I_LUI(REG_T4, 0x0004); // 0x40000 words = the 1 MB IPL3 just loaded
+
+    io32_t *scan_loop = patcher_p;
+
+    *patcher_p++ = I_LW(REG_K0, 0, REG_T3);
+    *patcher_p++ = I_SRL(REG_K0, REG_K0, 16);
+    *patcher_p++ = I_ORI(REG_K1, REG_ZERO, PREAMBLE_LUI_K0_HI16);
+    to_next[0] = patcher_p;
+    *patcher_p++ = I_NOP(); // bne $k0, $k1, next
+    *patcher_p++ = I_NOP();
+
+    *patcher_p++ = I_LW(REG_K0, 4, REG_T3);
+    *patcher_p++ = I_SRL(REG_K0, REG_K0, 16);
+    *patcher_p++ = I_ORI(REG_K1, REG_ZERO, PREAMBLE_ADDIU_K0_HI16);
+    to_next[1] = patcher_p;
+    *patcher_p++ = I_NOP(); // bne $k0, $k1, next
+    *patcher_p++ = I_NOP();
+
+    *patcher_p++ = I_LW(REG_K0, 8, REG_T3);
+    *patcher_p++ = I_LUI(REG_K1, I_JR(REG_K0) >> 16);
+    *patcher_p++ = I_ORI(REG_K1, REG_K1, I_JR(REG_K0));
+    to_next[2] = patcher_p;
+    *patcher_p++ = I_NOP(); // bne $k0, $k1, next
+    *patcher_p++ = I_NOP();
+
+    *patcher_p++ = I_LW(REG_K0, 12, REG_T3);
+    to_found = patcher_p;
+    *patcher_p++ = I_NOP(); // beq $k0, $zero, found -- the nop that ends the preamble
+    *patcher_p++ = I_NOP();
+
+    io32_t *next_label = patcher_p;
+    *patcher_p++ = I_ADDIU(REG_T4, REG_T4, -1);
+    io32_t *loop_branch = patcher_p;
+    *patcher_p++ = I_BNE(REG_T4, REG_ZERO, scan_loop - (loop_branch + 1));
+    *patcher_p++ = I_ADDIU(REG_T3, REG_T3, 4); // delay slot: advances on both paths, harmlessly
+
+    to_notfound = patcher_p;
+    *patcher_p++ = I_NOP(); // beq $zero, $zero, notfound -- the scan came up empty
+    *patcher_p++ = I_NOP();
+
+    /* found: $t3 holds the game's preamble. Save its first two words into the engine tail (they
+     * compute __osException, which is where the engine must hand off), then aim the preamble at
+     * the engine. The tail was flushed with the rest of the engine by the loop above, so the two
+     * stores here need their own writeback -- and the preamble gets one too, not because anything
+     * executes it in place but because sixteen dirty bytes aimed at code the game is about to
+     * copy are not worth reasoning about. */
+    io32_t *found_label = patcher_p;
+
+    *patcher_p++ = I_LW(REG_K0, 0, REG_T3);
+    *patcher_p++ = I_LUI(REG_K1, A_BASE((uint32_t)tail0));
+    *patcher_p++ = I_SW(REG_K0, A_OFFSET((uint32_t)tail0), REG_K1);
+    *patcher_p++ = I_CACHE(HIT_WRITE_BACK_D, A_OFFSET((uint32_t)tail0), REG_K1);
+    *patcher_p++ = I_CACHE(HIT_INVALIDATE_I, A_OFFSET((uint32_t)tail0), REG_K1);
+
+    *patcher_p++ = I_LW(REG_K0, 4, REG_T3);
+    *patcher_p++ = I_LUI(REG_K1, A_BASE((uint32_t)tail1));
+    *patcher_p++ = I_SW(REG_K0, A_OFFSET((uint32_t)tail1), REG_K1);
+    *patcher_p++ = I_CACHE(HIT_WRITE_BACK_D, A_OFFSET((uint32_t)tail1), REG_K1);
+    *patcher_p++ = I_CACHE(HIT_INVALIDATE_I, A_OFFSET((uint32_t)tail1), REG_K1);
+
+    *patcher_p++ = I_LUI(REG_K0, hook_w0 >> 16);
+    *patcher_p++ = I_ORI(REG_K0, REG_K0, hook_w0);
+    *patcher_p++ = I_SW(REG_K0, 0, REG_T3);
+    *patcher_p++ = I_LUI(REG_K0, hook_w1 >> 16);
+    *patcher_p++ = I_ORI(REG_K0, REG_K0, hook_w1);
+    *patcher_p++ = I_SW(REG_K0, 4, REG_T3);
+    *patcher_p++ = I_CACHE(HIT_WRITE_BACK_D, 0, REG_T3);
+    *patcher_p++ = I_CACHE(HIT_INVALIDATE_I, 0, REG_T3);
+    *patcher_p++ = I_CACHE(HIT_WRITE_BACK_D, 4, REG_T3);
+    *patcher_p++ = I_CACHE(HIT_INVALIDATE_I, 4, REG_T3);
+
+    to_join = patcher_p;
+    *patcher_p++ = I_NOP(); // beq $zero, $zero, join -- found path arms no watch
+    *patcher_p++ = I_NOP();
+
+    /* notfound: the original Datel hook. Write `j engine` over the general exception vector and
+     * arm a watch on it, so the game's attempt to install its own handler is what springs the
+     * trap. Requires a CPU that actually delivers the watch exception. */
+    io32_t *notfound_label = patcher_p;
+
     *patcher_p++ = I_LUI(REG_K0, A_BASE(EXCEPTION_HANDLER_ADDRESS));
     *patcher_p++ = I_ADDIU(REG_K0, REG_K0, A_OFFSET(EXCEPTION_HANDLER_ADDRESS));
 
@@ -469,11 +598,37 @@ bool cheats_install (cic_type_t cic_type, uint32_t *cheat_list) {
     *patcher_p++ = I_MTC0(REG_ZERO, C0_REG_WATCH_HI);
 
     // Jump back to the game code
+    io32_t *join_label = patcher_p;
     *patcher_p++ = I_JR(REG_T1);
     *patcher_p++ = I_NOP();
+
+    *to_next[0]  = I_BNE(REG_K0, REG_K1, next_label - (to_next[0] + 1));
+    *to_next[1]  = I_BNE(REG_K0, REG_K1, next_label - (to_next[1] + 1));
+    *to_next[2]  = I_BNE(REG_K0, REG_K1, next_label - (to_next[2] + 1));
+    *to_found    = I_BEQ(REG_K0, REG_ZERO, found_label - (to_found + 1));
+    *to_notfound = I_BEQ(REG_ZERO, REG_ZERO, notfound_label - (to_notfound + 1));
+    *to_join     = I_BEQ(REG_ZERO, REG_ZERO, join_label - (to_join + 1));
 
     cheats_update_cache(engine_start, engine_p);
     cheats_update_cache(patcher_start, patcher_p);
 
-    return true;
+    return (uint32_t *)(patcher_start);
+}
+
+bool cheats_install (cic_type_t cic_type, uint32_t *cheat_list) {
+    if (!cheat_list) {
+        return false;
+    }
+
+    /* Emit first, patch the IPL3 last. The old order patched first, which left a live trap: a
+     * cheat list that overflowed the engine bound returned false AFTER the IPL3 in DMEM had been
+     * pointed at a half-built patcher, and boot.c's false meant the RDRAM holding that patcher
+     * was about to be wiped -- an IPL3 jumping into zeroed memory instead of a game booting
+     * without cheats. Emission touches nothing the boot depends on, so failing out of it first
+     * costs nothing. */
+    if (cheats_emit(cheat_list) == NULL) {
+        return false;
+    }
+
+    return !cheats_patch_ipl3(cic_type, (io32_t *)(PATCHER_ADDRESS));
 }
