@@ -3713,6 +3713,88 @@ else to live. It says "Players" now -- the chip carries the name, and printing i
 screen is not information.
 
 
+
+### Sixth pass: a plate is a highlight, and a column index is not a position
+
+**"When on the profile tab, recent tab is still highlighted."** Third go at the same thing. The
+active tab first kept both its `panel_alt` plate and its accent bar while the chip was selected,
+which drew two gold bars side by side into one 108 px stripe. Dropping the bar was not enough: a
+lit plate is still a lit plate, and the tab went on reading as the selected thing on a screen whose
+cursor was somewhere else. The tab gives up both now and keeps only its brighter label, which says
+"this is where R goes back to" without claiming to be selected.
+
+**Up and Down on the keyboard carried the column index, which is not the same as the position.**
+The rows are staggered like a real keyboard -- ASDFGHJKL is inset 30 px from QWERTYUIOP and
+ZXCVBNM is inset 88 -- so an index carried across a row change drifts right by half a key per row.
+Counted over the letter rows, **16 of the 26 downward moves landed on a key that was not
+underneath**: W went to S with A sitting under it, J went to M with N underneath, and the three
+keys past the end of a short row all piled onto its last one. Pressing down slid the cursor
+sideways.
+
+It moves to the physically nearest key now, measured against a remembered x that only *sideways*
+moves update -- the same rule a text editor uses for a line shorter than the one above, and what
+makes `P` down-down-up-up come back to `P` rather than drifting to `O`. Entering the action row
+picks SPACE or DONE by the same test, so what is below the cursor is what the cursor gets.
+
+Checked twice over: a model of the geometry enumerates every vertical move and every one of them
+now names the key underneath, and `tools/inputs/kb-updown.txt` walks the real thing in ares --
+`1` down three times reaches `Z`, `N` up twice reaches `I`, and `8` down four times reaches DONE,
+each exactly what the model said.
+
+**A category page that was not full could not be left downwards.** Down tested the cursor's row
+against the grid's five, and a separate clamp pulled any cursor that had landed past the end of a
+short page back to the last real cell. On a page that is not exactly 45 those two fought: Treasure
+page 2 holds 32, so Down from cell 27 moved to 36, found it empty, and got dragged back to 31 --
+*sideways*, along the same row -- and every Down after that did nothing. The Icon and Plate rows
+were unreachable.
+
+Not an obscure page, either. The editor opens on whichever page holds the profile's own sprite, and
+for a fresh profile 1 that is Treasure page 2 -- so this was the first thing anybody saw, and it is
+part of why the colour rows read as undiscoverable in the first place.
+
+Down now leaves the grid when there is nothing below the cursor, which is not the same question as
+being on the fifth row. Enumerated over every page shape -- 1 cell, 5, 9, 32, 45, and a full last
+page -- all of them reach the colour rows, and `tools/inputs/iconshort.txt` walks the real one.
+
+
+
+### The loading screen came after the thing it was loading for
+
+On a card with more than one player the order was: ten profile cards, cold and unannounced, then
+the player picks one, *then* the SC64 plate plays over the grid. The boot screen ran second.
+
+boot_plate.c argues at length that the plate must be an overlay and not a `SCREEN_BOOT`, because a
+screen of its own would have to hand over at t=1.64 to something arriving cold -- "one frame of
+empty grid before the first tile lands, which is precisely the second fade-in the spec rules out".
+That reasoning is intact and unchanged. What was wrong was the unstated assumption inside it: that
+the thing underneath is always the grid. It is whichever screen is first, and on a family's card
+that is the picker.
+
+So the plate is one instance in boot_plate.c rather than a struct the grid owns, armed by whichever
+screen gets there first and a no-op for the second. The grid keeps a flag of its own for choosing
+the opening tab, which still has to happen exactly once and is a different question.
+
+**The hold was doing work, and the work had to move with it.** The plate's 1.3-3.0 s hold is when
+covers decode at `DECODE_BUDGET_BOOT_US` -- 14,000 us a frame, free because nothing is animating
+and no input is accepted. That budget belonged to the grid's `background()`. Left there, moving the
+plate would have spent the hold on nothing and dropped the user onto a cold grid behind a curtain
+that had already lifted, which is the exact failure the plate exists to prevent, relocated rather
+than fixed. The picker spends the same budget on the same work now, and the constant moved to
+boot_plate.h because the plate's hold is the only reason it exists.
+
+Measured with `tools/inputs/bootorder.txt`. Four players (`DEMO=1`): the mark is up at frame 40,
+the log reads `BOOT plate held 1316 ms, released by the screen`, the curtain lifts on a picker
+whose four faces are already drawn, and the grid two presses later shows all four Recent covers
+painted -- no second plate and no second fade. One player (the fixture): identical, `1316 ms`,
+plate over the grid, which is what it always did. And the plate fires exactly once per boot --
+reaching the picker later through the chip logs no second `BOOT plate` line.
+
+Readiness is per screen. The grid waits for its first row of covers; the picker waits for the faces
+on its cards, skipping any slot whose sprite the pack does not contain -- `icon_get()` answers NULL
+both for "not decoded yet" and for "no such icon", so a capped build would otherwise hold every
+boot to the 3.00 s ceiling.
+
+
 ---
 
 ### Not done

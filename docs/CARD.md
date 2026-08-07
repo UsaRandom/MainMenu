@@ -10,6 +10,7 @@ your games                                 anywhere, in any arrangement you like
 /cheats.db                                 the cheat database
 /metadata/…                                a downloaded box-art pack
 /mainmenu/                                 created by the menu; see below
+<game folder>/saves/                       created when a game saves; see Players
 ```
 
 **How you arrange your games is up to you.** The menu searches the whole card, five levels deep,
@@ -26,11 +27,41 @@ card out of your library.
 `lithium64.z64` and so on, and every one of those is a normal game extension. Without the skip
 they would all appear in your library as games.
 
-**Where the menu puts its own files.** `/mainmenu/` holds `config.ini`, the parental file and a
-`cache/` folder of decoded covers and play history. All of it is disposable: delete the folder and
-the menu rebuilds it from your card, losing only your settings, your favourites and your play
-history. The three places above are each *also* looked for inside `/mainmenu/`, and in a `/menu/`
-folder if you have one from an older version, so an existing card needs no rearranging.
+**Where the menu puts its own files.** `/mainmenu/` holds `config.ini`, the parental file, the
+player roster and a `cache/` folder of decoded covers and play history. All of it is disposable
+except the roster: delete the folder and the menu rebuilds it from your card, losing your settings,
+your favourites, your play history and the names and faces your players chose. **Your saved games
+are not in there** and are never touched by deleting it. The three places above are each *also*
+looked for inside `/mainmenu/`, and in a `/menu/` folder if you have one from an older version, so
+an existing card needs no rearranging.
+
+## Players
+
+Up to ten people can share a card. A card with one player looks exactly like a card from before
+this existed, and that is deliberate rather than incidental — **player 1 writes where the menu has
+always written**, so upgrading cannot strand a save:
+
+```
+<game folder>/saves/Game.sav               player 1
+<game folder>/saves/p2/Game.sav            player 2
+/mainmenu/cache/playstate.dat              player 1's favourites and history
+/mainmenu/cache/p2/playstate.dat           player 2's
+/mainmenu/profiles.ini                     the roster: names, faces, colours
+```
+
+Saves sit beside the game they belong to rather than in one place, because that is where the menu
+already put them.
+
+Cheat *definitions* are shared — one `cheats.db` for the card — but which of them are switched on
+is per player. So is the play history. The parental code is deliberately **not**: it is one code
+for the whole card, so switching player can never be the way around a locked game.
+
+`profiles.ini` is the one file under `/mainmenu/` worth keeping. Deleting it does not lose a save,
+but every player comes back nameless and faceless in slot order.
+
+**Deleting a player deletes their saved games.** The menu counts them and says how many before it
+asks, and player 1 cannot be deleted at all — those are the unsuffixed paths above, which on a card
+that predates players is every save on it.
 
 | system | file types |
 |---|---|
