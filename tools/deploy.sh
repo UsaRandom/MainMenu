@@ -56,7 +56,20 @@ ROM=output/sc64menu.n64
 # that is the point -- four hardware runs have now been explained, or half-explained, by the ROM
 # on the card not being the ROM that was built, and until this existed there was no way to ask the
 # console which one it was running.
-CODE=$(find src Makefile -type f | LC_ALL=C sort | xargs cat | shasum | cut -c1-6 | tr 'a-f' 'A-F')
+#
+# CR is stripped before hashing, and that is not cosmetic. .gitattributes says `* text=auto
+# eol=crlf`, so git rewrites every working-tree file on checkout: switching to main and back to
+# merge a branch moved this code from 76C714 to E81B87 with not one line of source changed. A code
+# that moves when you change branches cannot do the job it exists for. Normalising here rather
+# than hashing `git ls-files` on purpose -- the question is what the compiler is about to read,
+# which includes uncommitted edits, and the index cannot answer that.
+#
+# LC_ALL=C on the `tr`, and it is load-bearing rather than tidy: src/libs carries files macOS's
+# tr rejects as an illegal byte sequence under a UTF-8 locale, and it does not fail loudly -- it
+# kills `cat` with SIGPIPE partway through and hashes whatever got past. The first version of this
+# fix did exactly that and produced a confident six-character code over a fraction of the tree.
+CODE=$(find src Makefile -type f | LC_ALL=C sort | xargs cat | LC_ALL=C tr -d '\r' \
+       | shasum | cut -c1-6 | tr 'a-f' 'A-F')
 
 # Read from the Makefile rather than written here. This said "v0.1.0" for one deploy after the
 # Makefile said v1.0.0, so the plate on the card reported a version that had not existed for an
