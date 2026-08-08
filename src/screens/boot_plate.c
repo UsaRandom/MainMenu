@@ -50,12 +50,16 @@
  * mark has finished arriving and settled, and it does not end after that until the grid has
  * something on it, up to a ceiling that exists so nobody with 2000 x 1400 covers is stranded.
  *
- * At the measured ~155,000 us per card the first row costs ~0.62 s, which lands inside the
- * 1.30 s floor. So the common case is unchanged at 1.64 s total -- the difference is that the
- * curtain now lifts on painted tiles instead of on placeholders. */
+ * At the measured ~155,000 us per card the first row costs ~0.62 s, which lands well inside the
+ * floor, so the common case is a fixed total -- the difference the elasticity makes is that the
+ * curtain lifts on painted tiles instead of on placeholders.
+ *
+ * Both ends then gained 1.2 s, by request rather than by measurement: the plate carries the build
+ * code, and 1.30 s is not long enough to read six hex digits off a television across a room. The
+ * spec's 1.30 / 1.64 remains the shape of the thing; it is the dwell that changed. */
 #define T_RISE_END      0.55f
-#define T_HOLD_MIN      1.30f
-#define T_HOLD_MAX      3.00f
+#define T_HOLD_MIN      2.50f
+#define T_HOLD_MAX      4.20f
 
 #define MARK_W          192
 #define MARK_H          135
