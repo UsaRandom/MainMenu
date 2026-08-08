@@ -1,0 +1,46 @@
+# The profile screens, against the invented library in tools/mkdemo.py.
+#
+# In manual/ rather than tools/inputs/ so regress.sh cannot pick it up: DEMO=1 and FBSCALE=1
+# belong in neither the hash gate nor the frame-time gate, and a full-resolution dump is 3.5 MB
+# of hex per frame.
+#
+#     make DEMO=1 FIXTURE=1 DEV_HARNESS=1 FBSCALE=1 \
+#          INPUT_SCRIPT=tools/inputs/manual/demo-profiles.txt sc64 -j8
+#
+# The demo card has four players, so the menu opens on the picker rather than on the grid -- that
+# is simply what a card with four players does, and it is why this script needs no navigation to
+# reach its first frame. Waits are long because every one of these is going to be looked at
+# closely, and a sprite that has not finished decoding is invisible in a hash and glaring in a
+# screenshot.
+
+wait 260
+fbdump              # 1: the picker, as the menu opens on it -- four cards, the active one lifted
+
+press right
+wait 40
+fbdump              # 2: the cursor moved along the roster
+
+press z             # the per-profile menu: Name, then Icon and colours
+wait 40
+fbdump              # 3: what can be changed about a player
+
+press down
+press a             # -> the appearance editor
+# It opens on the page holding this profile's own sprite, which can be a short last page. L backs
+# up to a full one: 45 drawings reads as a corpus, 32 reads as a screen that failed to finish.
+press l
+wait 420            # 45 sprites at about one a frame, plus the 60 px preview
+fbdump              # 4: choosing a face, and the two colour rows under it
+
+press b             # keeps the appearance, back to the cards
+wait 40
+press z
+press a             # -> the keyboard, pre-filled with the current name
+wait 60
+fbdump              # 5: renaming, on the QWERTY with its digit row
+
+press b x5          # empty the field, then leave
+wait 40
+fbdump              # 6: back on the cards
+
+exit
