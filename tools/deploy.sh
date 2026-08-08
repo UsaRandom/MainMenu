@@ -49,7 +49,7 @@ export N64_INST
 
 ROM=output/sc64menu.n64
 
-# A six-character code over the source tree, shown on the boot plate as `MENU v0.1.0 A1B2C3`.
+# A six-character code over the source tree, shown on the boot plate as `MENU v1.0.0 A1B2C3`.
 #
 # Deterministic: the same tree always produces the same code, so it is not a timestamp and two
 # builds of the same source are still identical. But any change to any source file changes it, and
@@ -58,10 +58,16 @@ ROM=output/sc64menu.n64
 # console which one it was running.
 CODE=$(find src Makefile -type f | LC_ALL=C sort | xargs cat | shasum | cut -c1-6 | tr 'a-f' 'A-F')
 
-echo "== building a release ROM  [$CODE]"
+# Read from the Makefile rather than written here. This said "v0.1.0" for one deploy after the
+# Makefile said v1.0.0, so the plate on the card reported a version that had not existed for an
+# hour -- which is the exact failure the source code beside it is here to prevent.
+VERSION=$(sed -n 's/^MENU_VERSION[[:space:]]*?*=[[:space:]]*"\(.*\)".*$/\1/p' Makefile)
+[ -n "$VERSION" ] || { echo "no MENU_VERSION in Makefile" >&2; exit 1; }
+
+echo "== building a release ROM  [$VERSION $CODE]"
 # Unconditionally, and with no knobs. Whatever was in output/ before this line is not trusted --
 # that is the entire point of the file.
-make sc64 -j8 MENU_VERSION="\"v0.1.0 $CODE\""
+make sc64 -j8 MENU_VERSION="\"$VERSION $CODE\""
 
 echo
 echo "== checking it is one"
@@ -130,7 +136,7 @@ else
 fi
 
 echo
-echo "  boot plate will read:  MENU v0.1.0 $CODE"
+echo "  boot plate will read:  MENU $VERSION $CODE"
 
 if [ "$EJECT" -eq 1 ]; then
     diskutil unmount "$DEST" >/dev/null 2>&1 && echo "  ejected"
