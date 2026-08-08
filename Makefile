@@ -11,7 +11,15 @@ OUTPUT_DIR = output
 # Numbering restarts at the fork rather than continuing upstream's V0.3.2: the presentation
 # layer is new code, and a V0.4.0 here would read as one of their releases. It stays at 0.x
 # because nothing in this tree has run on a console -- see the banner at the top of README.md.
-MENU_VERSION ?= "v0.1.0"
+# tools/deploy.sh overrides this with a six-character code derived from the source tree, so the
+# boot plate says which build is running. Four hardware runs in a row have now been explained by
+# the ROM on the card not being the ROM that was built -- once because tools/regress.sh had
+# overwritten output/sc64menu.n64 (AUDIT 1at), and once still unexplained. A version string that
+# is the same for every build cannot tell them apart, and nothing else on the console can.
+#
+# It is in CONFIG_STAMP below, because it is baked into three objects by -D and make has no other
+# way to know it changed.
+MENU_VERSION ?= "v1.0.0"
 BUILD_TIMESTAMP = "$(shell TZ='UTC' date "+%Y-%m-%d %H:%M:%S %:z")"
 
 # A harness build stamps a fixed time instead. credits.o is force-rebuilt every make, so the
@@ -239,7 +247,11 @@ SRCS = \
 	menu/image_decoder.c \
 	menu/image_probe.c \
 	menu/music.c \
+	menu/diagreport.c \
 	menu/rom_info.c \
+	menu/romcrc.c \
+	menu/rompatch.c \
+	menu/rompatch_find.c \
 	menu/settings.c \
 	menu/sound.c \
 	screens/boot_plate.c \
@@ -283,7 +295,7 @@ SRCS = \
 # So the cleanup now finds every .o and .d rather than naming directories, which cannot fall
 # behind. This runs while the makefile is read, before any dependency is considered, because a
 # rule would fire too late to affect decisions make has already made.
-CONFIG_STAMP := $(BUILD_DIR)/.config-$(if $(FIXTURE),fixture,plain)-$(if $(DEV_HARNESS),dev-$(notdir $(basename $(INPUT_SCRIPT)))-$(FBSCALE),nodev)-$(shell echo '$(TUNE)' | tr -c 'A-Za-z0-9=' '_')-$(shell echo '$(SRCS)' | cksum | cut -d' ' -f1)
+CONFIG_STAMP := $(BUILD_DIR)/.config-$(if $(FIXTURE),fixture,plain)-$(if $(DEV_HARNESS),dev-$(notdir $(basename $(INPUT_SCRIPT)))-$(FBSCALE),nodev)-$(shell echo '$(TUNE)' | tr -c 'A-Za-z0-9=' '_')-$(shell echo '$(SRCS)$(MENU_VERSION)' | cksum | cut -d' ' -f1)
 $(shell [ -f $(CONFIG_STAMP) ] || { find $(BUILD_DIR) \( -name '*.o' -o -name '*.d' \) -delete 2>/dev/null; rm -rf $(BUILD_DIR)/inputscript_generated.h $(BUILD_DIR)/.config-* $(BUILD_DIR)/$(PROJECT_NAME).elf $(BUILD_DIR)/$(PROJECT_NAME).dfs; })
 $(shell mkdir -p $(BUILD_DIR) && touch $(CONFIG_STAMP))
 
@@ -498,6 +510,10 @@ $(BUILD_DIR)/screens/screen_profiles.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\
 $(BUILD_DIR)/screens/screen_profiles.o: .FORCE
 $(BUILD_DIR)/screens/screen_settings.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\" -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
 $(BUILD_DIR)/screens/screen_settings.o: .FORCE
+# The cheat diagnostic page opens with the version code, so a photographed report can never be
+# read against the wrong build's source -- which has already happened, twice.
+$(BUILD_DIR)/screens/screen_launch.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\"
+$(BUILD_DIR)/screens/screen_launch.o: .FORCE
 $(BUILD_DIR)/app.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\" -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
 
 $(BUILD_DIR)/$(PROJECT_NAME).elf: $(OBJS)
