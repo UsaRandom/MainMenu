@@ -73,6 +73,795 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
+## 2aa. The engine was right and the addresses were not: one cheat entry for six Ocarinas
+
+The first menu-driven launch came back "it booted, cheats did nothing", and every check the
+console can make had passed: engine written, read back, checksum agreeing, `cheats FIT 4 line(s)
+4 carried`, `engine rom+00103c ram 8000043c 16 words in 2 run(s)`, hook `3c1a8000 275a043c`
+resolving to exactly that address. That is the shape of dead end this investigation keeps
+producing, so the marker went back in -- three instructions storing to VI_X_SCALE at the head of
+the engine, ahead of any cheat, depending on no game and no address being right.
+
+**Both launches stretched the picture and neither changed a heart.** One cheat and four; single
+segment and chained. So the engine executes, the chain executes, the stores execute -- and they
+were writing to addresses that mean nothing in this binary. That also retires the last unproven
+piece of 2z: control really does jump 0x8000043c → 0x8000357c and come back through the tail.
+
+The database entry the menu loaded was `CZL?`, version 255, **553 groups** -- every Ocarina
+revision and region merged into one:
+
+| | database | the V1.2 file that gave 20 hearts |
+|---|---|---|
+| Max Heart Containers | `8111A5FE 0140` | `8111ACAE 0140` |
+| Infinite Rupees | `8111B99C 0001` | `8111C04C 0001` |
+
+0x8011A5FE is **V1.0**'s save context. The cartridge is `CZLE v2`. Worth recording separately:
+2x's inline stub was aimed at 0x8011B99C, taken from this same entry -- the wrong revision's
+Infinite Rupees. Even had it executed, nothing would have happened.
+
+The cause is a granularity mismatch two tools apart. `rom_info.c`'s Ocarina row is a `MATCH_ID`,
+which matches any region and any revision **on purpose** -- that is right for choosing a save type
+and wrong for choosing cheat addresses. mkcheatkeys.py carried that straight through, so all three
+USA revisions keyed to `CZL? / ANY`; mkcheatdb.py merges on `(check_code, game_code, version)` and
+deduplicates by name, first wins; V1.0 sorted first. The filename said `(U) (V1.2)` the whole time
+and the script parsed the region out of it while discarding the revision.
+
+`revision_of()` now reads `(V1.x)` and `(Rev N)` from the corpus filename and lets it override the
+database row's version. Lettered revisions are deliberately not decoded -- "Rev A" → 1 is a
+convention, not a fact, and a wrong one here is silently wrong cheats. An unmarked filename stays
+ANY rather than being guessed at 0, which is what keeps the wildcard row alive as a fallback.
+
+**73 of 1039 keyed corpus files gained a concrete revision**, and Ocarina splits into six entries:
+
+    CZL? v0    34 groups   Max Heart Containers 8111A5FE
+    CZL? v1   245 groups                        8111A7BE
+    CZL? v2   337 groups                        8111ACAE   <- the cartridge
+    CZL? v255 325 groups   (Master Quest, GameCube editions, unmarked dumps)
+    NZL? v0/v1/v255                             the PAL builds, split the same way
+
+Simulating `find_row()` over the fifteen-ROM shelf: every game resolves the same as before or
+better, and Ocarina moves from the merged wildcard to `CZL? v2`. All seven ticked names exist in
+it with the V1.2 addresses, so `cheatstate.dat` -- keyed on the name hash, not the index -- carries
+the user's selection across the rebuild.
+
+**And the host suite caught a second bug, pre-existing, that the split made visible.** Five checks
+went red on `NSMJ`: Super Mario 64 carries both a wildcard `NSM?` row and a Japan-specific `NSMJ`
+one, both match a Japanese cartridge, and `find_row()` returned whichever sat earlier in the
+index -- the merged all-regions row. That was true before this change and simply unobservable.
+`find_row()` now ranks by specificity rather than taking the first hit: exact four-character code
+beats three-character wildcard, exact version beats the ANY sentinel. 4,317 checks, 0 failures.
+
+Method note, because it is the same one AUDIT keeps writing down: the ares loop validated the
+*algorithm*, and the console runs an independent C implementation of it fed by a database ares
+never touches. Two of the three things that broke after "it works in ares" were in the half ares
+cannot see. The marker is the instrument that made both findable in one launch each, and it costs
+three instructions.
+
+## 2z. The menu does it now, and the gap rule turned on one instruction
+
+Both pre-patched Ocarina images booted on the M64 and did what they were built to do -- the marker
+stretched the title screen 2×, the cheat build gave 20 hearts, 9 bombs and 9 arrows off the user's
+own save. So the ROM edit is confirmed on hardware and the remaining work was to move it from a
+file a PC writes to three PI writes the menu makes at launch, which is the same three edits into
+cartridge SDRAM that 2m already proved this console accepts and reads back.
+
+**Capacity forced one design decision.** A single padding run holds about six cheats -- Ocarina's
+is 108 bytes, 27 words, less four for guards and four for the tail -- and Ocarina's "Infinite Big
+Key, Small Keys, Compass & Map" is nineteen lines on its own. So the engine is allowed to be
+discontiguous, each segment ending with `j` into the next and its delay slot, two words a hop.
+
+**And chaining is where the naive gap rule died.** A 70-word engine spread over ten runs
+black-screened; 19 and 28-word engines over two runs boot and run. The ten-run version reached
+into runs at 0x800067e0 and 0x80006804, and dumping their neighbourhoods says why:
+
+    good, ram 80005004 (DK64)      27bd0028  03e00008  <- jr $ra, run swallowed the nop delay slot
+    good, ram 80003574 (Ocarina)   03e00008  a02b902f  <- jr $ra, then the delay slot, then padding
+    bad,  ram 800067e0 (Ocarina)   80006d30  00000008  <- a {pointer, length} record
+    bad,  ram 80006804 (Ocarina)   00000000  00000001  <- more of the same table
+
+"A run of zeros bounded by non-zeros" cannot tell padding from a zero-valued field. What can is
+what precedes it: real padding follows a function's last instruction, so a `jr`/`j` sits one or two
+words back. Over the fifteen-ROM shelf that rule keeps every run that has ever booted -- on
+hardware or in ares -- and drops 37 of Ocarina's 39 candidates, including all four the failing
+chain used.
+
+**One instruction decides it.** 0x00000008 is a well-formed `jr $zero`; no compiler emits one and
+it is an extremely common data value, so accepting it makes `{pointer, 0x00000008}` look exactly
+like the end of a function. The first version of the rule accepted it and kept the bad runs. That
+is now `rompatch_run_is_padding()`, split into rompatch_find.c so the host suite can reach it, and
+pinned by nine checks built from the words measured either side of the real runs above. Deleting
+the `jr $zero` exclusion turns exactly one of them red, which is the whole point of writing it
+down as a table of real addresses rather than as a plausible predicate.
+
+Three complications disappeared with the boot-time engine:
+
+- **No DMEM patch, so no `nop486`.** That coupling -- the header computed for a bootcode edit made
+  somewhere else -- broke in both directions across three builds (2t, 2v). The header this writes
+  describes the cartridge exactly. `cheats_disable_x105_check()`, `boot_params_t::rom_patched` and
+  the `crc_nop486` pairing are all gone.
+- **No fallback to the Datel path, and that is a fix rather than a simplification.** Handing
+  `cheat_list` to `boot()` when rompatch wrote nothing would have `cheats_install()` nop DMEM word
+  486 against a header that still describes the pristine image -- byte 0x798 is inside the window
+  6105 mixes in -- so "your selection contains a conditional" would have become a black screen on
+  every 6105 game. `bp->cheat_list` is now always NULL: cheats apply through the cartridge or not
+  at all, and the log says which.
+- **Nothing has to survive the handoff**, so `skip_rdram_reset` is irrelevant to cheats.
+
+The limits are real and reported rather than worked around. Unconditional 8/16-bit writes only
+(0x80/0x81/0xA0/0xA1, GS-button bit clear) because the engine emits no branches; a selection
+containing anything else is refused **whole**, never filtered, because a `D0` and the write it
+guards are one indivisible thing (2.2). At most four segments and 128 words. Per-game capacity
+from the shelf sweep: Ocarina 8 cheats, Banjo-Kazooie 5, Tony Hawk 9, GoldenEye 3, Shadows of the
+Empire 2, 1080 7, Donkey Kong 64 42, Mario Party 269.
+
+Still open: the gap is *chosen* by a heuristic and only *proved* by booting the game. Ocarina and
+Donkey Kong 64 are proved. The rest are argued from a rule that has never yet kept a bad run --
+which is not the same claim.
+
+## 2y. The engine runs. It arrives in the ROM file, and ares can see it in one second
+
+The inline stub of 2x went black on hardware, and its safety argument was wrong in a way worth
+naming: it did **not** differ from the canary "only in the values". The canary reaches
+`__osException` with `jr $k0` and `$k0` holding `__osException`'s own address; the stub reaches it
+with `j`, having spent `$k0` as the store's base register. Any dependence on that register on
+entry breaks. The prior that made it worth one shot was based on a difference that was not the
+only difference.
+
+That is eight rounds, and the loop itself was the problem: every one of them cost a build, a card
+handover and a photograph, and four of the eight were void on self-inflicted probe bugs. So the
+question changed from *where does the engine live* to *why does it arrive at run time at all*.
+It does not have to. IPL3 copies ROM `[0x1000, 0x101000)` into RDRAM before the game's first
+instruction; an engine inside that megabyte is installed by the console, from the cartridge,
+through the same DMA that loads the game. No survival, no cart write, no IPL3 patch, no timing --
+and the artefact is a **file**, which a PC builds and an emulator boots.
+
+`tools/rompatch.py` makes three edits, all inside the checksum window: the engine into a run of
+zero padding, the preamble's first two words repointed at it, and CRC1/CRC2 recomputed. The
+engine's tail replays the preamble's own two words and `jr $k0`, so `__osException` is entered
+with exactly the register state it had before -- the thing 2x got wrong. `tools/aresshot.sh` boots
+a ROM and screenshots it, which turns the round trip from a day into about thirty seconds.
+
+**The gap rule is reversed, and that is what 2w actually died of.** `rompatch.c` took the *last*
+long-enough zero run, on the reasoning that padding collects at the tail. It does not: on Ocarina
+that picks ROM 0x04125c, 9,204 bytes of zeros inside compressed asset data at RDRAM 0x8004065c --
+which both corrupts an asset and lands in RAM the game reuses within a second. The rule here takes
+the *lowest* run that fits, caps it at 1,024 bytes so a data void cannot qualify, and leaves two
+zero words as guard either side. On Ocarina that is ROM 0x004174: 108 bytes between a function
+ending `03e00008 jr $ra` and one beginning `40846000 mtc0`, at RDRAM 0x80003574, inside resident
+boot code and below the 0x4a20 bytes at 0x80006d60 that the entry stub clears.
+
+Three ares runs, all on Ocarina (U) 1.2, CIC 6105, entry 0x80000400, preamble at ROM 0x0031f0 /
+RDRAM 0x800025f0 → 0x80002600:
+
+| image | engine | result |
+|---|---|---|
+| unpatched | — | intro cutscene, **61 VPS** |
+| chain only, 4 words at 0x8000043c | tail alone: a copy of the preamble | title screen, **60 VPS**, indistinguishable |
+| marker, 7 words at 0x8000043c | `sw` of 0x0100 to VI_X_SCALE, then the tail | title screen, **59 VPS**, picture stretched exactly 2× |
+
+The middle row is the control: the vector now routes every exception through our code and the game
+does not notice. The bottom row is the result this investigation has been trying to get for eight
+rounds -- **the handler executes**, sixty-plus times a second, and the game keeps running at full
+speed while it does. A store to VI_X_SCALE was chosen over a game cheat deliberately: it needs no
+save, no input and no knowledge of the title, and it cannot be confused with a crash, because a
+crash is black and this is the same title screen at the wrong scale.
+
+Two complications simply disappear. There is no DMEM patch, so 6105's runtime code check has
+nothing to defeat and the `nop486` coupling that broke in both directions across three builds
+(2t, 2v) is gone -- the header genuinely describes the image. And `skip_rdram_reset` no longer
+matters, because nothing has to survive the handoff.
+
+Shelf sweep, 15 ROMs: **10 patch under the strict rule**, gap sizes 44 to 112 bytes. Of the five
+refused, three carry a preamble the strict rule rejects, and two of those -- 1080 Snowboarding and
+Harvest Moon 64 -- put `__osException` at **+212 rather than +16, the same number in two unrelated
+games**, which is a different libultra build rather than a coincidence. `--accept-odd` takes any
+forward target inside 4 KB; it still refuses GoldenEye's 0x700101A0, which is not a KSEG0 address
+and therefore not an address. Shadows of the Empire has nothing preamble-shaped in the megabyte at
+all, and Pokemon Stadium is refused by the pre-existing gate, its header having disagreed with its
+own contents before anyone touched it. **12 of 15 patchable, and the three failures are loud.**
+
+The heuristic is not trusted, it is booted. Five marker builds run in ares, and the stretch is
+visible in every one:
+
+| game | cic | engine | result |
+|---|---|---|---|
+| Ocarina of Time | 6105 | 0x8000043c | title screen, 59 VPS, 2× stretch |
+| Donkey Kong 64 | 6105 | 0x8000500c | DK Rap intro, 59 VPS, text clipped off the right edge |
+| Banjo-Kazooie | 6102 | 0x80002ff8 | attract, 61 VPS, stretch confirmed against an unpatched baseline |
+| 1080 Snowboarding | 6103 | 0x80003170 | title, 60 VPS, `SNOWBOARDING` clipped -- `--accept-odd` |
+| Harvest Moon 64 | 6102 | 0x800ff454 | attract, 60 VPS, 2× stretch -- `--accept-odd` |
+
+Five games, four CIC variants, two preamble layouts, gaps from 44 to 108 bytes and RDRAM
+addresses from 0x80000434 to 0x800ff454. Banjo is the one that needed a control: at 2× a
+waterfall is not obviously wrong until an unpatched shot of the same frame is beside it.
+
+Open, and the reason the hardware round is a file and not a menu change: ares is not an M64. Two
+pre-patched Ocarina images are on the card -- a marker build and one carrying max hearts, infinite
+energy, bombs and arrows (16 words at RDRAM 0x8000357c) -- plus the DK64 marker, because launching
+a file tests the ROM edit with no menu code in the path at all. What that cannot test is the
+menu-side version of the same three writes, which is where this has to end up: a 32 MB file copy
+per launch is not a shipping design, and cartridge SDRAM already accepts these writes and reads
+them back (2m).
+
+## 2x. Stop placing an engine: the cheat fits in the four words the game already copies
+
+Two measurements ended the placement hunt. First, running find_zero_run()'s logic over all 15
+shelf ROMs: **14 of them have no zero run of 64+ words anywhere within ±32 KB of their preamble**
+(only Donkey Kong 64 does). There is no in-image home for an engine, in general or for Ocarina.
+Second, re-reading the pre-August behaviour against the code: launches booted with cheats inert,
+which means the patcher's own preamble scan -- which WOULD have hooked correctly -- never ran, so
+the IPL3 DMEM patch does not take on this console. Combine that with menu-context RDRAM writes
+not surviving the handoff, and every engine-based design has both of its placement mechanisms
+broken at once. That single sentence explains all seven rounds without needing the placements to
+have been individually wrong.
+
+So the design changes shape: **no engine, anywhere.** libultra copies four words from
+`__osExceptionPreamble` onto the exception vectors. A GameShark write cheat needs three
+instructions, and the jump home needs one -- which fits exactly, because MIPS executes the jump's
+delay slot, so the store goes there:
+
+    lui  $k0, 0x8012          # A_BASE(0x8011b99c), the +1 sign-extension carry
+    ori  $k1, $zero, 0x0001   # the value
+    j    0x80002600           # the game's own __osException
+    sh   $k1, 0xb99c($k0)     # delay slot -- runs before the jump lands
+
+Every exception the game takes, sixty-plus times a second, writes the cheat and hands control to
+the real handler. No RDRAM survival, no IPL3 patch, no patcher, no cart execution, no relocation:
+the only address involved is the preamble, which is already proven writable and read-back-verified
+on this console. $k0/$k1 only, the same registers the preamble itself clobbers, and libultra's
+__osException overwrites $k0 in its own first instruction.
+
+The safety argument is the canary's: the canary rewrites the same four words at the same offset
+with the same recomputed checksum and boots every time. The stub differs only in the VALUES, which
+are four valid instructions ending at the address the canary jumps to. If the canary boots, this
+boots -- and if it boots, the cheat has already happened. That is a much stronger prior than any
+placement round had.
+
+Verified before shipping, since the encodings could not be checked by the host suite (the
+assembler macros are compound literals, unusable in static initialisers and endianness-dependent):
+the four macros were compiled by the real MIPS toolchain and disassembled, giving
+`3c1a8012 341b0001 08000980 a75bb99c` = exactly the listing above, with the store's effective
+address computing to 0x8011b99c. Both the encoding and the sign-extension carry are therefore
+measured, not reasoned about. The words are also written to launch.log every launch, so a black
+screen still returns them for hand-checking.
+
+The hard limit, stated plainly: **one unconditional 8- or 16-bit write per game.** Conditionals,
+repeaters and multi-line groups do not fit in four words, and a selection containing any of them
+is refused whole rather than half-applied (AUDIT 2.2's lesson). Infinite Rupees is one line, which
+is why it is the test. If this works, the shipping question becomes which cheats qualify, and the
+answer for most "infinite X" codes is that they do.
+
+## 2w. The in-image gap was inside compressed game data, and the cheat patch path ships disabled
+
+07990B -- the 6105 check disabled independently of the cheat list -- still black with a cheat
+ticked. The 6105 fix is a real fix for a real bug and remains UNPROVEN, because the vehicle
+carrying it was independently broken, which a measurement off the ROM file settles without
+hardware.
+
+Running find_zero_run()'s exact logic over Ocarina on the host: the last qualifying run starts at
+ROM 0x04125c, so the trampoline went to ROM 0x04129c, RAM 0x8004069c. The bytes bracketing that
+run are `ff71b102 1308fe81 f303f2fa ffff0000` before and `d320d532 d75ef7a0 0031a100` after --
+high-entropy compressed content, not padding. So the write corrupted Ocarina's own data, and the
+RAM address sits far past the resident boot segment in memory the game reuses within its first
+frames. "Padding collects at the tail" was asserted, not measured, and is false for this ROM.
+Both failure modes are consequences of that one wrong assumption; the probe tested neither
+placement nor the 6105 fix. (The first qualifying run, 0x026bf8 -> RAM 0x80025ff8, is a candidate
+a future attempt should prefer, though it too is probably beyond OoT's resident boot segment.)
+
+**Decision: ROMPATCH_ENABLED 0, and the menu ships that way.** Seven hardware rounds produced no
+launch where a ticked cheat both booted the game and ran the engine, and the failure mode is the
+worst available -- ticking a cheat black-screens the console. A menu whose cheats do nothing is
+strictly better than a menu that bricks a launch. With the patch off, the engine falls back to the
+runtime preamble scan, which is upstream's behaviour and every pre-August launch's behaviour:
+games always boot, and on this console cheats are inert because the scan does not find its hook.
+L and R stop reserving themselves for the diagnostic page.
+
+Kept, not deleted: rompatch, romcrc, the diagnostic page, the beacon and the whole apparatus, all
+of it behind one #define, with 4,048 host checks and a photographed all-green hardware run
+standing behind the parts that ARE proven -- the cartridge is writable and verifiable in menu
+context, the preamble finder agrees with the Python across 24 ROMs, and the checksum arithmetic
+reproduces 23 of 24 real headers. What was never established is any engine placement that
+executes. Two candidates remain honestly untested: 807C5C00 with the nop written (E371D1 showed
+no beacon bar there, unexplained) and a gap inside the resident boot segment.
+
+Method note for whoever resumes this. Of the seven rounds, at least four were void for reasons
+introduced by the probe rather than found in the hardware: a control that could not fail (2s), a
+header computed for a nop the launch would not write (2t), the nop removed along with the cheat
+list (2v), and a gap chosen inside compressed data (2w). The house rule "check that a test can
+fail" was applied to the harness and not to hardware probes, and that is where it was needed
+most. A hardware probe should state, before it runs, what each outcome will mean AND what it
+assumes about the world -- the second half is what kept being skipped.
+
+## 2v. It was never the placement: 6105's runtime code check, armed against every probe
+
+30C415 -- the in-image trampoline, placed by the game's own IPL3 load, in the game's own RDRAM,
+inside the mapped region, running cached -- black. That result has no survival, mapping or PI
+explanation left, which is what makes it the useful one: if a trampoline in the game's own loaded
+image still black-screens, the target address was never the variable, and five rounds of
+placement work were measuring something that was not moving.
+
+The actual mechanism was in the tree the whole time, at cheats.c:374, in a comment: CIC 6105's
+IPL3 performs a **runtime game-code verification** beyond CRC1/CRC2, and every cheat engine since
+Datel disables it by writing a nop over DMEM word 486. That write lives inside
+cheats_patch_ipl3(), reached only from cheats_install(), which returns at its first line when
+there is no cheat list. Ocarina is 6105. So:
+
+| run | boot segment edited | nop written | result |
+|---|---|---|---|
+| canary (all builds) | yes | YES -- cheat_list non-NULL, full install path | boots |
+| 0A51D5 rom-hook | yes | no -- 2n's early return skipped patch_ipl3 | black |
+| D3E6D8, 5FEE6B | yes | no -- same | black |
+| E371D1 patcher | yes | yes | black (its own RDRAM placement fault) |
+| 8ACA4F cart tramp | yes | no -- NULL cheat list | black |
+| 30C415 in-image | yes | no -- NULL cheat list | black |
+| pre-Aug-4 launches | no | yes | boots, cheats silently inert |
+
+Every black screen in rom-hook mode is explained, and so is the canary: it booted not because
+its bytes were harmless but because its launch carried a cheat list and therefore wrote the nop.
+The control that could not fail (2s) also could not isolate -- it differed from the probes in a
+second variable nobody was tracking. The isolation probes each removed the cheat list to remove
+the RDRAM engine, and removed the nop along with it, arming a check against a modified image.
+
+The fix separates the two: cheats_disable_x105_check() is lifted out of the install path, and
+boot() calls it whenever boot_params.rom_patched is set, independently of the cheat list. nop486
+returns to true and its meaning is corrected -- it tracks "will the nop be written", which is no
+longer the same question as "will cheats_install() run". The page's MISMATCH line now compares
+against launch_patch.written rather than the mode.
+
+What this does NOT establish: whether any of the four placements works. All four tests were void.
+The next run re-tests in-image with the check disabled, and if it boots, the placements that were
+convicted in 2n-2u deserve re-examination before any of them is treated as ruled out -- 807C5C00
+with a live engine may have been fine all along.
+
+## 2u. Cart execution fails too, and the pattern names the one placement left
+
+8ACA4F re-ran the cart-SDRAM trampoline with the header and the bootcode finally agreeing
+(nop486 false, no IPL3 patch, no nop) and came back black. That is the clean read §2t said was
+still owed, and it is a no: with the four words verified present at 32 MB and the checksum
+consistent, a preamble aimed at 0xB2000000 does not produce a running game. Most likely the SC64
+stops mapping addresses past the loaded ROM once the game is running -- the read-back happened
+in menu context with write-enable set, which is a different cart state -- so the jump lands in
+unmapped space. Not proven; not worth a run to prove, because the conclusion either way is that
+the engine cannot live past the ROM.
+
+Four placements, one pattern: **every redirect to an address the game does not already own goes
+black, and the canary's redirect to the game's own handler boots.** RDRAM at 807C5C00 twice
+(menu copy, patcher), cart SDRAM once, against the game's own __osException. Since the
+trampoline hands __osException identical register state to the untouched preamble -- $k0 =
+0x80002600, same as it would have been -- a black screen means the trampoline did not execute,
+never that it executed wrongly. So all four results are about WHERE the code sits, and three
+distinct wheres have failed for three plausibly distinct reasons: RDRAM not preserved across the
+handoff, RDRAM not preserved across the handoff again, and cart space not mapped or not
+fetchable at runtime.
+
+30C415 tries the last placement that dodges all three at once: inside the game's own boot
+segment. ROM [0x1000,0x101000) is what IPL3 copies to RDRAM at the entry address, so four words
+written into a run of zero padding there arrive in RDRAM by the same DMA that loads the game --
+placed by the game's own loader, inside the mapped region, executing cached with no PI fetch and
+nothing asked of reboot.S. rompatch_install_inimage() scans for the run (last long-enough one
+wins, since padding collects at the tail; 16 guard words of zero required either side), writes
+the trampoline, points the preamble at its RAM address, recomputes the header over both, and
+reads back. The page reports the offset, the RAM address and the gap size, so a photograph shows
+where it went. Residual risk, stated before the run: a zero run in the image may be BSS the game
+later writes over, which would show up as a game that boots and then dies rather than one that
+never starts. Boots = placement solved and the real engine follows into that gap; black = every
+placement available to this design has failed and the honest move is the shipping decision in
+§2v rather than a fifth address.
+
+## 2t. The trampoline was in the cartridge all along; the header was computed for a nop nobody wrote
+
+The R run on 0F86F4 photographed `crc ok 1  found 1  written 1  read back 1  agrees 1`, so
+hypothesis (a) of §2s is dead: the four trampoline words ARE in cart SDRAM at 32 MB, read back
+word-for-word, and the patched image agrees with its recomputed header. But the page also shows
+why the boot died, and it is not cart execution.
+
+ROM-trampoline mode hands boot() a NULL cheat list so cheats_install() returns at its first line
+-- no IPL3 patch, so no I_NOP into DMEM word 486 -- while the header was computed with
+nop486=true, i.e. for a bootcode window containing that nop. Ocarina is CIC 6105, the only CIC
+that mixes 256 bytes of its own bootcode (offset 0x750) into the checksum, and byte 0x798 is
+inside it. Console computes one number, header carries another, IPL3 refuses the image. Black,
+for a checksum reason, with the execution question never reached. The invariant broken here is
+the one written into this file at 2n and into the code at 2q -- "the two switches move together"
+-- now broken in both directions within four builds.
+
+`agrees 1` cannot catch it, and that is the more useful finding: reverification checks our
+arithmetic against our own nop assumption, so a header computed for a nop the launch will never
+write reads as agreeing right up to the moment the console disagrees. The instrument was
+self-consistent and wrong, the same shape as the canary in §2s. The fix is nop486=false for
+trampoline mode plus a page line printing header-assumption against will-actually-write with an
+explicit MISMATCH flag for 6105, so the next occurrence is visible in a photograph rather than
+inferred four builds later.
+
+The cart-execution question is therefore still OPEN, not answered -- 0F86F4 tested nothing about
+it. The re-run is the same probe with the checksum consistent.
+
+## 2s. The ROM trampoline is black too, and the canary turns out not to be a control
+
+0F86F4 -- preamble aimed at a four-word trampoline in cart SDRAM at 0xB2000000 -- black. Three
+placements now fail (menu-context RDRAM, patcher-context RDRAM, cart SDRAM) while the canary
+boots, and the pattern across all four is sharper than any one of them: the ONLY variable is the
+address the preamble computes into $k0. 0x80002600 (the game's own __osException) boots;
+0x807C5C00 and 0xB2000000 both black. Same two-instruction shape, same CRC path, same everything
+else.
+
+**The canary cannot fail, and that invalidates how it has been read.** It rewrites the preamble
+to compute the identical target, so a canary launch boots if the patch survives into the game AND
+boots if the patch is reverted, ignored, or re-streamed away -- one outcome for both worlds. It
+proves the menu-side write and the checksum arithmetic (both real, both read back), and it proves
+IPL3 accepts a modified boot segment with a recomputed header. It proves nothing about whether
+the patched preamble is what the running game executes. Exactly the test-that-cannot-go-red this
+project's own house rule warns about, live for eight hardware rounds.
+
+Two live hypotheses, and one instrument already on the card can split them. (a) The trampoline
+write at 32 MB never stuck -- install() writes the preamble hook BEFORE the read-back and does
+not roll it back on failure, so a failed verify leaves a cart whose preamble points at absent
+code, which is black. (b) It stuck, and cart-space instruction fetch during exception handling
+is the fault -- a genuine hazard, since an exception taken while the game has a PI DMA in flight
+would fetch the handler over the same bus. R on the detail sheet runs FULL (the trampoline) with
+the diagnostic page and does not boot, so `read back` on that page reads out (a) directly: 0
+means the write did not stick, 1 means it did and the fault is execution. No rebuild required.
+
+If (a): the fix is placement inside the loaded image -- write the engine into a run of zero words
+in the ROM's boot segment, where IPL3's own DMA puts it in RDRAM as part of the image, which
+sidesteps both survival (IPL3 places it) and cart execution (it runs cached from RDRAM).
+
+## 2r. Two RDRAM placements dead, so the engine moves into the cartridge
+
+E371D1 -- patcher placement, game context, the mechanism upstream ships on real SC64 hardware --
+came back pure black, no bar. That is the second placement mechanism to fail (menu-context copy
+was 5FEE6B). Both write the engine to 807C5C00 in RDRAM; neither executes at the game's first
+exception. On a real N64 807C5C00 is where the GameShark has lived for twenty years, so this is
+not the address -- it is the M64 not preserving RDRAM across the boot handoff, for menu-context
+AND game-context writes alike. The RDRAM-engine approach is dead on this console. (A caveat kept
+honest: the patcher only runs if the IPL3-patch link fires, itself never independently confirmed
+on the M64, so "patcher placement failed" may fold in "patcher never ran" -- but the conclusion
+is the same, RDRAM is not the place to put the engine here.)
+
+What DOES survive the handoff is the one thing the hook already writes and reads back: cart
+SDRAM. rompatch writes it with CFG_ID_ROM_WRITE_ENABLE set; the handoff only clears the
+write-enable, leaving the contents readable over the PI for the whole life of the game. So the
+engine moves there. 2r ships the minimal proof: rompatch_install_rom_trampoline() writes the
+preamble's own four words (word0, word1, jr $k0, nop) into cart SDRAM 32 MB in -- past every
+reference game, inside the SC64's 64 MB, outside the checksum window -- and aims the preamble at
+0xB2000000 (KSEG1). The CPU executes those four words from cart over the PI and jumps to the real
+__osException, behaviour identical to no hook. Boots = cart-SDRAM execution and preamble routing
+both work, and the real engine follows into ROM the same way; black = routing is the fault, not
+survival, which would be a genuinely new finding. The four-word copy is read back before boot, so
+a cart too small or a write that did not stick is reported rather than silently black. FULL mode
+is this probe; cheats do nothing this build (cheat_list is dropped, no RDRAM engine, no IPL3
+patch). Pre-registered before the run.
+
+## 2q. No bar, no boot: placement confirmed as the fault, and the patcher comes back
+
+5FEE6B -- beacon + tail, watch block and cheat stores gated out -- came back pure black, no bar.
+That is decisive in a way the silent trampoline was not: a beacon+tail engine that executed
+would either paint (VI set up, the normal case for an OoT interrupt) or, if it somehow skipped
+the paint, still replay the preamble and hand off, which boots. It did neither. The engine at
+807C5C00 is not executing on the first exception. With the canary proving the cart preamble
+rewrite and read-back proving the hook names 807C5C00, entry is not the suspect -- placement is.
+The C-side engine copy, written in menu context inside boot() before reboot.S, does not survive
+the handoff into the game on the M64. Risk 2 (skip_rdram_reset preserving RDRAM on the clone,
+unverified) is now a confirmed negative for menu-context writes.
+
+The fix reverses 2n: the IPL3 patch and its patcher return in rom-hook mode, so the engine is
+placed DURING the game's IPL3 -- game context, after the reset decision, the mechanism the Datel
+engine has always used and the one upstream ships on real SC64 hardware. The cart hook is kept
+for entry (proven), the patcher does placement (survives). The 6105 nop is coupled back on with
+it (nop486 true, header recomputed to match). The build stays beacon+tail so the same eye
+answers: a bar now means patcher-placement fixed it (next build restores the cheat store and
+pins rupees); still black means nothing menu-written survives even via the patcher, and the
+engine must move into cart ROM, which is survival-independent. Pre-registered before the run.
+
+## 2p. The silent trampoline was untestable, and the survival hypothesis it points at
+
+D3E6D8 -- the four-word tail-only trampoline -- came back black, and that result carries less
+than it looks: a silent trampoline emits no output, so "never executed" and "executed and the
+hand-off crashed" produce the identical black screen. The build could not distinguish its own
+two outcomes. Recorded as a method error in the same family as the ares-only beacon and the
+gated launch.log: a probe whose two branches look alike proves nothing.
+
+Reading boot.c and reboot.S against the rom-hook change surfaced the mechanism the trampoline
+was meant to test. The old patcher placed the engine DURING the game's IPL3 (reboot.S runs the
+game IPL3 at 0xA4000040; the DMEM J hook diverted it into the patcher, which wrote the engine to
+RDRAM in game context, after any reset). Rom-hook mode deleted the patcher and moved placement
+into cheats_emit(), which runs in MENU context inside boot(), before reboot.S -- so the engine
+at 807C5C00 now survives into the game only if reboot.S's skip_rdram_reset (a0=cheats_installed,
+which skips the RI_REFRESH/RI_SELECT writes) genuinely preserves RDRAM contents on the M64. That
+is Risk 2 in the plan, explicitly unverified on this clone. A byte-perfect trampoline going
+black is exactly the signature of "807C5C00 holds garbage at first exception". The competing
+explanation is the cart preamble hook not routing there at all -- but the canary boots, proving
+the rewrite mechanism, and read-back proved the hook words name 807C5C00.
+
+The next build (beacon + tail, watch block and cheat stores gated out; see ENGINE_TRAMPOLINE_ONLY
+in cheats.c) makes the probe testable by giving it an eye: a bar means the engine executed, its
+absence means it did not. If no bar, the fix is to place the engine in game context again --
+re-run the patcher for placement while keeping the proven cart hook for entry -- or to move the
+engine into cart ROM, which sidesteps RDRAM survival entirely. If a bar appears but the game then
+dies, placement is fine and the displaced words or the hand-off are wrong.
+
+## 2o. Still black with a pristine boot chain, so the engine itself goes under the knife
+
+0A51D5 -- no IPL3 patch, no patcher, plain-flavour header -- and the report is the cleanest
+split yet: "game does not boot with cheats, does without". §2n's third prediction fires. What
+remains in a cheated boot that a cheatless one lacks: the two hook words in the cartridge
+image (exercised by the canary, which boots), the recomputed header (plain flavour, the
+23-of-24-validated one), and the engine at 807C5C00 -- its code, or its survival there through
+reboot.S's skip_rdram_reset on a clone console whose memory init nobody has audited.
+
+Stage 1 of the binary search ships as ENGINE_TRAMPOLINE_ONLY in cheats.c: the engine is
+exactly its tail -- displaced word replay, jr, nop -- so the first exception enters 807C5C00,
+executes four instructions, and lands in the real __osException. Boots = placement, RDRAM
+preservation, hook entry and handoff all proven in one run, and the guilt moves into the
+engine body, where the prime suspect is the watch-relocation prologue: it leads with a BNEL,
+a branch-likely -- the classic soft spot of FPGA MIPS clones -- and an MTC0 to a watch
+register the M64 demonstrably does not implement (§1af: control=1, trapped=0). Still black =
+placement is the lie, and the next look is at what the M64's IPL3 actually does to RDRAM when
+told to skip the reset. Stage 2, pre-registered: tail plus cheat stores, no watch block, no
+beacon -- prediction: boots and pins rupees at 1, after which the watch block is removed from
+rom-hook mode permanently rather than debugged, same policy as §2n.
+
+## 2n. The first true engagement goes black, so the unproven link is amputated
+
+Build 7F6AF3, the first with the gate open: Ocarina, cheat ticked, Start -- fade, then black,
+held twenty seconds. Persistence still works. And the record reframes itself: the Aug 4 "black
+screen" carried the same full cheat path (blamed on the flash hold at the time), and every run
+where games visibly ran with cheats ticked was the era when the runtime scan silently missed
+and the engine never hooked. Taken together: the full cheat path has plausibly NEVER completed
+on this console, and the rupees never changed because the engine never ran, not because it ran
+wrong.
+
+What distinguishes a cheated boot from the cheatless boots that work: the ROM hook (verified by
+read-back, exercised by the canary), the engine at 807C5C00 (k0/k1-contract emitted code,
+placed from C, RDRAM preserved), and the boot-time machinery -- cheats_patch_ipl3() writing a J
+into the CIC's bootcode in DMEM, jumping into the emitted patcher. That last link is the one
+thing no instrument has ever confirmed on the M64, and in rom-hook mode it is also pure legacy:
+the hook is already in the cartridge and the engine is already placed. So it is removed rather
+than debugged -- cheats_install() now skips the IPL3 patch entirely in rom-hook mode, the
+beacon's green stamp moves to C, and the header checksum flips to the pristine-IPL3 flavour
+(ipl3_nop_486 false end to end), because without the DMEM nop a 6105 console verifies the
+hooked image against unmodified bootcode.
+
+Accepted costs, recorded: 0xF0/0xF1/0x20/0xEE patcher-time codes are silently skipped in
+rom-hook mode; and a cheat list too large for the C-side copy is refused at emission, where
+boot.c's false path then boots a hooked cartridge into an empty engine address -- an edge
+needing ~seventy maxed 0x50 repeaters ticked at once, pre-existing in kind, kept on the books
+rather than hidden. Predictions for the next run, written first: game boots and the rupee
+counter pins at 1 (the ticked code is 8111B99C 0001 -- pinning, not 999) = the engine runs and
+the goal is met; game boots and rupees count normally = hook present but never entered,
+next probe is the vector copy; black again = the engine at first exception is guilty after
+all, next probe is a trampoline-only tail.
+
+## 2m. All corners green: every stage proven on hardware, and the gate goes back to opt-in
+
+Build 2E690A, Ocarina, Infinite Rupees ticked, Start. The user reports "all colors, all
+corners green" and the photographed page reads: `beacon 1  writable yes  log open`,
+`re-probe ok`, `groups 553  ticked 1  emitted 2 words`, `crc ok 1  found 1  written 1  read
+back 1  agrees 1`, `site rom+0031f0 ram 800025f0 -> 80002600`, `displaced 3c1a8000 275a2600
+cands 1 rej 0`, `crc 693ba2ae b7f14e9f -> 693b8256 cf49cc7d`, `engine 807c5c00` -- the same
+site, displaced words and checksum transform as the Aug 4 log, now reproduced with dumps
+deleted and BLUE painting without a reset. The install is exonerated ON hardware, not just by
+the archival argument. And on the following boot: "tick and recent survived" -- the
+capture-time saves hold, closing the persistence finding of §2l with a hardware confirmation.
+
+Also closed by the returning card: console stdio writes persist across power-off (a 2,727-byte
+launch.log with three complete cheatless reports came back on the very card once believed
+write-hostile), so no firmware write-cache exists and the SummerCart64-firmware excursion is
+cancelled; `beacon 0` was a stale backup -- config.ini.orig predates the setting, so every
+restored card lacked the key and settings.c's reader was innocent (key appended on-card, page
+now reads beacon 1); and the console's RTC runs ~3 days slow, which is what manufactured the
+"frozen since Aug 4 14:37" timeline read off mtimes in §2g -- console-written dates are not
+wall-clock and never were. The `sc64menu.n64.main`/`.prev` pair never reappeared on any card
+the console used since; parked as an old-card curiosity, no longer blocking anything.
+
+The film is removed and `diagnose` reads the L/R latch again -- Start boots, L (canary) and R
+(real hook) stop on the page -- because the unconditional gate's question is answered and the
+log persists with the full report either way. The gesture-era anomalies ("L just launches
+game") are retroactively explained as the latch working and rompatch_dump() resetting the
+console two calls later. Remaining unproven, and now the ONLY remaining question: whether the
+engine executes inside the running game -- the original rupee test, unblocked at last.
+
+## 2l. The page appears, the dump is convicted, and the persistence mystery was a code path
+
+The diagnostic page rendered on hardware for the first time -- photographed, plate 157AAA on
+the page itself -- and one session answered three investigations at once.
+
+**The reset is rompatch_dump(), specifically, and not SD writes in general.** Same card, same
+boot, minutes apart: 1080 Snowboarding with no cheats ran the whole film (WHITE, YELLOW red
+corner, CYAN red corner, ORANGE, MAGENTA) to the page, whose own lines read `writable yes`,
+`log open`, `re-probe ok` -- small console-side writes succeeding end to end. Ocarina with a
+cheat ticked, entering the one branch that dumps, cut at CYAN and "booted": a warm reset with
+the loaded ROM mapped (film two's shifted-pixels signature). A megabyte of PI reads interleaved
+with FatFs writes is what kills the M64; the io_write install is exonerated by the Aug 4 log,
+which recorded WRITTEN AND READ BACK before dumps existed, without a reset. The dumps are
+deleted. Prediction from §2k ("the cut lands at the io_write") is REFUTED -- the cut preceded
+the install both times.
+
+**"No persistence, four cards tested" was never storage.** Every state writer except settings
+lived in app_deinit(), and app_deinit() only runs on a clean boot -- but every diagnostic-era
+launch ends on the fault page (user powers off) or in the dump reset (never returns). The saves
+were not failing; they were never attempted. The tell was the asymmetry sitting in the open:
+config.ini kept persisting (settings_save fires on leaving the settings screen, in-session)
+while playstate/cheatstate never moved. Fixed by saving at capture time -- do_load() and the
+detail sheet's back-out -- with deinit's saves kept as a second chance. The user's "maybe we
+arent flushing" was the right neighbourhood: not an unflushed write, an unreached one.
+
+**Open, with discriminators queued:** (1) whether stdio writes actually reach the medium --
+log_launch() ran and closed the log before the 1080 page, so `launch.log` with tonight's banner
+is either on that card or a firmware-side write cache exists and the SummerCart64 firmware
+sources get read next; the deploy script now prints the watched files on every mount. (2) Which
+card ran: the user reports the ORIGINAL card, which never received 157AAA -- if the card that
+comes back is the 31 GB one, the M64's boot chain runs a cached menu copy when the SD copy is
+unreadable, and the `.main`/`.prev` pair finally has a suspect. (3) The page read `beacon 0`
+against a config.ini that says `cheat_beacon = true`, and settings.c:98 reads the key with the
+same ini_get_bool every working setting uses -- unexplained, parked, and harmless for now
+because the launch path arms the beacon unconditionally.
+
+## 2k. Film one names the window: the console leaves the menu while do_load() touches the cart
+
+The first film ran on a plate-confirmed build and the user reported: WHITE, YELLOW, CYAN, then
+the game. No BLUE, no ORANGE, no MAGENTA, no RED. The divergence is therefore strictly inside
+the dump/install window -- the only stretch of do_load() between those checkpoints, and the only
+code in the menu that writes at the cartridge: rompatch_dump() (FatFs → SD write commands) and
+rompatch_install_*() (io_write into PI ROM space). Had the window merely failed politely, the
+film would have continued to BLUE with a red corner and stopped on the fault page; it did not
+continue. Nothing in that window can boot a game in software -- the two `app->running = false`
+sites are elsewhere and were re-verified by grep -- so the working theory is that a cartridge
+write makes the M64's SC64 variant reset the console with the loaded ROM mapped, which from the
+couch is indistinguishable from a boot.
+
+One theory retires several ghosts at once, checked against the record: every "boots straight to
+game" run happened on a build whose ticked-cheat path enters this window; cheatless launches
+never enter it and boot normally; 69DC83's "L just launches game" was the latch working and the
+window firing; and the write-deadness across three cards -- surviving power cycles and media
+swaps -- fits persistent state on the CART, not the cards. The boundary remains Aug 4 ~15:00:
+the last successful menu-side SD write (launch.log 14:37, sc64menu.rtc 15:17) immediately
+precedes the DEV_HARNESS builds accidentally running scripted hardware sessions (§1at era).
+Whether one of those runs changed a persisted SC64 config, or a firmware update happened around
+then, is not established -- it is the top open question, and worth asking the cart owner's
+tooling directly once USB is available anywhere.
+
+Film two splits the window: GREEN after dump-before (corner: it wrote), BLUE after the install
+(corner: read back), GRAY after dump-after, ORANGE/MAGENTA renumbered behind them. The last
+colour seen now names the exact operation that ends the menu. Predictions, written before the
+run: if the SD path fails instantly at fopen() (a write-protected mount would), GREEN arrives
+in under a second with a red corner and the cut lands between GREEN and BLUE, at the io_write;
+if instead the cut precedes GREEN, the SD write command itself is the trigger.
+
+## 2j. A plate-verified impossible result, and the launch becomes a film strip
+
+The §2i experiment ran clean and returned the strongest negative result of the investigation:
+boot plate read 0A0043 (confirmed aloud), fresh single-partition FAT32 on a healthy 64 GB card,
+every byte verified after writing, Infinite Rupees ticked, Start pressed on the detail sheet --
+and Ocarina booted with no diagnostic page, and neither the tick nor the play survived a
+restart. Media is now exonerated twice over, and the format confounds (FAT16, partition-type
+mismatch, leftover multi-partition layout -- the "new" card turned out to be one small FAT16
+volume on a repurposed 64 GB Pi card) are all gone.
+
+The result contradicts the source. In build 0A0043, `diagnose` is a literal true; the only two
+`app->running = false` sites in the tree are do_load()'s emulated-system branch (which needs a
+core and a non-N64 system byte) and the line BELOW the diagnose gate; do_load() is the only
+caller of the cart loaders; the fault screen is render-only, correctly registered, and cannot
+exit the loop; and main() boots whatever is in boot_params the moment app_run() returns. Every
+one of those was re-verified by grep tonight, not remembered. Yet the loop exited and the game
+booted. Somewhere the model of what executes on the M64 is wrong, and every channel that could
+say where -- log, dumps, playstate, the page itself -- is exactly what has never worked there.
+
+So the next build stops deducing and watches: do_load() now paints the screen a solid colour at
+each stage and holds it 1.2 s (checkpoint() in screen_launch.c). WHITE cart loaded, YELLOW cheat
+list built (green/red corner: non-empty), CYAN at the patch branch (corner: taking it), BLUE
+patched-and-dumped (corner: read-back verified), ORANGE N64 boot params set, MAGENTA the
+diagnose gate with app_fault() next, RED nine-squares the emulated branch -- the one exit that
+boots without passing the gate. The user names the last colour seen before the game appears,
+and that sentence is the divergence point. The screen is the only channel that has never failed
+on this console; the film needs nothing else. Also still armed from §2i: no
+`sc64menu.n64.main`/`.prev` were restored, so their reappearance would convict the boot chain
+of managing menu copies itself.
+
+## 2i. The card autopsy, a second card's testimony, and one experiment that splits the theories
+
+The original card came back mountable one more time and gave a clean damage map: the root
+directory's entries unreadable to readdir but resolvable by name, `mainmenu/` reduced to
+null-character garbage entries, and exactly four casualties among the files -- `sc64menu.n64`,
+`cheats.db`'s chain (the §2h FR_INT_ERR), the old `Zelda - Ocarina of Time.z64` (chain truncated
+mid-file), and everything in `mainmenu/` -- which is precisely the set of most-recently-written
+and most-recently-read regions. Everything else salvaged in one clean pass: 15 N64 ROMs, all of
+which verify against their own bootcode checksums via tools/romcrc.py (Pokémon Stadium's CRC2
+mismatch is the §romcrc known exception, CRC1 matches), the SNES tree, all saves, emulators,
+and the mystery `sc64menu.n64.main`/`.prev` pair, hashes recorded in the backup.
+
+Then the card convicted itself with no console in the room: freshly erased (whole-disk MBR +
+FAT32) and restored from the Mac, the write-then-read verify came back with **684,275 wrong
+bytes in `1080 Snowboarding.z64`**, a contiguous ~668 KB region starting ~1 MB in. A rewrite of
+the same file verified. A card that silently corrupts a bulk write on a fresh filesystem is
+failing physical media; the months of history -- writes dying quietly since early August, then
+structural rot in the hottest sectors -- is what that failure mode looks like from software.
+Every master now lives on the Mac (`save-backup-2026-08-07`); the card is a disposable test
+medium until replaced.
+
+Meanwhile the SECOND card (267 MB, FAT16, fresh) reported: cheat ticks and playstate do not
+survive a restart there either -- so console-side write failure exists on healthy media too.
+Two candidate explanations remain, and the rebuilt original card is the discriminating
+experiment, because it is FAT32, freshly laid, and byte-verified -- the same configuration as
+the months in which console writes demonstrably worked: if persistence returns on it, the second
+card's failures were FAT16 (the SC64 manual recommends FAT32/exFAT and the user suspected the
+type first); if persistence is still dead, the console-side write path broke in early August
+and the media was never the whole story. Deliberately NOT restored: `sc64menu.n64.main` and
+`.prev`. If either reappears on the card after console use, the M64's boot chain manages them,
+and the "which build actually runs" question -- still open, since the second card's
+no-diagnostic-page run had an unverified boot plate -- gets its answer.
+
+## 2h. The card's filesystem was failing the whole time, and it finally said so out loud
+
+Minutes after §2g was written, the 0A0043 run answered the writer mystery before Start was ever
+pressed. Opening Ocarina's detail sheet -- `detail_background()` → `load_cheats_now()` →
+`cheatdb_load()` → `fseek()` -- ended in libdragon's Inspector: `ASSERTION FAILED: FatFS
+assertion error`, `err != FR_INT_ERR`, backtrace `__fat_lseek (fat.c:279)` →
+`__fresult_set_errno (fat.c:111)` → `cheatdb_load (cheatdb.c:270)`. FR_INT_ERR is FatFs finding
+its OWN on-disk structures inconsistent while walking cheats.db's cluster chain; libdragon
+hard-asserts on exactly that one FRESULT and maps every other to errno. On the next power-up the
+SC64 firmware -- an independent FAT implementation -- reported no FAT volume at all. The boot
+plate read 0A0043, photographed; the build is not implicated, since the crashing path is
+unchanged for weeks and fires on sheet-open in every build.
+
+This unifies the whole §2g evidence blackout: the cache probe's "no" since ~Aug 4 was the card
+genuinely refusing console-side writes, not a probe bug -- decided by doing, and the doing was
+honestly failing. The politeness gradient also fits: write paths got non-asserting FRESULTs and
+died silently for days; the first structural inconsistency on the READ side asserted.
+
+Unresolved and next to measure, in order: whether macOS still mounts it (it verified clean --
+fsck_msdos exit 0 -- hours before the assert, so either the decay is fast, which is what a dying
+card's FAT-region blocks look like, or the damage is one macOS tolerates and both console-side
+implementations do not); a full backup the moment it mounts anywhere, saves first; then a fresh
+FAT32 format and restore -- or a different card outright, which is the cleaner experiment.
+
+Two facts worth keeping from the wreckage: the libdragon Inspector works on the M64 and shows
+symbolized file:line backtraces over the TV -- a crash channel available all along -- and the
+version code on the plate did its job for the first time, binding the photographs to this build
+with no memory involved.
+
+## 2g. The card was the witness all along, and three ways it was being silenced
+
+The cheat investigation stalled for four days on "the diagnostic page never appears and the game
+boots anyway", burning a hardware round per hypothesis. Reading the returned card and the source
+side by side, instead of shipping another build, produced the following. None of it was visible
+from ares, and none of it needed the console.
+
+**The card's timestamps are not a timeline.** `SCRIPT_CLOCK_EPOCH` (app.c) pins every
+harness-build clock to 2026-08-04 14:30 UTC so scripted frames hash stably. Three DEV_HARNESS
+builds reached the console by mistake (§1at era), ran their input scripts against the real card,
+and wrote `playstate.dat`, `cheatstate.dat` and `library.idx` stamped 14:36–14:37 "Aug 4" --
+whatever the wall clock actually was. Any later analysis that reads card mtimes as history
+inherits those forgeries. What IS trustworthy is content: `launch.log` contains no
+`---- launch ----` banner, so zero append-era launches ever wrote it, regardless of when.
+
+**One boot-time verdict silences every evidence channel at once.** `launchlog_begin()` gated on
+`cache_writable()` -- despite launchlog.h promising plain-stdio independence -- and playstate,
+cheatstate, usercheats, libindex, locks, profile, parental and thumbstore all gate on the same
+single probe from `cache_init()`. The settings writer is the only one that never asks, and it is
+the only one that demonstrably still works on the M64 (`config.ini` rewritten 2026-08-07 18:15,
+`cheat_beacon = true` present). Whether the probe's verdict is wrong or the writes genuinely
+fail is NOT established; what is established is that the coupling made the failure unreportable.
+The log is now ungated with an append→truncate fallback that labels itself, and the diagnostic
+page prints `cache_status()` plus a live re-probe with errno, so one photograph carries the
+answer either way.
+
+**Ruled out, with measurements:** the card itself. `fsck_msdos` exit 0 (304 files, no faults),
+29.9 GB free of 30.5, macOS creates and deletes files in `/mainmenu/cache/` without complaint.
+The FAT is healthy; the failure is in what the console-side stack does with it, or in a verdict
+about it.
+
+**A round that never ran.** Build 6FA150 -- the first with `diagnose = true` unconditional --
+was deployed 2026-08-07 20:38 and the report of "still boots to game" refers to a run made
+before that copy existed; the messages crossed. Recorded so the unconditional build is not
+counted as having failed a test it never took. Still open from the gesture era: on plate-verified
+69DC83, L alone on the detail sheet booted the game where the latched mode says `app_fault()` --
+unexplained, and deliberately not pursued, because no current path depends on any gesture.
+
+Also noted: `sc64menu.n64.main` and `.prev` (8,290,304 B each) appeared at the card root on
+Aug 7, written by a Mac, from outside this workspace's history. Inert -- the SC64 boots
+`sc64menu.n64`, and plate codes have matched fresh deploys throughout -- but unexplained files
+on the test medium have cost three rounds before, so they are on the record.
+
 ## 2f. The whole card is searched, and one folder is ours
 
 `/menu` meant two things — where the menu writes its own state, and where the user is expected to
@@ -4652,9 +5441,286 @@ later from ROM, and if `osInitialize` runs from that copy then the boot-segment 
 rewrote is never used. Nothing here can see which, because the branch the patcher took happens
 after the menu is gone and the beacon that would report it needs the engine to run first.
 
-The next instrument is the patcher's own beacon: paint before jumping to the game, when VI_ORIGIN
-still points at the menu's last frame and RDRAM has not been wiped. That reports the branch
-without needing the engine, and it costs one flash of colour at game start.
+---
+
+## 1aq. The patcher reports on itself, because everything else needs the game's cooperation
+
+1ap left four stories and one symptom. "The engine never ran" is equally consistent with the
+patcher never executing, with the scan missing, with the scan hitting and the game ignoring the
+bytes, and with the engine being overwritten before it could run. Nothing that reports from
+*inside* the game can separate them, because all four look identical from there.
+
+The patcher can, and it has one advantage the engine does not: **it owns the machine.** Nothing
+else is running, nothing will touch the video interface until the game's own `osViSetMode`, and
+there are megabytes of RDRAM nobody has a use for. So it paints a 320x240 framebuffer of its own,
+programs the VI to display it, holds it, and only then jumps into the game.
+
+    green screen   the scan found libultra's handler and rewrote it
+    red screen     the scan came up empty and the Datel watch was armed instead
+    no flash       the patcher never executed at all
+
+Plus twenty-four blocks across the middle: bits 23..0 of `(where the scan stopped - game entry)`,
+white for one, black for zero, six hex digits read left to right. On a hit that is where in the
+loaded megabyte the preamble was, checkable against `preamblescan.py`, which predicts `0x0021f0`
+for Ocarina of Time. On a miss the scan pointer has walked the whole window, so it reads
+`0x100000` -- the number that means "looked everywhere".
+
+The colour comes from the same `BEACON_STATE_ADDRESS` word the found/notfound paths already
+stamped for the in-game bar, so the two instruments cost one branch between them and ride the same
+`[menu] cheat_beacon` switch.
+
+### The first idea was wrong, and hardware would not have said so
+
+The plan recorded at the end of 1ap was to paint into `VI_ORIGIN`'s existing buffer -- the menu's
+last frame. That would have shown nothing, and not because the patcher failed: `boot.c` writes
+`VI->H_LIMITS = 0` on its way past, which blanks the output. An instrument aimed at a blanked
+display is the 1 KB-at-offset-zero mistake again with different numbers. Programming all thirteen
+timing registers is thirty more emitted instructions and it removes the dependency entirely.
+
+The hold is **four seconds**, not one. The VI was blanked a moment earlier, and an HDMI sink that
+has just lost sync can take a second or more to re-acquire; a flash shorter than the resync is a
+flash nobody sees.
+
+### Two real bugs, both caught before hardware
+
+**A 13-pixel block pitch is 26 bytes, and the picture is painted with word stores.** The second
+block's first `sw` took a misaligned-write exception -- PC `807001B0`, address `A016EC32` -- and
+wedged the harness. ares caught it, which is the only place emitted code of this kind still can
+be caught. The geometry is 16/8/12 now and six `_Static_assert`s make the alignment, the overlap
+and the two frame bounds build failures.
+
+**The framebuffer is dead menu heap, so the CPU may hold dirty lines over it.** One evicted after
+the paint writes old heap back over the picture, at whatever moment the game's first allocation
+happens to trigger it. ares says so directly -- *"uncached writing to RDRAM address ... which is
+cached"*. The flash now invalidates the region (9,600 `cache` ops) before painting it. Invalidate
+rather than write back: the contents are precisely what we do not want.
+
+### What the harness proves, and what it cannot
+
+`hooktest` gained a fifth scenario: point the flash at a scratch buffer 640 KB into the arena,
+execute the emitted code, and compare the result byte for byte -- the fill, the VI registers, the
+twenty-four blocks, and the rows either side of the band. Every pixel of the band rows is
+accounted for, so a block loop that overran its pitch is caught as readily as one that never ran.
+**42/42 under ares.**
+
+Both mutations report exactly:
+
+| mutation | red |
+|---|---|
+| shift the value by 31 rather than 32 bits before the block loop | 2 -- both block checks |
+| drop the load from the cascade copy | 1 -- only "carries them down every row" |
+
+What it cannot prove is that an FPGA console accepts these thirteen timing values, or that its
+HDMI resyncs inside four seconds. Both are one launch away, and both fail visibly rather than
+silently.
+
+### Also
+
+`beacon_selftest()` was reporting the wrong readback: the `read %08lx` argument was evaluated
+after the restore loop, so it printed the *original* pixel and called it the value read back. The
+verdict beside it was computed before the restore and was always right, which is the worse
+combination -- a correct answer with fabricated evidence next to it.
+
+### Hardware said "no flash", and that answer could not be read
+
+Ocarina of Time, Infinite Rupees ticked, `cheat_beacon = true`, self-test PAINTED. **No flash, and
+no change to the rupees.**
+
+Which settles nothing, because "no flash" is what a patcher that never executed looks like *and*
+what an HDMI sink that never re-acquired sync looks like. `boot.c` writes `VI->H_LIMITS = 0` on its
+way past -- the display is already blanked when the patcher starts -- so the flash was asking a
+just-desynced sink to lock onto thirteen freshly written timing registers inside four seconds. A
+one-channel instrument whose silence has two readings is not an instrument, and this is the second
+time the same mistake has been made about the same launch (1ao, the bar in overscan).
+
+---
+
+## 1ar. Two channels, and one of them cannot be blinded
+
+The fix is in two halves, and the second half is the one that matters.
+
+**Stop programming the VI.** `boot.c` now skips the `H_LIMITS = 0` write while the flash is armed,
+so the menu's own 640x480 mode is still running and still locked when the patcher starts. The
+flash paints a 640x480 frame at `0x00600000` and writes **one** register, `VI_ORIGIN`. Nothing
+resyncs; the picture changes between one field and the next. The game reprograms the VI from
+scratch regardless, so the boot pays nothing for it.
+
+**Add a channel that needs no display at all.** The patcher holds for ten seconds before jumping
+into the game, and the miss path holds ten more first. The wall clock between the menu going away
+and the game's first frame is then the answer, and it depends on nothing but the CPU clock:
+
+| time to the game's first frame | what ran |
+|---|---|
+| ~2 s, the usual | the patcher never executed |
+| ~10 s | the scan found libultra's handler and rewrote it |
+| ~20 s | the scan came up empty; the Datel watch was armed |
+
+Ten seconds rather than three because the reading has to survive being done by eye. "The same as
+always" against "ages" against "twice that again" needs no stopwatch.
+
+### The harness measured the wrong thing and said green
+
+`hooktest` gained scenario 5 (hit path) and scenario 6 (miss path, bogus target), both executing
+the emitted flash against a malloc'd frame and comparing it byte for byte -- fill, `VI_ORIGIN`,
+the twenty-four blocks, the rows either side of the band, and the hold.
+
+The hold check was written asking for a 1 ms hold and requiring 1 ms elapsed. **It passed with the
+delay loop mutated to never loop**, because `run_patcher` also contains the 53 ms scan and that
+alone cleared the bar. Exactly the failure the house rule exists for: a green result from a
+harness measuring something else. The hold is a quarter second now, so it dominates the scan, and
+the hit path is bounded at both ends -- at least 200 ms, and under 400 ms, because a hit that paid
+the miss path's second hold would collapse the two readings the whole channel is built on.
+
+**47/47 under ares.** Four mutations, all reporting exactly:
+
+| mutation | red |
+|---|---|
+| shift the value by 31 rather than 32 bits before the block loop | 2 -- both block checks |
+| drop the load from the cascade copy | 1 -- "carries them down every row" |
+| delay loop never loops | 2 -- both hold checks |
+| miss path skips its extra hold | 1 -- "waited out both holds" |
+
+One harness bug of my own on the way: `band_row_ok()` hardcoded green as the gap colour between
+blocks, so the miss path's red frame failed the block check for a reason that had nothing to do
+with the blocks.
+
+---
+
+## 1as. Patch the cartridge, not the console
+
+Three instruments, three hardware runs, nothing readable. The bar needed the engine to run; the
+flash needed a display that had just been blanked; the timing needed the patcher to execute. Every
+one of them lived in MIPS assembled word by word into RDRAM and executed microseconds after the
+menu, the filesystem and the screen were gone.
+
+The user's question was the right one: *can we just patch the ROM before booting it?*
+
+**Yes, and the plumbing was already there.** `sc64_init()` sets `CFG_ID_ROM_WRITE_ENABLE` and
+nothing clears it until `flashcart_deinit()`, which is the last statement of `app_deinit()`. So
+cartridge SDRAM is CPU-writable for the entire life of the menu, including every line of
+`do_load()` after the ROM has been streamed onto it. `disk_set_thb_mapping()` has been doing
+single-word `io_write`s into ROM space all along.
+
+So the hook moves into `src/menu/rompatch.c`, where there is a log to write to, a screen to fail
+on, and -- the part that matters -- a **read-back**. Everything that was unobservable is now a
+line in `launch.log` written before the console boots.
+
+### The checksum is the whole difficulty
+
+Every retail IPL3 checksums `ROM[0x1000..0x101000]` against CRC1/CRC2 in the header. Change a word
+of the boot segment without fixing those and the console stops dead: black screen, no logo, no
+sound, no way to tell that from any other failure.
+
+The algorithm is the bootcode's, has no specification, and is six accumulators seeded per CIC with
+three different final mixes. A plausible-looking implementation that is subtly wrong produces
+exactly that black screen. So it is checked three ways:
+
+1. **Against real games.** `tools/romcrc.py` over the 24 N64 ROMs on the reference card:
+   **23 reproduce their stored checksum exactly**, across CIC 6101, 6102, 6103 and 6105. The
+   twenty-fourth is Pokemon Stadium, whose CRC1 matches and whose CRC2 does not -- a header that
+   disagreed with its own contents before anyone here touched it.
+2. **C against Python.** `tools/hosttest/test_romcrc.c` pins `src/menu/romcrc.c` to
+   `tools/romcrc.py` over a synthetic LCG image, 17 checks. Arbitrary words rather than a real ROM
+   because a real boot segment is mostly zeros and short constants -- the carry counter `t4` never
+   increments on sparse data.
+3. **Per launch, at runtime.** `romcrc_verify()` recomputes the checksum of the *unmodified*
+   cartridge and compares it with the header. **If they disagree, nothing is patched.** That is
+   what makes this safe to ship without knowing every ROM in the world: Pokemon Stadium simply
+   does not get cheats, and says so in the log.
+
+### The finder is the dangerous part, and ares cannot reach it
+
+`rompatch_find()` picks two words of somebody's game to overwrite, and under ares
+`flashcart_is_dummy()` is true so the entire path is skipped. It is therefore split into
+`src/menu/rompatch_find.c`, free of libdragon, and `tools/hosttest/test_rompatch.c` runs it
+natively -- 26 checks against images built to contain the things that have actually gone wrong:
+both of the exact bogus targets (`0x100071e0`, `0x700101a0`), a KSEG0 target that is not +16, a
+target above RDRAM, a bogus match followed by a real one, all four straddles of a chunk boundary,
+and the last four words of the window.
+
+Run over the reference card's 24 ROMs, the C agrees with `tools/preamblescan.py` and finds
+**18 sites**. Ocarina of Time: `rom+0031f0`, RAM `0x800025f0`, `__osException` `0x80002600` --
+the address the Python predicted, from the other side.
+
+It finds three more than the Python reported because it keeps scanning past a rejected candidate
+rather than stopping at the first thing shaped like a match. Banjo-Kazooie, Mario Party 3 and Star
+Fox 64 each have one bogus candidate ahead of a real one.
+
+Mutating the address test away turns 8 of the 26 checks red.
+
+### What this does and does not fix
+
+It fixes the **hook**. The engine body still lives at `0x807C5C00`, staged by `cheats_emit()` and
+preserved across IPL3 by boot.c's `skip_rdram_reset` -- untouched, and still unverified. If the
+bar does not appear with the hook demonstrably in the cartridge, then it is the engine half that
+is wrong, which is a far smaller question than the one this replaced.
+
+With the ROM hook verified the emitted patcher stops scanning entirely: no loop, no branch, no
+watch, and the engine's tail is built with the two displaced words already in it rather than
+back-patched at runtime. The patcher becomes a memcpy.
+
+### Two harness bugs, both mine
+
+`band_row_ok()` hardcoded green as the gap colour between blocks, so the miss path's red frame
+failed the block check for a reason unrelated to blocks.
+
+And `hooktest`'s new scenarios called `data_cache_hit_invalidate` on a `malloc` pointer.
+libdragon asserts on anything not 16-byte aligned; malloc's 8 happened to land on 16 until two new
+files moved the heap, and then the harness died inside an assert instead of reporting. **47/47**
+once it was `memalign`.
+
+---
+
+## 1at. Three hardware runs measured a build nobody meant to ship
+
+The user, unprompted: *"there is a small artifact. when console starts and mainmenu boots, before
+the menu launch screen, there is a green and red screen that flash. a bunch of lines on them
+across the middle."*
+
+That is `src/dev/hooktest.c` scenarios 5 and 6 -- the handoff flash painting a full 640x480 frame
+green, then red, with the twenty-four-block band across the middle -- executing on the real
+display at boot. **The card was carrying a DEV_HARNESS build.**
+
+`tools/regress.sh:95` is `make FIXTURE=1 DEV_HARNESS=1 INPUT_SCRIPT="$script" ... sc64`, and it
+writes to `output/sc64menu.n64` -- the same path a release build writes to. Run the suite, then
+copy `output/sc64menu.n64` to the card, and the card gets hooktest running at boot, the synthetic
+fixture packed instead of the real assets, and a compiled-in input script driving the pad. Release
+is 8,306,688 bytes and carries no hooktest strings; the harness build is 4,538,368 and carries 65.
+
+Three consecutive deploys did exactly that, because each ran the suite and then copied, in that
+order, in the same breath. **The three runs are void:**
+
+| build | intended | actually shipped | verdict |
+|---|---|---|---|
+| `0a80ff0a` | canary vs pass-through vs full | DEV_HARNESS | void |
+| `5879df88` | canary with and without checksum | DEV_HARNESS | void |
+| `84c47bde` | bootcode-aware checksum, cartridge dump | DEV_HARNESS | void |
+
+So the canary -- the control this investigation most needed, the one that decides whether the
+cartridge may be written at all -- **has never been run.** Everything concluded from "all three
+black" is withdrawn.
+
+Two earlier results stand, both release builds: `6f251f7c` and `e0e49f99`, the full hook with the
+engine placed by the patcher and then placed from C. Both black.
+
+### What made it invisible
+
+Nothing about a harness build announces itself on hardware. The fixture is packed into the DFS,
+but on a real cart `storage_prefix` is `sd:/` and the menu reads the card as usual, so the library
+looked right. The input script ran its hundred frames and stopped. hooktest restored every vector
+and register it touched. The only tell was two frames of colour before the menu drew, which is
+exactly the kind of thing you stop seeing after the fortieth boot -- and which somebody who had
+seen the console forty fewer times noticed immediately.
+
+`regress.sh`'s own docstring already warns that it throws away a hand-built ROM. It was read,
+quoted in this file, and walked into anyway. A warning that has been read and not heeded is
+evidence for a check, not for a louder warning.
+
+### The check
+
+`tools/deploy.sh` builds release unconditionally -- whatever was in `output/` is not trusted --
+then refuses to copy anything carrying a hooktest string or smaller than 6 MB, then copies and
+ejects. Deploys go through it now.
 
 ---
 
