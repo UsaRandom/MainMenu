@@ -111,7 +111,55 @@ else
     echo "  SKIPPED -- $(tail -1 "$OUT/mkjpegs.log")"
 fi
 
+echo
+echo "== the checksum IPL3 puts in a ROM header"
+# Pinned against tools/romcrc.py rather than against a real ROM, because the suite may not assume
+# anyone's ROMs are on the machine. The shelf check -- `tools/romcrc.py roms/n64/*.z64`, 23 of 24
+# reproducing their stored checksum -- is what established the algorithm; this is what keeps the
+# two implementations of it from drifting.
+$CC $CFLAGS tools/hosttest/test_romcrc.c src/menu/romcrc.c -o "$OUT/test_romcrc"
+"$OUT/test_romcrc"
+
+echo
+echo "== finding the preamble to patch in a cartridge image"
+# ares has no cartridge -- flashcart_is_dummy() is true there and the whole ROM-patch path is
+# skipped -- so this is the ONLY place the code that picks two words of somebody's game to
+# overwrite ever runs against anything. src/menu/rompatch_find.c is split out of rompatch.c
+# precisely so it can be compiled here without libdragon.
+$CC $CFLAGS -Isrc/menu tools/hosttest/test_rompatch.c src/menu/rompatch_find.c -o "$OUT/test_rompatch"
+"$OUT/test_rompatch"
+
 if [ "${1:-}" = "--mutate" ]; then
+    echo
+    echo "== mutation: drop the address test, the preamble suite must go red"
+    # Without it, Conker's Bad Fur Day and GoldenEye 007 both get two words of live game code
+    # rewritten at a run of data that merely looks like a preamble. One in twelve of the ROMs on
+    # the reference card.
+    sed -e 's/if (target < 0x80000000u || target >= ram_top || target != ram + 16) {/if (false) {/' \
+        src/menu/rompatch_find.c > "$OUT/rompatch_mut.c"
+    # -Wno-unused-parameter: the mutation is what makes ram_top unused, and -Werror would turn
+    # that into a build failure that reads as the mutation not applying.
+    $CC $CFLAGS -Wno-unused-parameter -Isrc/menu tools/hosttest/test_rompatch.c \
+        "$OUT/rompatch_mut.c" -o "$OUT/test_rompatch_mut"
+    if "$OUT/test_rompatch_mut" >"$OUT/rompatch_mut.log" 2>&1; then
+        echo "  MUTATION SURVIVED -- the suite does not check the bogus-target rejection"
+    else
+        sed 's/^/  /' "$OUT/rompatch_mut.log"
+    fi
+
+    echo
+    echo "== mutation: give 6103 the ordinary final mix, the ROM checksum suite must go red"
+    # The seeds differ per CIC, so every per-CIC vector would still pass if the three final mixes
+    # collapsed into one -- which is why the suite pins them as distinct as well as as correct.
+    sed -e 's/^        case CIC_x103:$/        case CIC_5167:/' src/menu/romcrc.c > "$OUT/romcrc_mut.c"
+    $CC $CFLAGS -Isrc/menu tools/hosttest/test_romcrc.c "$OUT/romcrc_mut.c" -o "$OUT/test_romcrc_mut"
+    if "$OUT/test_romcrc_mut" >"$OUT/romcrc_mut.log" 2>&1; then
+        echo "  MUTATION SURVIVED -- the suite does not check the 6103 mix"
+    else
+        sed 's/^/  /' "$OUT/romcrc_mut.log"
+    fi
+
+    echo
     echo
     echo "== mutation: move every slot down by one, the atlas suite must go red"
     # slot_offset() is the arithmetic the whole file rests on and the one thing no other test can

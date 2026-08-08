@@ -13,6 +13,7 @@
 
 #include "app.h"
 #include "menu/sound.h"
+#include "menu/diagreport.h"
 #include "menu/fonts.h"
 #include "screens.h"
 #include "ui/theme.h"
@@ -39,6 +40,22 @@ static void fault_render (app_t *app, surface_t *fb) {
 
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+
+    /* The same screen serves the cheat diagnostic, and deliberately so. It is render-only: no
+     * update function, no input, nothing that can dismiss it -- which after five diagnostics lost
+     * to their own reporting is the property that matters most. See diagreport.h. */
+    if (diag_report_count() > 0) {
+        line(SAFE_X, 40, SAFE_W, ALIGN_LEFT, STL_RED, "C H E A T   D I A G N O S T I C");
+        int y = 92;
+        for (int i = 0; i < diag_report_count(); i++) {
+            line(SAFE_X, y, SAFE_W, ALIGN_LEFT, STL_DEFAULT, diag_report_line(i));
+            y += 26;
+        }
+        line(SAFE_X, 440, SAFE_W, ALIGN_LEFT, STL_GRAY,
+             "Photograph this, then power off. The game was not booted.");
+        rdpq_detach_show();
+        return;
+    }
 
     line(SAFE_X, 40, SAFE_W, ALIGN_LEFT, STL_RED, "F A U L T");
     line(SAFE_X, 84, SAFE_W, ALIGN_LEFT, STL_DEFAULT,

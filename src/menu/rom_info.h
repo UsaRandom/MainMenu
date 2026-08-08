@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "boot/cic.h"
 #include "path.h"
 
 /** @brief ROM error enumeration. */
@@ -200,6 +201,16 @@ rom_err_t rom_config_load(path_t *path, rom_info_t *rom_info);
  * @return rom_cic_type_t CIC type
  */
 rom_cic_type_t rom_info_get_cic_type(rom_info_t *rom_info);
+
+/**
+ * @brief The same CIC as rom_info_get_cic_type(), in the bootloader's spelling.
+ *
+ * rom_info.h and boot/cic.h each have an enumeration of the same eleven chips, and the mapping
+ * between them used to live inside rom_info_get_cic_seed(). It is out here because src/menu/
+ * rompatch.c needs it too, and two copies of a thirteen-case switch is how one of them ends up
+ * missing a chip.
+ */
+cic_type_t rom_info_get_boot_cic (rom_info_t *rom_info);
 
 /**
  * @brief Override the CIC type for the ROM.

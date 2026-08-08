@@ -19,7 +19,6 @@
 #include "library/playstate.h"
 #include "library/thumbstore.h"
 #include "cheats/cheatdb.h"
-#include "menu/enginetest.h"
 #include "menu/image_decoder.h"
 #include "dev/allocwatch.h"
 #include "dev/debug_emux.h"
@@ -214,15 +213,7 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * answers the same question with a directory enumeration and no file opens at all. */
     cache_init(app->storage);
 
-    /* Does this console's CPU implement the watch exception the cheat engine hooks with?
-     *
-     * After cache_init() and not one line earlier: the test leaves an interlock file on the card
-     * while it runs, and cache_writable() is what cache_init() decides. Before the scan, because
-     * everything below this is seconds and this is two COP0 writes and a store. See enginetest.h
-     * for the interlock, and for why this replaced a cheat-based test that could never have
-     * worked -- the menu is a libdragon ROM and the engine cannot patch a libdragon IPL3. */
-    enginetest_run(app->storage);
-
+    
     /* Harness builds only: execute the emitted cheat patcher against a synthetic game image and
      * prove the preamble hook end-to-end, which no launch under ares can do -- ares has no cart
      * to launch into. Costs one boot-time megabyte scan; compiles to nothing in release. */

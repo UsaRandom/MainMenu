@@ -117,6 +117,11 @@ void settings_save (settings_t *settings) {
     ini_set_bool(ini, "menu", "show_cheat_files", settings->show_cheat_files);
     ini_set_bool(ini, "menu", "show_rom_configuration_files", settings->show_rom_configuration_files);
     ini_set_int(ini, "menu", "sfx_volume", settings->sfx_volume);
+    /* Loaded at line 98 and, until now, never written back -- so the first settings save silently
+     * dropped it from config.ini and a hardware run that was supposed to be instrumented came
+     * back with "beacon off" in its own log. A setting that is read and not written is worse than
+     * one that does not exist: it works once. */
+    ini_set_bool(ini, "menu", "cheat_beacon", settings->cheat_beacon);
     ini_set_int(ini, "menu", "music_volume", settings->music_volume);
     ini_set_int(ini, "menu", "music_track", settings->music_track);
     ini_set_string(ini, "menu", "boxart_region", settings->boxart_region);

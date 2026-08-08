@@ -5,6 +5,7 @@
  */
 
 #include <libdragon.h>
+#include <malloc.h>
 #include <string.h>
 
 #include "boot/cheats.h"
@@ -48,6 +49,52 @@ static void check (bool ok, const char *what) {
         failures++;
         debugf("HOOKTEST FAIL: %s\n", what);
     }
+}
+
+/** @brief Is every pixel of row @p y the colour @p c? Read uncached, because the flash wrote
+ *         through KSEG1 and this core's data cache has no reason to know. */
+static bool row_is (volatile uint16_t *px, int y, uint16_t c) {
+    for (int x = 0; x < BEACON_FLASH_W; x++) {
+        if (px[y * BEACON_FLASH_W + x] != c) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Read row @p y back as the number the blocks are supposed to spell, and check the gaps.
+ *
+ * Every pixel is accounted for: inside a block it must be uniformly white or black, between
+ * blocks and past the last one it must still be @p bg, the verdict colour the fill left there. A block loop that overran its
+ * pitch, or a fill that the blocks failed to cover, both show up here rather than as a picture
+ * that looks roughly right.
+ */
+static bool band_row_ok (volatile uint16_t *px, int y, uint32_t expect, uint16_t bg) {
+    volatile uint16_t *row = px + y * BEACON_FLASH_W;
+    uint32_t got = 0;
+
+    for (int x = 0; x < BEACON_FLASH_W; x++) {
+        int i = (x - BEACON_FLASH_BIT_X) / BEACON_FLASH_BIT_PITCH;
+        int within = (x - BEACON_FLASH_BIT_X) % BEACON_FLASH_BIT_PITCH;
+        bool in_block = (x >= BEACON_FLASH_BIT_X) && (i < BEACON_FLASH_BITS)
+                        && (within < BEACON_FLASH_BIT_W);
+        if (!in_block) {
+            if (row[x] != bg) {
+                return false;
+            }
+            continue;
+        }
+        uint16_t want = (expect >> (BEACON_FLASH_BITS - 1 - i)) & 1 ? 0xFFFF : 0x0000;
+        if (row[x] != want) {
+            return false;
+        }
+        if (within == 0) {
+            got = (got << 1) | (want ? 1 : 0);
+        }
+    }
+
+    return got == (expect & ((1u << BEACON_FLASH_BITS) - 1));
 }
 
 /**
@@ -376,6 +423,161 @@ void hooktest_run (void) {
               "a preamble whose target is not an address is left alone");
         check((got0 >> 26) == OP_J && armed == ((0x80000180 | 1) & 0xFFFF),
               "and the scan falls through to the watch instead of hooking it");
+    }
+
+    /* Scenario 5: the handoff flash.
+     *
+     * The instrument the next hardware run depends on, so it gets the same treatment as the
+     * mechanism it measures: the emitted code is executed and its output compared byte for byte --
+     * the fill, the twenty-four blocks, the rows either side of the band, and the one VI register
+     * it writes.
+     *
+     * A whole 640x480 frame does not fit alongside the arena, so it is malloc'd rather than carved
+     * out of .bss. The two holds are a millisecond each rather than ten seconds each; the delay
+     * loop is checked by the clock, not by the wall.
+     */
+    {
+        volatile uint32_t *vi_origin = (volatile uint32_t *)VI_ORIGIN_ADDRESS;
+        uint32_t origin_before = *vi_origin;
+
+        /* memalign, not malloc: the cache maintenance either side of this wants a 16-byte-aligned
+         * address and libdragon asserts on anything else. malloc's 8 happened to land on 16 until
+         * two new files moved the heap, and then the harness died inside an assert rather than
+         * reporting -- a test that cannot run is worse than one that fails. */
+        void *fb = memalign(16, BEACON_FLASH_BYTES);
+        check(fb != NULL, "a frame for the flash scenario");
+
+        if (fb != NULL) {
+            uint32_t fb_phys = ((uint32_t)(fb) & 0x1FFFFFFF);
+            volatile uint16_t *px = (volatile uint16_t *)(0xA0000000u | fb_phys);
+
+            memset(fb, 0, BEACON_FLASH_BYTES);
+            /* The emitted code invalidates before painting uncached, which is exactly what makes
+             * this memset invisible to it unless the dirty lines go out first. Without this the
+             * scenario tests the flash against whatever survived, which is not a fixture. */
+            data_cache_hit_writeback_invalidate(fb, BEACON_FLASH_BYTES);
+            plant(I_JR(REG_K0));
+
+            /* The blocks show where the scan stopped, relative to the game entry. The planted
+             * preamble is arena[8], so the answer is 32 -- known exactly, which is what makes the
+             * band checkable rather than merely present. */
+            uint32_t expect_bits = 8 * 4;
+
+            /* A quarter second, not a millisecond. At 1 ms the hold check passed with the delay
+             * loop mutated to never loop, because run_patcher also contains the 53 ms scan and
+             * that alone cleared the bar -- a harness measuring the wrong thing and reporting
+             * green. The hold has to dominate the scan for the number to mean anything. */
+            cheats_set_flash(true, fb_phys, 46875000u / 4u);
+            patcher = cheats_emit(list);
+            cheats_set_flash(false, 0, 0);
+            check(patcher != NULL, "emit (flash scenario)");
+
+            if (patcher != NULL) {
+                uint32_t t0 = TICKS_READ();
+                disable_interrupts();
+                run_patcher(patcher, arena);
+                uint32_t got_origin = *vi_origin;
+                *vi_origin = origin_before;
+                enable_interrupts();
+                uint32_t held = TIMER_MICROS(TICKS_DISTANCE(t0, TICKS_READ()));
+
+                check(got_origin == fb_phys, "the flash pointed the VI at its own frame");
+                /* The hold is the only channel that survives a display which never comes back, so
+                 * it is checked at both ends. Below 200 ms the delay loop fell through; above
+                 * 400 ms the hit path is paying the miss path's second hold, which would collapse
+                 * the two readings the whole timing channel is built on. */
+                check(held >= 200000, "and held for the ticks it was given");
+                check(held < 400000, "and held them once, not twice");
+
+                /* Row 0 proves the fill ran and that nothing reached above the band; the row one
+                 * past the band proves the cascade copy stopped. Whole rows, because a band one
+                 * row too tall is exactly the off-by-one a spot check misses. */
+                check(row_is(px, 0, BEACON_GREEN & 0xFFFF),
+                      "the flash filled the frame with the verdict");
+                check(row_is(px, BEACON_FLASH_BIT_ROW - 1, BEACON_GREEN & 0xFFFF),
+                      "and left the row above the band alone");
+                check(row_is(px, BEACON_FLASH_BIT_ROW + BEACON_FLASH_BIT_H, BEACON_GREEN & 0xFFFF),
+                      "and the row below it");
+
+                /* First and last rows of the band: the first is what the block loop wrote, the
+                 * last is what the cascade copy carried down. Checking only the first would pass
+                 * with the copy loop deleted. */
+                check(band_row_ok(px, BEACON_FLASH_BIT_ROW, expect_bits, BEACON_GREEN & 0xFFFF),
+                      "the blocks spell out where the scan stopped");
+                check(band_row_ok(px, BEACON_FLASH_BIT_ROW + BEACON_FLASH_BIT_H - 1, expect_bits,
+                                  BEACON_GREEN & 0xFFFF),
+                      "and the band carries them down every row");
+            }
+
+            /* Uncached writes left the cache holding whatever was there before. Freeing without
+             * this hands the allocator lines that will write stale bytes back over the next
+             * owner's data at some unrelated moment. */
+            data_cache_hit_invalidate(fb, BEACON_FLASH_BYTES);
+            free(fb);
+        }
+    }
+
+    /* Scenario 6: the miss path, which is where the timing channel earns its keep.
+     *
+     * The hit path is worth ten seconds on hardware and the miss path twenty, and that difference
+     * is the one reading that survives a display which never comes back. It is also the only part
+     * of the flash no other scenario reaches, because scenario 4 runs the miss path with the flash
+     * off. Bogus target, so the scan walks the whole megabyte and comes up empty: red fill, blocks
+     * reading a full 1 MB, and twice the hold.
+     */
+    {
+        volatile uint32_t *vi_origin = (volatile uint32_t *)VI_ORIGIN_ADDRESS;
+        uint32_t origin_before = *vi_origin;
+
+        /* memalign, not malloc: the cache maintenance either side of this wants a 16-byte-aligned
+         * address and libdragon asserts on anything else. malloc's 8 happened to land on 16 until
+         * two new files moved the heap, and then the harness died inside an assert rather than
+         * reporting -- a test that cannot run is worse than one that fails. */
+        void *fb = memalign(16, BEACON_FLASH_BYTES);
+        check(fb != NULL, "a frame for the miss-path scenario");
+
+        if (fb != NULL) {
+            uint32_t fb_phys = ((uint32_t)(fb) & 0x1FFFFFFF);
+            volatile uint16_t *px = (volatile uint16_t *)(0xA0000000u | fb_phys);
+
+            memset(fb, 0, BEACON_FLASH_BYTES);
+            data_cache_hit_writeback_invalidate(fb, BEACON_FLASH_BYTES);
+            plant_at(I_JR(REG_K0), 0x10007000);
+
+            cheats_set_flash(true, fb_phys, 46875000u / 4u);   /* so the miss owes half a second */
+            patcher = cheats_emit(list);
+            cheats_set_flash(false, 0, 0);
+
+            if (patcher != NULL) {
+                uint32_t t0 = TICKS_READ();
+                disable_interrupts();
+                run_patcher(patcher, arena);
+                uint32_t armed = READ_WATCHLO();
+                WRITE_WATCHLO(0);
+                WRITE_WATCHHI(0);
+                *vi_origin = origin_before;
+                vec[0] = vec0;
+                vec[1] = vec1;
+                data_cache_hit_writeback_invalidate((void *)(vec), 8);
+                inst_cache_hit_invalidate((void *)(vec), 8);
+                enable_interrupts();
+                uint32_t held = TIMER_MICROS(TICKS_DISTANCE(t0, TICKS_READ()));
+
+                check(armed == ((0x80000180 | 1) & 0xFFFF), "the miss path still armed the watch");
+                check(row_is(px, 0, BEACON_RED & 0xFFFF), "and painted red rather than green");
+                /* 1 MB: the scan pointer walked the entire window. Reading it off the screen is
+                 * how a hardware miss announces itself as a miss and not as a wild match. */
+                check(band_row_ok(px, BEACON_FLASH_BIT_ROW, 0x100000, BEACON_RED & 0xFFFF),
+                      "and the blocks read a full megabyte");
+                /* Half a second against the hit path's quarter, with the 53 ms scan too small to
+                 * confuse them. This is the timing channel itself under test: it is what tells a
+                 * hit from a miss on a console whose display never comes back. */
+                check(held >= 450000, "and waited out both holds");
+            }
+
+            data_cache_hit_invalidate(fb, BEACON_FLASH_BYTES);
+            free(fb);
+        }
     }
 
     debugf("HOOKTEST %d/%d ok\n", checks - failures, checks);

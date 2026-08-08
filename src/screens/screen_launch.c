@@ -4,6 +4,8 @@
  * @ingroup screens
  */
 
+#include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,11 +14,12 @@
 #include "app.h"
 #include "boot/cheats.h"
 #include "cheats/cheatdb.h"
+#include "library/cache.h"
 #include "library/library.h"
 #include "flashcart/flashcart.h"
 #include "menu/cart_load.h"
 #include "menu/cheatcheck.h"
-#include "menu/enginetest.h"
+#include "menu/diagreport.h"
 #include "menu/launchlog.h"
 #include "utils/fs.h"
 #include "library/playstate.h"
@@ -25,6 +28,8 @@
 #include "menu/fonts.h"
 #include "menu/music.h"
 #include "menu/rom_info.h"
+#include "menu/paths.h"
+#include "menu/rompatch.h"
 #include "menu/sound.h"
 #include "screens/screens.h"
 #include "ui/draw.h"
@@ -66,6 +71,27 @@
  * there is nothing to be brief for. Slower is the whole point -- the fade IS the loading screen
  * now, so it should be the part with presence. */
 #define DUR_LAUNCH_FADE   0.55f
+
+/* What rompatch_install_hook() reported, so log_launch() can write it down. A file static rather
+ * than a field of app_t: nothing outside this file has any use for it, and the two functions that
+ * do are twenty lines apart. */
+/** Whether a cheat launch may edit the cartridge image. ON, and this time it works.
+ *
+ * Eight rounds of placing a cheat engine ended in black screens (AUDIT 2n-2x), and the thing they
+ * had in common was that the engine arrived at *run time* -- written into RDRAM that this console
+ * does not carry across the handoff, or behind an IPL3 DMEM patch that does not take. It does not
+ * have to. IPL3 copies ROM [0x1000,0x101000) into RDRAM before the game's first instruction, so an
+ * engine written into that window is installed by the console itself, from the cartridge, by the
+ * same DMA that loads the game.
+ *
+ * Confirmed on an M64: pre-patched Ocarina images built exactly this way boot, and their cheats
+ * take effect. See AUDIT 2y and rompatch_install_engine().
+ *
+ * Setting this back to 0 restores the shipping-safe state: no cartridge edit, games always boot,
+ * cheats inert. */
+#define ROMPATCH_ENABLED  1
+
+static rompatch_result_t launch_patch;
 
 static app_t     *progress_app;
 static bool       started;
@@ -288,6 +314,8 @@ static void simulate_load (app_t *app) {
     on_progress(1.0f);
 }
 
+
+
 /** @brief How many groups are ticked. Local: nothing else needs it and cheatdb.h is a read-only API. */
 static int enabled_group_count (const cheatset_t *set) {
     int n = 0;
@@ -309,60 +337,6 @@ static int enabled_group_count (const cheatset_t *set) {
  * and how many cheat words were emitted. See launchlog.h.
  */
 
-/**
- * @brief Prove the beacon can paint on THIS console, before trusting a launch that says it did not.
- *
- * The first hardware run came back "no bar", and that was not a result. The beacon had never
- * executed on an M64 -- only under ares, which is the exact mistake AUDIT 1ag is about -- so "the
- * engine never ran" and "the instrument does not work here" produced identical evidence. This is
- * the positive control that separates them, and it is the same shape as the `break` control in
- * enginetest.c and for the same reason.
- *
- * Does what the emitted beacon does, in C, against the menu's own live framebuffer: read
- * VI_ORIGIN, convert to KSEG1, store the colour at the beacon's own offset, read it back
- * uncached, then put the original pixels back so nothing flashes. If this says PAINTED, then
- * VI_ORIGIN is sane on this hardware, an uncached store to it lands, and a later launch reporting
- * no bar is reporting the engine and not the instrument.
- *
- * What it still cannot prove is that those pixels reach the screen -- only that the write lands
- * where VI_ORIGIN points. A game whose displayed buffer is not the one VI_ORIGIN names would
- * defeat it, and nothing here can see that.
- */
-static void beacon_selftest (void) {
-    volatile uint32_t *vi_origin = (volatile uint32_t *)VI_ORIGIN_ADDRESS;
-    uint32_t origin = *vi_origin;
-
-    if ((origin >> BEACON_MIN_ORIGIN_SHIFT) == 0) {
-        launchlog_line("beacon   SELF-TEST SKIPPED: VI_ORIGIN=%08lx is under the floor",
-                       (unsigned long)origin);
-        return;
-    }
-
-    volatile uint32_t *fb = (volatile uint32_t *)(0xA0000000u | origin);
-    const uint32_t at = BEACON_OFFSET_BYTES / 4;
-    uint32_t saved[8];
-    bool painted = true;
-
-    for (int i = 0; i < 8; i++) {
-        saved[i] = fb[at + i];
-    }
-    for (int i = 0; i < 8; i++) {
-        fb[at + i] = BEACON_GREEN;
-    }
-    for (int i = 0; i < 8; i++) {
-        if (fb[at + i] != BEACON_GREEN) {
-            painted = false;
-        }
-    }
-    for (int i = 0; i < 8; i++) {
-        fb[at + i] = saved[i];      /* the menu is still on screen; leave no mark */
-    }
-
-    launchlog_line("beacon   self-test %s (VI_ORIGIN=%08lx, wrote %08lx at +%lu, read %08lx)",
-                   painted ? "PAINTED" : "DID NOT PAINT",
-                   (unsigned long)origin, (unsigned long)BEACON_GREEN,
-                   (unsigned long)BEACON_OFFSET_BYTES, (unsigned long)fb[at]);
-}
 
 static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
     const char *path = (app->launch.rom_path != NULL) ? path_get(app->launch.rom_path) : "?";
@@ -382,7 +356,6 @@ static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
         snprintf(fit_detail, sizeof(fit_detail), "emulated system; the engine patches N64 code only");
     }
 
-    launchlog_begin();
     launchlog_line("rom      %s", path);
     if (rec != NULL) {
         launchlog_line("header   %s v%u  check %08lx%08lx",
@@ -399,25 +372,47 @@ static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
      * false here would be the single most surprising thing this file could ever say. */
     launchlog_line("memory   %d bytes, expansion pak %s",
                    get_memory_size(), is_memory_expanded() ? "present" : "ABSENT");
-    /* Recorded here as well as shown on Settings, because the log is what survives a launch and
-     * the screen is not. Since the preamble hook (cheats.c) a dead watch no longer kills cheats
-     * outright -- the patcher rewrites the game's own handler template first and only falls back
-     * to the watch when the scan finds nothing -- but which path a launch took happens after this
-     * program is gone, so the log records the hook order and the one fact that decides the
-     * fallback's fate. See enginetest.h. */
-    {
-        char wd[96];
-        enginetest_detail(wd, sizeof(wd));
-        launchlog_line("hook     preamble scan first, Datel watch hook as fallback");
-        launchlog_line("watch    %s (%s)", enginetest_text(), wd);
-        /* Which path the patcher takes still happens after this program is gone. The beacon is
-         * what reports it, and the log says whether anyone will be able to read it. */
-        launchlog_line("beacon   %s", app->settings.cheat_beacon
-                       ? "armed -- green bar = handler hook, red bar = watch fired, none = engine never ran"
-                       : "off ([menu] cheat_beacon in config.ini)");
-        if (app->settings.cheat_beacon) {
-            beacon_selftest();
-        }
+    /* The line this whole exercise exists to produce. Everything that used to be unobservable --
+     * whether a preamble was found, where, what was written, and whether the cartridge agrees --
+     * is now a fact recorded before the console boots. */
+    if (!launch_patch.attempted) {
+        launchlog_line("         not attempted (no cheats ticked, emulated game, or no cart)");
+    } else if (!launch_patch.crc_ok) {
+        launchlog_line("rompatch REFUSED: header says %08lx %08lx, which is not what this ROM "
+                       "checksums to -- leaving the cartridge alone",
+                       (unsigned long)launch_patch.old_crc1,
+                       (unsigned long)launch_patch.old_crc2);
+    } else if (!launch_patch.found) {
+        launchlog_line("rompatch no preamble in the loaded MB from %08lx (%d candidates, "
+                       "%d rejected on the address test)",
+                       (unsigned long)launch_patch.entry,
+                       launch_patch.candidates, launch_patch.rejected);
+    } else {
+        launchlog_line("rompatch preamble at rom+%06lx = ram %08lx -> __osException %08lx",
+                       (unsigned long)launch_patch.rom_offset,
+                       (unsigned long)launch_patch.ram_address,
+                       (unsigned long)launch_patch.target);
+        launchlog_line("         displaced %08lx %08lx, %d candidates, %d rejected",
+                       (unsigned long)launch_patch.word0, (unsigned long)launch_patch.word1,
+                       launch_patch.candidates, launch_patch.rejected);
+        launchlog_line("         crc %08lx %08lx -> %08lx %08lx",
+                       (unsigned long)launch_patch.old_crc1,
+                       (unsigned long)launch_patch.old_crc2,
+                       (unsigned long)launch_patch.new_crc1,
+                       (unsigned long)launch_patch.new_crc2);
+        launchlog_line("         engine rom+%06lx ram %08lx, %lu words in %d run(s), %d cheats",
+                       (unsigned long)launch_patch.engine_rom_off,
+                       (unsigned long)launch_patch.engine_ram,
+                       (unsigned long)launch_patch.engine_run_words,
+                       launch_patch.engine_segments, launch_patch.engine_codes);
+        launchlog_line("         %s", launch_patch.verified
+                       ? "WRITTEN AND READ BACK -- the cartridge carries the engine"
+                       : launch_patch.written
+                       ? "WRITTEN BUT THE READ-BACK DISAGREED -- cheats will not apply"
+                       : "NOT WRITTEN -- cheats will not apply");
+        launchlog_line("         header %s", launch_patch.reverified
+                       ? "recomputed, and the whole image agrees with it"
+                       : "recomputed, but the image DISAGREES with it");
     }
     launchlog_line("database %d games; %d groups from the database, %d hand-entered",
                    cheatdb_game_count(),
@@ -488,17 +483,96 @@ static void do_load (app_t *app) {
          * the ticks survive the one journey the user actually makes. cheatstate_capture()
          * replaces rather than merges, so doing it twice is harmless. */
         cheatstate_capture(&app->cheats, playstate_key(&app->lib->records[app->launch.rom_id]));
+
+        /* And SAVED here, not left for app_deinit() -- which is where these writes used to
+         * live, and where they were never reached. A diagnostic launch ends on the fault page
+         * and the console is powered off; a launch that resets never returns; only a clean
+         * boot runs deinit. That gap presented as "no persistence, four cards tested" for a
+         * week, on cards whose small writes demonstrably worked -- the saves were not failing,
+         * they were never attempted. Both writers no-op politely on storage that refuses. */
+        if (playstate_dirty()) {
+            playstate_save(app->lib);
+        }
+        if (cheatstate_dirty()) {
+            cheatstate_save();
+        }
+    }
+
+    /* Open the log HERE, not in log_launch() at the bottom of this function. Everything the ROM
+     * patch does happens above that call, so its lines were being written to a file that was not
+     * open yet and were silently dropped -- a whole hardware run came back unable to say whether
+     * its cartridge dump had been attempted. */
+    launchlog_begin();
+
+    /* Flatten the ticked cheats now rather than at the handoff, because the ROM patch below has
+     * to know where the engine will end up and a 0xFF code can move it. */
+    uint32_t *cheat_list = build_cheat_list(app);
+
+    /* Install the cheat hook into the cartridge itself, while there is still a log to write to
+     * and the bytes can be read back. All of this used to happen in emitted MIPS microseconds
+     * before the handoff, where three hardware runs produced nothing readable -- see rompatch.h.
+     * It has to be after the ROM is on the cart and before flashcart_deinit() clears
+     * CFG_ID_ROM_WRITE_ENABLE, and do_load() is the only place that is both. */
+    memset(&launch_patch, 0, sizeof(launch_patch));
+
+    /* The report the fault screen shows if a launch goes wrong, kept short and kept useful:
+     * which build, whether storage came up, and what the cartridge patch did. */
+    diag_reportf("%s  storage [%s]  writable %s  log %s", MENU_VERSION,
+            app->storage ? app->storage : "(null)",
+            cache_writable() ? "yes" : "NO", launchlog_open() ? "open" : "SHUT");
+
+    size_t cheat_words = 0;
+    if (cheat_list != NULL) {
+        while (!(cheat_list[cheat_words] == 0 && cheat_list[cheat_words + 1] == 0)) {
+            cheat_words += 2;
+        }
+    }
+    diag_reportf("groups %d  ticked %d  emitted %u words", app->cheats.group_count,
+            enabled_group_count(&app->cheats), (unsigned)cheat_words);
+
+    int cheat_lines = 0;
+    bool cheats_fit = rompatch_cheats_fit(cheat_list, &cheat_lines);
+
+    if (ROMPATCH_ENABLED && !flashcart_is_dummy() && emu < 0 && cheat_list != NULL) {
+        cic_type_t cic = rom_info_get_boot_cic(&app->launch.rom_info);
+        uint32_t entry = (uint32_t)(app->launch.rom_info.boot_address);
+
+        /* The engine into the game's own boot-segment padding, the preamble aimed at it, the
+         * checksum recomputed -- see rompatch.h. Has to be after the ROM is on the cart and before
+         * flashcart_deinit() clears CFG_ID_ROM_WRITE_ENABLE, and do_load() is the only place that
+         * is both. Refuses and writes nothing if the selection does not fit. */
+        if (cheats_fit) {
+            rompatch_install_engine(cic, entry, cheat_list, &launch_patch);
+        }
+
+        diag_reportf("cheats %s  %d line(s)  %d carried",
+                cheats_fit ? "fit" : "refused (plain 8/16-bit writes only)",
+                cheat_lines, launch_patch.engine_codes);
+        diag_reportf("engine rom+%06lx ram %08lx  %lu words in %d run(s)",
+                (unsigned long)launch_patch.engine_rom_off,
+                (unsigned long)launch_patch.engine_ram,
+                (unsigned long)launch_patch.engine_run_words, launch_patch.engine_segments);
+        diag_reportf("crc ok %d  found %d  written %d  read back %d  agrees %d",
+                launch_patch.crc_ok, launch_patch.found, launch_patch.written,
+                launch_patch.verified, launch_patch.reverified);
+    } else {
+        diag_reportf("no patch: dummy %d  emu %d  cheats %s",
+                flashcart_is_dummy(), emu, cheat_list ? "ticked" : "none ticked");
     }
 
     if (flashcart_is_dummy()) {
         /* Everything above ran. What comes next cannot: boot() would jump into a cart holding
          * nothing but this menu. Report what WOULD have been handed over, free the cheat list
-         * that nobody is going to read, and go back to the grid. */
-        uint32_t *would_be = build_cheat_list(app);
+         * that nobody is going to read, and go back to the grid.
+         *
+         * Except when the report is up. Under ares this is the ONLY path a launch takes, so
+         * returning here meant the diagnostic page was never drawn on the one machine where it
+         * can be looked at before it goes to a console -- which is how it reached hardware not
+         * working at all. Now it is drawn here too, and B goes back to the grid. */
         debugf("LAUNCH would boot %s with %s\n",
                app->launch.rom_info.title[0] ? app->launch.rom_info.title : "(untitled)",
-               would_be ? "cheats" : "no cheats");
-        free(would_be);
+               cheat_list ? "cheats" : "no cheats");
+        free(cheat_list);
         app_goto(app, SCREEN_GRID);
         return;
     }
@@ -515,6 +589,7 @@ static void do_load (app_t *app) {
         bp->detect_cic_seed = true;
         bp->tv_type = BOOT_TV_TYPE_PASSTHROUGH;
         bp->cheat_list = NULL;              /* the engine patches N64 code; there is none here */
+        free(cheat_list);
         app->running = false;
         return;
     }
@@ -528,15 +603,23 @@ static void do_load (app_t *app) {
         default:               bp->tv_type = BOOT_TV_TYPE_PASSTHROUGH; break;
     }
 
-    bp->cheat_list = build_cheat_list(app);
-
-    /* Set here rather than at boot() because this is the last place a setting can be read: boot()
-     * runs after the filesystem is gone. See cheats.c on why the beacon exists at all. */
-    cheats_set_beacon(app->settings.cheat_beacon);
+    /* Always NULL, whether the patch went in or not, and the "or not" half is the important one.
+     * cheats_install() writes a nop into IPL3's DMEM copy at word 486, and byte 0x798 is inside
+     * the 0x750 window CIC 6105 mixes into its checksum -- so on a launch where rompatch wrote
+     * nothing, and the header therefore still describes the pristine image, that nop would make
+     * IPL3 compute a checksum the header disagrees with and refuse to boot. Handing the list over
+     * as a fallback would turn "your cheat selection has a conditional in it" into a black screen
+     * on every 6105 game. It has also never once been shown to work on this console: the boot-time
+     * engine needs either the watch exception, which the M64's CPU does not implement (AUDIT 1af),
+     * or an IPL3 DMEM patch that does not take (2x).
+     *
+     * So cheats apply through the cartridge or not at all, and the launch log says which. */
+    bp->cheat_list = NULL;
 
     /* Last thing before the point of no return. app->running = false returns to main(), which
      * calls boot() immediately -- there is no later. */
-    log_launch(app, bp->cheat_list, emu);
+    log_launch(app, cheat_list, emu);
+    free(cheat_list);
 
     app->running = false;
 }

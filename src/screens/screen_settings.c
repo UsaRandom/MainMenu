@@ -17,7 +17,6 @@
 #include <libdragon.h>
 
 #include "app.h"
-#include "menu/enginetest.h"
 #include "menu/fonts.h"
 #include "library/boxart.h"
 #include "library/cache.h"
@@ -503,23 +502,6 @@ static void settings_render (app_t *app, surface_t *fb) {
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Build");
     ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
     y += INFO_LINE_H;
-
-    /* Whether this console delivers the watch exception, which decides how the cheat engine
-     * hooks in. It stopped deciding WHETHER cheats work when the patcher learned to rewrite the
-     * game's own handler template instead (see cheats.c) -- a missing watch now costs only the
-     * games that aren't built on libultra, so it draws in the default style rather than yellow.
-     * Yellow is reserved for the verdicts that mean the test itself did not run clean.
-     *
-     * A line rather than a row, deliberately. It is a diagnostic, it is read and not changed, and
-     * making it selectable would renumber every row above it for the fourth time and move thirteen
-     * input scripts with them. See enginetest.h for what to do with the code it prints. */
-    watchtest_t wt = enginetest_watch();
-    bool wt_clean = (wt == WATCH_WORKING) || (wt == WATCH_NO_EXCEPTION) ||
-                    (wt == WATCH_UNCACHED_ONLY) || (wt == WATCH_NO_REGISTER);
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Cheat engine");
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT,
-             wt_clean ? STL_DEFAULT : STL_YELLOW,
-             enginetest_text());
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
     (void)ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Change");

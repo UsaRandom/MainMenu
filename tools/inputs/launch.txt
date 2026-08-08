@@ -29,14 +29,23 @@ fbdump              # 2: two groups ticked
 
 press b             # back to the sheet
 wait 40
-press start         # Play
+press l             # canary launch: the one gesture that still stops on the diagnostic page,
+                    # now that Start boots for real again. L latches (mode=canary, diagnose)
+                    # on the sheet -- see launch_set_mode() -- so this exercises the latch AND
+                    # the page in one press.
 wait 12
 fbdump              # 3: mid-fade -- the sheet dimming, not a cleared screen
 
 wait 12
 fbdump              # 4: further into the fade, so it must be darker than frame 3
 
-wait 180            # let it finish and fall back to the grid
-fbdump              # 5: back on the grid, not booted into nothing
+wait 180            # let it finish -- and stop on the cheat diagnostic page
+fbdump              # 5: the diagnostic, on screen_fault, which has no update function and no way
+                    #    to be dismissed. Under ares there is no cart so the page says so; what is
+                    #    under test here is that it DRAWS AND STAYS. Four earlier versions of this
+                    #    page did neither on hardware, and none of them was ever looked at here.
+
+wait 120            # two seconds of nothing pressed and nothing changing
+fbdump              # 6: still there, identical to frame 5
 
 exit

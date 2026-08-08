@@ -47,6 +47,7 @@ void screen_keyboard_ask (kb_charset_t set, const char *prompt, const char *init
 /** @brief Characters @p set accepts before it starts refusing. */
 int screen_keyboard_limit (kb_charset_t set);
 extern const screen_t SCREEN_LAUNCH_DEF;
+
 extern const screen_t SCREEN_FAULT_DEF;
 
 /** @brief Populate @p table, indexed by screen_id_t. */

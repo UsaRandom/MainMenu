@@ -88,7 +88,15 @@ void boot (boot_params_t *params) {
     cpu_io_write(&PI->SR, PI_SR_CLR_INTR | PI_SR_RESET);
     while ((cpu_io_read(&VI->CURR_LINE) & ~(VI_CURR_LINE_FIELD)) != 0);
     cpu_io_write(&VI->V_INTR, 0x3FF);
-    cpu_io_write(&VI->H_LIMITS, 0);
+    /* Blanking the display here is what made the handoff flash unreadable: it paints a frame and
+     * points VI_ORIGIN at it, and an HDMI sink that has just lost sync can take longer to
+     * re-acquire than the flash lasts, so "the patcher never ran" and "you could not see it" came
+     * back identical. With the flash armed the menu's mode is left running instead, so the picture
+     * changes between one field and the next and nothing resyncs. The game reprograms the VI from
+     * scratch either way, so this costs the boot nothing -- see cheats.h. */
+    if (!cheats_flash_armed()) {
+        cpu_io_write(&VI->H_LIMITS, 0);
+    }
     cpu_io_write(&VI->CURR_LINE, 0);
     cpu_io_write(&AI->MADDR, 0);
     cpu_io_write(&AI->LEN, 0);

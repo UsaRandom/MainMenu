@@ -1185,27 +1185,27 @@ rom_cic_type_t rom_info_get_cic_type (rom_info_t *rom_info) {
     }
 }
 
-bool rom_info_get_cic_seed (rom_info_t *rom_info, uint8_t *seed) {
-    cic_type_t cic_type;
-
+cic_type_t rom_info_get_boot_cic (rom_info_t *rom_info) {
     switch (rom_info_get_cic_type(rom_info)) {
-        case ROM_CIC_TYPE_5101: cic_type = CIC_5101; break;
-        case ROM_CIC_TYPE_5167: cic_type = CIC_5167; break;
-        case ROM_CIC_TYPE_6101: cic_type = CIC_6101; break;
-        case ROM_CIC_TYPE_7102: cic_type = CIC_7102; break;
-        case ROM_CIC_TYPE_x102: cic_type = CIC_x102; break;
-        case ROM_CIC_TYPE_x103: cic_type = CIC_x103; break;
-        case ROM_CIC_TYPE_x105: cic_type = CIC_x105; break;
-        case ROM_CIC_TYPE_x106: cic_type = CIC_x106; break;
-        case ROM_CIC_TYPE_8301: cic_type = CIC_8301; break;
-        case ROM_CIC_TYPE_8302: cic_type = CIC_8302; break;
-        case ROM_CIC_TYPE_8303: cic_type = CIC_8303; break;
-        case ROM_CIC_TYPE_8401: cic_type = CIC_8401; break;
-        case ROM_CIC_TYPE_8501: cic_type = CIC_8501; break;
-        default: cic_type = CIC_UNKNOWN; break;
+        case ROM_CIC_TYPE_5101: return CIC_5101;
+        case ROM_CIC_TYPE_5167: return CIC_5167;
+        case ROM_CIC_TYPE_6101: return CIC_6101;
+        case ROM_CIC_TYPE_7102: return CIC_7102;
+        case ROM_CIC_TYPE_x102: return CIC_x102;
+        case ROM_CIC_TYPE_x103: return CIC_x103;
+        case ROM_CIC_TYPE_x105: return CIC_x105;
+        case ROM_CIC_TYPE_x106: return CIC_x106;
+        case ROM_CIC_TYPE_8301: return CIC_8301;
+        case ROM_CIC_TYPE_8302: return CIC_8302;
+        case ROM_CIC_TYPE_8303: return CIC_8303;
+        case ROM_CIC_TYPE_8401: return CIC_8401;
+        case ROM_CIC_TYPE_8501: return CIC_8501;
+        default: return CIC_UNKNOWN;
     }
+}
 
-    *seed = cic_get_seed(cic_type);
+bool rom_info_get_cic_seed (rom_info_t *rom_info, uint8_t *seed) {
+    *seed = cic_get_seed(rom_info_get_boot_cic(rom_info));
 
     return (!rom_info->boot_override.cic);
 }

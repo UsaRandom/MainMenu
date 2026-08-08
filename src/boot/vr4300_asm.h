@@ -407,7 +407,11 @@ typedef enum {
 #define I_ORI(rt, rs, immediate) __ASM_I_INST(OP_ORI, rs, rt, immediate)
 #define I_SB(rt, offset, base) __ASM_I_INST(OP_SB, base, rt, offset)
 #define I_SH(rt, offset, base) __ASM_I_INST(OP_SH, base, rt, offset)
+/* FUNCT_SSL is this header's spelling of SLL, funct 0 -- which is also why I_NOP() uses it. */
+#define I_SLL(rd, rt, sa) __ASM_R_INST(OP_SPECIAL, 0, rt, rd, sa, FUNCT_SSL)
+#define I_SLTU(rd, rs, rt) __ASM_R_INST(OP_SPECIAL, rs, rt, rd, 0, FUNCT_SLTU)
 #define I_SRL(rd, rt, sa) __ASM_R_INST(OP_SPECIAL, 0, rt, rd, sa, FUNCT_SRL)
+#define I_SUBU(rd, rs, rt) __ASM_R_INST(OP_SPECIAL, rs, rt, rd, 0, FUNCT_SUBU)
 #define I_SW(rt, offset, base) __ASM_I_INST(OP_SW, base, rt, offset)
 
 #endif /* VR4300_ASM_H__ */

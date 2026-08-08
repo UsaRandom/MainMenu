@@ -25,18 +25,28 @@
 #ifndef MENU_LAUNCHLOG_H__
 #define MENU_LAUNCHLOG_H__
 
+#include <stdbool.h>
+
 /** @brief Remember where to write. Call once, at boot, with the storage prefix. */
 void launchlog_init (const char *storage_prefix);
 
 /**
- * @brief Start a fresh log, discarding the previous launch's. Best-effort; failure is silent.
+ * @brief Open the log and stamp a launch banner. Appends; best-effort; failure is silent.
  *
  * Open/append/close rather than one formatted call, because the interesting part of the report is
  * the list of code lines actually handed to the engine and that is a variable number of them. The
  * alternative was assembling the whole thing in a buffer first, which means choosing a buffer size
  * and then silently truncating the evidence at it.
+ *
+ * Always attempts the open -- deliberately not gated on cache_writable(). It was, and that
+ * coupling is how a console whose cache probe fails loses its logging exactly when the logging is
+ * what would have reported the probe failing.
  */
 void launchlog_begin (void);
+
+/** @brief Did launchlog_begin() actually get a file? The card has silently swallowed two runs'
+ *         worth of diagnostics, so the report says out loud which channel is alive. */
+bool launchlog_open (void);
 
 /** @brief One line. Newline is added. No-op unless launchlog_begin() opened a file. */
 void launchlog_line (const char *fmt, ...) __attribute__((format(printf, 1, 2)));

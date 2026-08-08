@@ -213,6 +213,12 @@ static void detail_update (app_t *app, float dt) {
         if (app->launch.rom_id >= 0) {
             cheatstate_capture(&app->cheats,
                                playstate_key(&app->lib->records[app->launch.rom_id]));
+            /* Saved now, not at app_deinit(): deinit only runs on a clean boot, and a user who
+             * ticks cheats, backs out and powers off from the grid never has one. See the
+             * matching save in screen_launch.c for the week this cost. */
+            if (cheatstate_dirty()) {
+                cheatstate_save();
+            }
         }
         cheatdb_free(&app->cheats);
         /* Required, not tidiness: without it, re-entering this same sheet would match
