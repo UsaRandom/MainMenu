@@ -17,14 +17,14 @@ AI Shougi 3 (Japan)	NS3?	255	0x0000000000000000
 AeroFighters Assault (Europe) (En,Fr,De)	NER?	255	0x0000000000000000
 AeroFighters Assault (USA)	NER?	255	0x0000000000000000
 AeroGauge (Europe) (En,Fr,De)	NAG?	255	0x0000000000000000
-AeroGauge (J) (V1.1)	NAG?	255	0x0000000000000000
-AeroGauge (Japan) (Rev 1)	NAG?	255	0x0000000000000000
+AeroGauge (J) (V1.1)	NAG?	1	0x0000000000000000
+AeroGauge (Japan) (Rev 1)	NAG?	1	0x0000000000000000
 AeroGauge (USA)	NAG?	255	0x0000000000000000
 Aerofighters Assault (U)	NER?	255	0x0000000000000000
 Aidyn Chronicles - The First Mage (E)	NAY?	255	0x0000000000000000
 Aidyn Chronicles - The First Mage (Europe)	NAY?	255	0x0000000000000000
 Aidyn Chronicles - The First Mage (U)	NAY?	255	0x0000000000000000
-Aidyn Chronicles - The First Mage (USA) (Rev 1)	NAY?	255	0x0000000000000000
+Aidyn Chronicles - The First Mage (USA) (Rev 1)	NAY?	1	0x0000000000000000
 Aidyn Chronicles - The First Mage (USA)	NAY?	255	0x0000000000000000
 Air Boarder 64 (Japan)	NAB?	255	0x0000000000000000
 Airboarder 64 (E)	NAB?	255	0x0000000000000000
@@ -66,7 +66,7 @@ Bakuretsu Muteki Bangaioh (Japan)	NBN?	255	0x0000000000000000
 Bakushou Jinsei 64 - Mezase! Resort Ou (Japan)	NBJ?	255	0x0000000000000000
 Banjo-Kazooie (E)	NBK?	255	0x0000000000000000
 Banjo-Kazooie (Europe) (En,Fr,De)	NBK?	255	0x0000000000000000
-Banjo-Kazooie (USA) (Rev 1)	NBK?	255	0x0000000000000000
+Banjo-Kazooie (USA) (Rev 1)	NBK?	1	0x0000000000000000
 Banjo-Kazooie (USA)	NBK?	255	0x0000000000000000
 Banjo-Kazooie	NBK?	255	0x0000000000000000
 Banjo-Tooie (Australia)	NB7?	255	0x0000000000000000
@@ -98,9 +98,9 @@ Bio F.R.E.A.K.S. (USA)	NBF?	255	0x0000000000000000
 Biohazard 2 (Japan)	NB5?	255	0x0000000000000000
 Blast Corps (E)	NBC?	255	0x0000000000000000
 Blast Corps (Europe) (En,De)	NBC?	255	0x0000000000000000
-Blast Corps (U) (V1.0)	NBC?	255	0x0000000000000000
-Blast Corps (U) (V1.1)	NBC?	255	0x0000000000000000
-Blast Corps (USA) (Rev 1)	NBC?	255	0x0000000000000000
+Blast Corps (U) (V1.0)	NBC?	0	0x0000000000000000
+Blast Corps (U) (V1.1)	NBC?	1	0x0000000000000000
+Blast Corps (USA) (Rev 1)	NBC?	1	0x0000000000000000
 Blast Corps (USA)	NBC?	255	0x0000000000000000
 Blues Brothers 2000 (E)	NBP?	255	0x0000000000000000
 Blues Brothers 2000 (Europe) (En,Fr,De,Es,It,Nl)	NBP?	255	0x0000000000000000
@@ -148,8 +148,8 @@ Carmageddon 64 (Europe) (En,Fr,De,Es)	NCD?	255	0x0000000000000000
 Carmageddon 64 (Europe) (En,Fr,Es,It)	NCD?	255	0x0000000000000000
 Carmageddon 64 (USA)	NCD?	255	0x0000000000000000
 Castlevania (Europe) (En,Fr,De)	ND3?	255	0x0000000000000000
-Castlevania (U) (V1.0)	ND3?	255	0x0000000000000000
-Castlevania (U) (V1.1)	ND3?	255	0x0000000000000000
+Castlevania (U) (V1.0)	ND3?	0	0x0000000000000000
+Castlevania (U) (V1.1)	ND3?	1	0x0000000000000000
 Castlevania (USA)	ND3?	255	0x0000000000000000
 Castlevania - Legacy of Darkness (E)	ND4?	255	0x0000000000000000
 Castlevania - Legacy of Darkness (Europe) (En,Fr,De)	ND4?	255	0x0000000000000000
@@ -182,8 +182,8 @@ Conker's Bad Fur Day (USA)	NFU?	255	0x0000000000000000
 Conkers Bad Fur Day (U)	NFU?	255	0x0000000000000000
 Cruis'n Exotica (USA)	NXO?	255	0x0000000000000000
 Cruis'n USA (Europe)	NCU?	255	0x0000000000000000
-Cruis'n USA (USA) (Rev 1)	NCU?	255	0x0000000000000000
-Cruis'n USA (USA) (Rev 2)	NCU?	255	0x0000000000000000
+Cruis'n USA (USA) (Rev 1)	NCU?	1	0x0000000000000000
+Cruis'n USA (USA) (Rev 2)	NCU?	2	0x0000000000000000
 Cruis'n USA (USA)	NCU?	255	0x0000000000000000
 Cruis'n World (Europe)	NCW?	255	0x0000000000000000
 Cruis'n World (USA)	NCW?	255	0x0000000000000000
@@ -191,9 +191,9 @@ Cruisn Exotica (U)	NXO?	255	0x0000000000000000
 Cruisn USA (E) (1.0)	NCU?	255	0x0000000000000000
 Cruisn USA (E) (1.1)	NCU?	255	0x0000000000000000
 Cruisn USA (E) (1.2)	NCU?	255	0x0000000000000000
-Cruisn USA (U) (v1.0)	NCU?	255	0x0000000000000000
-Cruisn USA (U) (v1.1)	NCU?	255	0x0000000000000000
-Cruisn USA (U) (v1.2)	NCU?	255	0x0000000000000000
+Cruisn USA (U) (v1.0)	NCU?	0	0x0000000000000000
+Cruisn USA (U) (v1.1)	NCU?	1	0x0000000000000000
+Cruisn USA (U) (v1.2)	NCU?	2	0x0000000000000000
 Cruisn World (E)	NCW?	255	0x0000000000000000
 Cruisn World (U)	NCW?	255	0x0000000000000000
 Custom Robo (Japan)	NCX?	255	0x0000000000000000
@@ -222,12 +222,12 @@ Destruction Derby 64 (U)	NDE?	255	0x0000000000000000
 Destruction Derby 64 (USA)	NDE?	255	0x0000000000000000
 Dezaemon 3D (J)	CDZ?	255	0x0000000000000000
 Dezaemon 3D (Japan)	CDZ?	255	0x0000000000000000
-Diddy Kong Racing (Europe) (En,Fr,De) (Rev 1)	NDY?	255	0x0000000000000000
+Diddy Kong Racing (Europe) (En,Fr,De) (Rev 1)	NDY?	1	0x0000000000000000
 Diddy Kong Racing (Europe) (En,Fr,De)	NDY?	255	0x0000000000000000
 Diddy Kong Racing (Japan)	NDY?	255	0x0000000000000000
-Diddy Kong Racing (U) (V1.0)	NDY?	255	0x0000000000000000
-Diddy Kong Racing (U) (V1.1)	NDY?	255	0x0000000000000000
-Diddy Kong Racing (USA) (En,Fr) (Rev 1)	NDY?	255	0x0000000000000000
+Diddy Kong Racing (U) (V1.0)	NDY?	0	0x0000000000000000
+Diddy Kong Racing (U) (V1.1)	NDY?	1	0x0000000000000000
+Diddy Kong Racing (USA) (En,Fr) (Rev 1)	NDY?	1	0x0000000000000000
 Diddy Kong Racing (USA) (En,Fr)	NDY?	255	0x0000000000000000
 Diddy Kong Racing	NDY?	255	0x0000000000000000
 Disneys Donald Duck - Goin Quackers (U)	NDQ?	255	0x0000000000000000
@@ -243,7 +243,7 @@ Doom 64 (E)	NDM?	255	0x0000000000000000
 Doom 64 (Europe)	NDM?	255	0x0000000000000000
 Doom 64 (J)	NDM?	255	0x0000000000000000
 Doom 64 (Japan)	NDM?	255	0x0000000000000000
-Doom 64 (USA) (Rev 1)	NDM?	255	0x0000000000000000
+Doom 64 (USA) (Rev 1)	NDM?	1	0x0000000000000000
 Doom 64 (USA)	NDM?	255	0x0000000000000000
 Doraemon - Nobita to 3tsu no Seireiseki (Japan)	NDR?	255	0x0000000000000000
 Doraemon 2 - Nobita to Hikari no Shinden (Japan)	ND2?	255	0x0000000000000000
@@ -418,9 +418,9 @@ Jet Force Gemini (Europe) (En,Fr,De,Es)	NJF?	255	0x0000000000000000
 Jet Force Gemini (U)	NJF?	255	0x0000000000000000
 Jet Force Gemini (USA)	NJF?	255	0x0000000000000000
 Jikkyou J.League 1999 - Perfect Striker 2 (Japan)	NPS?	255	0x0000000000000000
-Jikkyou Powerful Pro Yakyuu - Basic Ban 2001 (Japan) (Rev 1)	NPE?	255	0x0000000000000000
+Jikkyou Powerful Pro Yakyuu - Basic Ban 2001 (Japan) (Rev 1)	NPE?	1	0x0000000000000000
 Jikkyou Powerful Pro Yakyuu - Basic Ban 2001 (Japan)	NPE?	255	0x0000000000000000
-Jikkyou Powerful Pro Yakyuu 2000 (Japan) (Rev 1)	NPA?	255	0x0000000000000000
+Jikkyou Powerful Pro Yakyuu 2000 (Japan) (Rev 1)	NPA?	1	0x0000000000000000
 Jikkyou Powerful Pro Yakyuu 2000 (Japan)	NPA?	255	0x0000000000000000
 Jikkyou World Soccer 3 (Japan)	NJ3?	255	0x0000000000000000
 Kakutou Denshou - F-Cup Maniax (Japan)	NFY?	255	0x0000000000000000
@@ -428,9 +428,9 @@ Ken Griffey Jr.'s Slugfest (USA)	NKJ?	255	0x0000000000000000
 Ken Griffey Jr.s Slugfest (U)	NKJ?	255	0x0000000000000000
 Killer Instinct Gold (E)	NKI?	255	0x0000000000000000
 Killer Instinct Gold (Europe)	NKI?	255	0x0000000000000000
-Killer Instinct Gold (U) (v1.0)	NKI?	255	0x0000000000000000
-Killer Instinct Gold (USA) (Rev 1)	NKI?	255	0x0000000000000000
-Killer Instinct Gold (USA) (Rev 2)	NKI?	255	0x0000000000000000
+Killer Instinct Gold (U) (v1.0)	NKI?	0	0x0000000000000000
+Killer Instinct Gold (USA) (Rev 1)	NKI?	1	0x0000000000000000
+Killer Instinct Gold (USA) (Rev 2)	NKI?	2	0x0000000000000000
 Killer Instinct Gold (USA)	NKI?	255	0x0000000000000000
 Knife Edge - Nose Gunner (E)	NKE?	255	0x0000000000000000
 Knife Edge - Nose Gunner (Europe)	NKE?	255	0x0000000000000000
@@ -446,31 +446,31 @@ LEGO Racers (Europe) (En,Fr,De,Es,It,Nl,Sv,No,Da,Fi)	NLG?	255	0x0000000000000000
 LEGO Racers (U)	NLG?	255	0x0000000000000000
 LEGO Racers (USA) (En,Fr,De,Es,It,Nl,Sv,No,Da,Fi)	NLG?	255	0x0000000000000000
 Last Legion UX (Japan)	NLL?	255	0x0000000000000000
-Legend of Zelda The - Majoras Mask (E) (M4) (v1.0)	NZS?	255	0x0000000000000000
-Legend of Zelda The - Majoras Mask (E) (M4) (v1.1)	NZS?	255	0x0000000000000000
+Legend of Zelda The - Majoras Mask (E) (M4) (v1.0)	NZS?	0	0x0000000000000000
+Legend of Zelda The - Majoras Mask (E) (M4) (v1.1)	NZS?	1	0x0000000000000000
 Legend of Zelda The - Majoras Mask (U) (GC Version)	NZS?	255	0x0000000000000000
 Legend of Zelda The - Ocarina of Time (E) (GC Version)	NZL?	255	0x0000000000000000
-Legend of Zelda The - Ocarina of Time (E) (V1.0)	NZL?	255	0x0000000000000000
-Legend of Zelda The - Ocarina of Time (E) (V1.1)	NZL?	255	0x0000000000000000
-Legend of Zelda The - Ocarina of Time (U) (V1.0)	CZL?	255	0x0000000000000000
-Legend of Zelda The - Ocarina of Time (U) (V1.1)	CZL?	255	0x0000000000000000
-Legend of Zelda The - Ocarina of Time (U) (V1.2)	CZL?	255	0x0000000000000000
+Legend of Zelda The - Ocarina of Time (E) (V1.0)	NZL?	0	0x0000000000000000
+Legend of Zelda The - Ocarina of Time (E) (V1.1)	NZL?	1	0x0000000000000000
+Legend of Zelda The - Ocarina of Time (U) (V1.0)	CZL?	0	0x0000000000000000
+Legend of Zelda The - Ocarina of Time (U) (V1.1)	CZL?	1	0x0000000000000000
+Legend of Zelda The - Ocarina of Time (U) (V1.2)	CZL?	2	0x0000000000000000
 Legend of Zelda, The - Majora's Mask (Europe) (En,Fr,De,Es) (Debug Version)	NZS?	255	0x0000000000000000
-Legend of Zelda, The - Majora's Mask (Europe) (En,Fr,De,Es) (Rev 1)	NZS?	255	0x0000000000000000
+Legend of Zelda, The - Majora's Mask (Europe) (En,Fr,De,Es) (Rev 1)	NZS?	1	0x0000000000000000
 Legend of Zelda, The - Majora's Mask (Europe) (En,Fr,De,Es)	NZS?	255	0x0000000000000000
 Legend of Zelda, The - Majora's Mask (Europe) (GameCube Edition)	NZS?	255	0x0000000000000000
 Legend of Zelda, The - Majora's Mask (Europe) (GameCube)	NZS?	255	0x0000000000000000
 Legend of Zelda, The - Majora's Mask (USA) (GameCube Edition)	NZS?	255	0x0000000000000000
 Legend of Zelda, The - Majora's Mask (USA) (GameCube)	NZS?	255	0x0000000000000000
 Legend of Zelda, The - Majora's Mask (USA)	NZS?	255	0x0000000000000000
-Legend of Zelda, The - Ocarina of Time (Europe) (En,Fr,De) (Rev 1)	NZL?	255	0x0000000000000000
+Legend of Zelda, The - Ocarina of Time (Europe) (En,Fr,De) (Rev 1)	NZL?	1	0x0000000000000000
 Legend of Zelda, The - Ocarina of Time (Europe) (En,Fr,De)	NZL?	255	0x0000000000000000
 Legend of Zelda, The - Ocarina of Time (Europe) (GameCube Edition)	NZL?	255	0x0000000000000000
 Legend of Zelda, The - Ocarina of Time (Europe) (GameCube)	NZL?	255	0x0000000000000000
 Legend of Zelda, The - Ocarina of Time (USA) (GameCube Edition)	CZL?	255	0x0000000000000000
 Legend of Zelda, The - Ocarina of Time (USA) (GameCube)	CZL?	255	0x0000000000000000
-Legend of Zelda, The - Ocarina of Time (USA) (Rev 1)	CZL?	255	0x0000000000000000
-Legend of Zelda, The - Ocarina of Time (USA) (Rev 2)	CZL?	255	0x0000000000000000
+Legend of Zelda, The - Ocarina of Time (USA) (Rev 1)	CZL?	1	0x0000000000000000
+Legend of Zelda, The - Ocarina of Time (USA) (Rev 2)	CZL?	2	0x0000000000000000
 Legend of Zelda, The - Ocarina of Time (USA)	CZL?	255	0x0000000000000000
 Lode Runner 3-D (E)	NLR?	255	0x0000000000000000
 Lode Runner 3-D (Europe) (En,Fr,De,Es,It)	NLR?	255	0x0000000000000000
@@ -486,11 +486,11 @@ Magical Tetris Challenge (USA)	NMT?	255	0x0000000000000000
 Major League Baseball featuring Ken Griffey Jr. (Australia)	NKG?	255	0x0000000000000000
 Major League Baseball featuring Ken Griffey Jr. (USA)	NKG?	255	0x0000000000000000
 Mario Golf 64 (J) [!]	NMF?	255	0x0000000000000000
-Mario Golf 64 (Japan) (Rev 1)	NMF?	255	0x0000000000000000
+Mario Golf 64 (Japan) (Rev 1)	NMF?	1	0x0000000000000000
 Mario Golf 64 (Japan)	NMF?	255	0x0000000000000000
-Mario Kart 64 (E) (V1.0)	NKT?	255	0x0000000000000000
-Mario Kart 64 (E) (V1.1)	NKT?	255	0x0000000000000000
-Mario Kart 64 (Europe) (Rev 1)	NKT?	255	0x0000000000000000
+Mario Kart 64 (E) (V1.0)	NKT?	0	0x0000000000000000
+Mario Kart 64 (E) (V1.1)	NKT?	1	0x0000000000000000
+Mario Kart 64 (Europe) (Rev 1)	NKT?	1	0x0000000000000000
 Mario Kart 64 (Europe)	NKT?	255	0x0000000000000000
 Mario Kart 64 (J) (1.0)	NKT?	255	0x0000000000000000
 Mario Kart 64 (J) (1.1)	NKT?	255	0x0000000000000000
@@ -533,7 +533,7 @@ Milo's Astro Lanes (USA)	NBR?	255	0x0000000000000000
 Milos Astro Lanes (U)	NBR?	255	0x0000000000000000
 Mischief Makers (Europe)	NTM?	255	0x0000000000000000
 Mischief Makers (U)	NTM?	255	0x0000000000000000
-Mischief Makers (USA) (Rev 1)	NTM?	255	0x0000000000000000
+Mischief Makers (USA) (Rev 1)	NTM?	1	0x0000000000000000
 Mischief Makers (USA)	NTM?	255	0x0000000000000000
 Mischief Makers	NTM?	255	0x0000000000000000
 Mission - Impossible (Europe)	NMI?	255	0x0000000000000000
@@ -629,9 +629,9 @@ O.D.T. (USA) (En,Fr,Es) (Proto)	NTD?	255	0x0000000000000000
 Off Road Challenge (E)	NOF?	255	0x0000000000000000
 Off Road Challenge (U)	NOF?	255	0x0000000000000000
 Off Road Challenge (USA)	NOF?	255	0x0000000000000000
-Ogre Battle 64 - Person of Lordly Caliber (Japan) (Rev 1)	NOB?	255	0x0000000000000000
+Ogre Battle 64 - Person of Lordly Caliber (Japan) (Rev 1)	NOB?	1	0x0000000000000000
 Ogre Battle 64 - Person of Lordly Caliber (U)	NOB?	255	0x0000000000000000
-Ogre Battle 64 - Person of Lordly Caliber (USA) (Rev 1)	NOB?	255	0x0000000000000000
+Ogre Battle 64 - Person of Lordly Caliber (USA) (Rev 1)	NOB?	1	0x0000000000000000
 Ogre Battle 64 - Person of Lordly Caliber (USA)	NOB?	255	0x0000000000000000
 Onegai Monsters (Japan)	NOM?	255	0x0000000000000000
 PAPER MARIO	NMQ?	255	0x0000000000000000
@@ -651,9 +651,9 @@ Penny Racers (Europe)	NCR?	255	0x0000000000000000
 Penny Racers (U)	NCR?	255	0x0000000000000000
 Penny Racers (USA)	NCR?	255	0x0000000000000000
 Perfect Dark (J)	NPDJ	255	0x0000000000000000
-Perfect Dark (U) (v1.0)	NPD?	255	0x0000000000000000
-Perfect Dark (U) (v1.1)	NPD?	255	0x0000000000000000
-Perfect Dark (USA) (Rev 1)	NPD?	255	0x0000000000000000
+Perfect Dark (U) (v1.0)	NPD?	0	0x0000000000000000
+Perfect Dark (U) (v1.1)	NPD?	1	0x0000000000000000
+Perfect Dark (USA) (Rev 1)	NPD?	1	0x0000000000000000
 Perfect Dark (USA)	NPD?	255	0x0000000000000000
 Pilot Wings64 (U)	NPW?	255	0x0000000000000000
 Pilot Wings64	NPW?	255	0x0000000000000000
@@ -678,7 +678,7 @@ Pokemon Snap (Spain)	NPF?	255	0x0000000000000000
 Pokemon Snap (U)	NPF?	255	0x0000000000000000
 Pokemon Snap (USA)	NPF?	255	0x0000000000000000
 Pokemon Stadium (E)	NPO?	255	0x0000000000000000
-Pokemon Stadium (Europe) (Rev 1)	NPO?	255	0x0000000000000000
+Pokemon Stadium (Europe) (Rev 1)	NPO?	1	0x0000000000000000
 Pokemon Stadium (Europe)	NPO?	255	0x0000000000000000
 Pokemon Stadium (France)	NPO?	255	0x0000000000000000
 Pokemon Stadium (Germany)	NPO?	255	0x0000000000000000
@@ -742,7 +742,7 @@ Ready 2 Rumble Boxing Round 2 (U)	N22?	255	0x0000000000000000
 Resident Evil 2 (E)	NRE?	255	0x0000000000000000
 Resident Evil 2 (Europe) (En,Fr)	NRE?	255	0x0000000000000000
 Resident Evil 2 (U)	NRE?	255	0x0000000000000000
-Resident Evil 2 (USA) (Rev 1)	NRE?	255	0x0000000000000000
+Resident Evil 2 (USA) (Rev 1)	NRE?	1	0x0000000000000000
 Resident Evil 2 (USA)	NRE?	255	0x0000000000000000
 Road Rash 64 (E)	NRO?	255	0x0000000000000000
 Road Rash 64 (Europe)	NRO?	255	0x0000000000000000
@@ -782,7 +782,7 @@ San Francisco Rush 2049 (USA)	NRU?	255	0x0000000000000000
 Scooby-Doo - Classic Creep Capers (E)	NSY?	255	0x0000000000000000
 Scooby-Doo - Classic Creep Capers (U)	NSY?	255	0x0000000000000000
 Scooby-Doo! - Classic Creep Capers (Europe)	NSY?	255	0x0000000000000000
-Scooby-Doo! - Classic Creep Capers (USA) (Rev 1)	NSY?	255	0x0000000000000000
+Scooby-Doo! - Classic Creep Capers (USA) (Rev 1)	NSY?	1	0x0000000000000000
 Scooby-Doo! - Classic Creep Capers (USA)	NSY?	255	0x0000000000000000
 Shadow Man (Europe) (En,Es,It)	NSD?	255	0x0000000000000000
 Shadow Man (F)	NSD?	255	0x0000000000000000
@@ -825,22 +825,22 @@ Space Invaders (USA)	NIV?	255	0x0000000000000000
 Spider-Man (U)	NSL?	255	0x0000000000000000
 Spider-Man (USA)	NSL?	255	0x0000000000000000
 Star Fox 64 (Japan)	NFX?	255	0x0000000000000000
-Star Fox 64 (U) (V1.1)	NFX?	255	0x0000000000000000
+Star Fox 64 (U) (V1.1)	NFX?	1	0x0000000000000000
 Star Fox 64 (U)	NFX?	255	0x0000000000000000
-Star Fox 64 (USA) (Rev 1)	NFX?	255	0x0000000000000000
+Star Fox 64 (USA) (Rev 1)	NFX?	1	0x0000000000000000
 Star Fox 64 (USA)	NFX?	255	0x0000000000000000
 Star Soldier - Vanishing Earth (USA)	NS6?	255	0x0000000000000000
 Star Soldier Vanishing Earth (U)	NS6?	255	0x0000000000000000
-Star Wars - Rogue Squadron (E) (V1.1)	NRS?	255	0x0000000000000000
+Star Wars - Rogue Squadron (E) (V1.1)	NRS?	1	0x0000000000000000
 Star Wars - Rogue Squadron (E)	NRS?	255	0x0000000000000000
 Star Wars - Rogue Squadron (Europe) (En,Fr,De)	NRS?	255	0x0000000000000000
-Star Wars - Rogue Squadron (USA) (Rev 1)	NRS?	255	0x0000000000000000
+Star Wars - Rogue Squadron (USA) (Rev 1)	NRS?	1	0x0000000000000000
 Star Wars - Rogue Squadron (USA)	NRS?	255	0x0000000000000000
 Star Wars - Shadows of the Empire (Europe)	NSW?	255	0x0000000000000000
-Star Wars - Shadows of the Empire (U) (V1.0)	NSW?	255	0x0000000000000000
-Star Wars - Shadows of the Empire (U) (V1.1)	NSW?	255	0x0000000000000000
-Star Wars - Shadows of the Empire (USA) (Rev 1)	NSW?	255	0x0000000000000000
-Star Wars - Shadows of the Empire (USA) (Rev 2)	NSW?	255	0x0000000000000000
+Star Wars - Shadows of the Empire (U) (V1.0)	NSW?	0	0x0000000000000000
+Star Wars - Shadows of the Empire (U) (V1.1)	NSW?	1	0x0000000000000000
+Star Wars - Shadows of the Empire (USA) (Rev 1)	NSW?	1	0x0000000000000000
+Star Wars - Shadows of the Empire (USA) (Rev 2)	NSW?	2	0x0000000000000000
 Star Wars - Shadows of the Empire (USA)	NSW?	255	0x0000000000000000
 Star Wars Episode I - Battle for Naboo (E)	NNA?	255	0x0000000000000000
 Star Wars Episode I - Battle for Naboo (Europe)	NNA?	255	0x0000000000000000
@@ -860,7 +860,7 @@ Super B-Daman - Battle Phoenix 64 (Japan)	NB6?	255	0x0000000000000000
 Super Bowling (USA)	NBW?	255	0x0000000000000000
 Super Mario 64 (Europe) (En,Fr,De)	NSM?	255	0x0000000000000000
 Super Mario 64 (J)	NSM?	255	0x0000000000000000
-Super Mario 64 (Japan) (Rev 3) (Shindou Edition)	NSM?	255	0x0000000000000000
+Super Mario 64 (Japan) (Rev 3) (Shindou Edition)	NSM?	3	0x0000000000000000
 Super Mario 64 (Japan)	NSM?	255	0x0000000000000000
 Super Mario 64 (USA)	NSM?	255	0x0000000000000000
 Super Mario 64 Shindou Edition (J)	NSMJ	3	0x0000000000000000
@@ -890,8 +890,8 @@ Tiggers Honey Hunt (E)	NT9?	255	0x0000000000000000
 Tom Clancy's Rainbow Six (Europe)	NR6?	255	0x0000000000000000
 Tom Clancy's Rainbow Six (USA)	NR6?	255	0x0000000000000000
 Tonic Trouble (Europe) (En,Fr,De,Es,It)	NTT?	255	0x0000000000000000
-Tonic Trouble (USA) (Rev 1)	NTT?	255	0x0000000000000000
-Tony Hawk's Pro Skater (USA) (Rev 1)	NTF?	255	0x0000000000000000
+Tonic Trouble (USA) (Rev 1)	NTT?	1	0x0000000000000000
+Tony Hawk's Pro Skater (USA) (Rev 1)	NTF?	1	0x0000000000000000
 Tony Hawk's Pro Skater (USA)	NTF?	255	0x0000000000000000
 Tony Hawk's Pro Skater 2 (Europe)	NTQ?	255	0x0000000000000000
 Tony Hawk's Pro Skater 2 (USA)	NTQ?	255	0x0000000000000000
@@ -921,17 +921,17 @@ Transformers - Beast Wars Metals 64 (Japan)	NTB?	255	0x0000000000000000
 Transformers - Beast Wars Transmetals (USA)	NOH?	255	0x0000000000000000
 Triple Play 2000 (USA)	N3P?	255	0x0000000000000000
 Tsumi to Batsu - Hoshi no Keishousha (Japan)	NGU?	255	0x0000000000000000
-Turok - Dinosaur Hunter (E) (V1.0)	NTU?	255	0x0000000000000000
-Turok - Dinosaur Hunter (E) (V1.1)	NTU?	255	0x0000000000000000
+Turok - Dinosaur Hunter (E) (V1.0)	NTU?	0	0x0000000000000000
+Turok - Dinosaur Hunter (E) (V1.1)	NTU?	1	0x0000000000000000
 Turok - Dinosaur Hunter (Europe)	NTU?	255	0x0000000000000000
 Turok - Dinosaur Hunter (G)	NTU?	255	0x0000000000000000
 Turok - Dinosaur Hunter (Germany)	NTU?	255	0x0000000000000000
-Turok - Dinosaur Hunter (USA) (Rev 1)	NTU?	255	0x0000000000000000
+Turok - Dinosaur Hunter (USA) (Rev 1)	NTU?	1	0x0000000000000000
 Turok - Dinosaur Hunter (USA)	NTU?	255	0x0000000000000000
 Turok - Rage Wars (E)	NRW?	255	0x0000000000000000
 Turok - Rage Wars (Europe) (En,Fr,It)	NRW?	255	0x0000000000000000
 Turok - Rage Wars (Europe)	NRW?	255	0x0000000000000000
-Turok - Rage Wars (USA) (Rev 1)	NRW?	255	0x0000000000000000
+Turok - Rage Wars (USA) (Rev 1)	NRW?	1	0x0000000000000000
 Turok - Rage Wars (USA)	NRW?	255	0x0000000000000000
 Turok 2 - Seeds of Evil (E)	NT2?	255	0x0000000000000000
 Turok 2 - Seeds of Evil (Europe) (En,Fr,Es,It) (1)	NT2?	255	0x0000000000000000
@@ -939,7 +939,7 @@ Turok 2 - Seeds of Evil (Europe) (En,Fr,Es,It)	NT2?	255	0x0000000000000000
 Turok 2 - Seeds of Evil (Europe)	NT2?	255	0x0000000000000000
 Turok 2 - Seeds of Evil (FGD)	NT2?	255	0x0000000000000000
 Turok 2 - Seeds of Evil (Germany)	NT2?	255	0x0000000000000000
-Turok 2 - Seeds of Evil (USA) (Rev 1)	NT2?	255	0x0000000000000000
+Turok 2 - Seeds of Evil (USA) (Rev 1)	NT2?	1	0x0000000000000000
 Turok 2 - Seeds of Evil (USA)	NT2?	255	0x0000000000000000
 Turok 2 Seeds of Evil (U) (Kiosk)	NT2?	255	0x0000000000000000
 Turok 2 Seeds of Evil (U)	NT2?	255	0x0000000000000000
@@ -949,8 +949,8 @@ Turok 3 - Shadow of Oblivion (USA) (2000-05-31) (Beta)	NTK?	255	0x00000000000000
 Turok 3 - Shadow of Oblivion (USA) (Beta) (2000-07-10)	NTK?	255	0x0000000000000000
 Turok 3 - Shadow of Oblivion (USA)	NTK?	255	0x0000000000000000
 Turok 3 Shadow of Oblivion (U)	NTK?	255	0x0000000000000000
-Turok Dinosaur Hunter (U) (v1.0)	NTU?	255	0x0000000000000000
-Turok Dinosaur Hunter (U) (v1.1)	NTU?	255	0x0000000000000000
+Turok Dinosaur Hunter (U) (v1.0)	NTU?	0	0x0000000000000000
+Turok Dinosaur Hunter (U) (v1.1)	NTU?	1	0x0000000000000000
 Turok Rage Wars (U)	NRW?	255	0x0000000000000000
 Twisted Edge - Extreme Snowboarding (USA)	NSB?	255	0x0000000000000000
 V-Rally Edition 99 (U)	NVL?	255	0x0000000000000000
@@ -975,7 +975,7 @@ WCW Mayhem (Europe)	NWM?	255	0x0000000000000000
 WCW Mayhem (USA)	NWM?	255	0x0000000000000000
 WCW Nitro (USA)	NW3?	255	0x0000000000000000
 WCW vs. nWo - World Tour (Europe)	NWN?	255	0x0000000000000000
-WCW vs. nWo - World Tour (USA) (Rev 1)	NWN?	255	0x0000000000000000
+WCW vs. nWo - World Tour (USA) (Rev 1)	NWN?	1	0x0000000000000000
 WCW vs. nWo - World Tour (USA)	NWN?	255	0x0000000000000000
 WCW-nWo Revenge (Europe)	NW2?	255	0x0000000000000000
 WCW-nWo Revenge (USA)	NW2?	255	0x0000000000000000
@@ -983,10 +983,10 @@ WWF Attitude (Europe)	NTI?	255	0x0000000000000000
 WWF Attitude (U)	NTI?	255	0x0000000000000000
 WWF Attitude (USA)	NTI?	255	0x0000000000000000
 WWF No Mercy (E)	NW4?	255	0x0000000000000000
-WWF No Mercy (Europe) (Rev 1)	NW4?	255	0x0000000000000000
+WWF No Mercy (Europe) (Rev 1)	NW4?	1	0x0000000000000000
 WWF No Mercy (Europe)	NW4?	255	0x0000000000000000
 WWF No Mercy (U)	NW4?	255	0x0000000000000000
-WWF No Mercy (USA) (Rev 1)	NW4?	255	0x0000000000000000
+WWF No Mercy (USA) (Rev 1)	NW4?	1	0x0000000000000000
 WWF No Mercy (USA)	NW4?	255	0x0000000000000000
 WWF War Zone (Europe)	NWW?	255	0x0000000000000000
 WWF War Zone (U)	NWW?	255	0x0000000000000000
@@ -1003,14 +1003,14 @@ Waialae Country Club - True Golf Classics (U)	NWL?	255	0x0000000000000000
 Waialae Country Club - True Golf Classics (USA)	NWL?	255	0x0000000000000000
 Wave Race 64 (E)	NWR?	255	0x0000000000000000
 Wave Race 64 (J)	NWR?	255	0x0000000000000000
-Wave Race 64 (U) (v1.0)	NWR?	255	0x0000000000000000
-Wave Race 64 (U) (v1.1)	NWR?	255	0x0000000000000000
+Wave Race 64 (U) (v1.0)	NWR?	0	0x0000000000000000
+Wave Race 64 (U) (v1.1)	NWR?	1	0x0000000000000000
 Wave Race 64 Shindou Edition (J) (V1.2)	NWRJ	2	0x0000000000000000
 Wayne Gretzky's 3D Hockey '98 (Europe) (En,Fr,De,Es)	NW8?	255	0x0000000000000000
 Wayne Gretzky's 3D Hockey '98 (USA)	NW8?	255	0x0000000000000000
 Wayne Gretzky's 3D Hockey (Europe) (En,Fr,De,Es)	NWG?	255	0x0000000000000000
 Wayne Gretzky's 3D Hockey (Japan)	NWG?	255	0x0000000000000000
-Wayne Gretzky's 3D Hockey (USA) (Rev 1)	NWG?	255	0x0000000000000000
+Wayne Gretzky's 3D Hockey (USA) (Rev 1)	NWG?	1	0x0000000000000000
 Wayne Gretzky's 3D Hockey (USA)	NWG?	255	0x0000000000000000
 Wayne Gretzkys 3D Hockey (U)	NWG?	255	0x0000000000000000
 Wayne Gretzkys 3D Hockey 98 (E)	NW8?	255	0x0000000000000000

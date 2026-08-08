@@ -65,6 +65,32 @@ REGION_FAMILY = {
 }
 
 
+# "(V1.2)", "(Rev 1)" -- the corpus's two ways of naming a revision. Lettered ones ("Rev A") are
+# deliberately not decoded: the mapping to a header version byte is a convention rather than a
+# fact, and a wrong one here is silently wrong cheats, which is the failure this exists to end.
+REVISION = re.compile(r"\(\s*(?:V\s*1\.(\d)|Rev\s+(\d+))\s*\)", re.I)
+
+
+def revision_of(stem):
+    """The ROM header's version byte, if the corpus filename states one, else None.
+
+    This is the fix for AUDIT 2aa. rom_info's Ocarina row is a `MATCH_ID`, which matches any
+    region and any revision on purpose -- that is the right granularity for picking a save type
+    and the wrong one for picking cheat addresses. Every USA revision therefore keyed to
+    `CZL? / ANY`, mkcheatdb merged the three of them and deduplicated by name keeping the first,
+    and a V1.2 cartridge was handed V1.0's addresses: Max Heart Containers at 0x8011A5FE instead
+    of 0x8011ACAE. The engine wrote it faithfully and nothing happened.
+
+    The filename said "(U) (V1.2)" the whole time. Returning None rather than guessing 0 for an
+    unmarked file is what keeps the ANY-version row alive as a fallback -- see find_row() in
+    cheatdb.c, which takes an exact version match first and ANY only if there is no better.
+    """
+    m = REVISION.search(stem)
+    if m is None:
+        return None
+    return int(m.group(1) if m.group(1) is not None else m.group(2))
+
+
 def region_of(text):
     """The release's region family from its parenthesised markers, or "" if it says nothing.
 
@@ -190,7 +216,7 @@ def main():
             return candidates["N"]
         return None
 
-    rows, misses = [], []
+    rows, misses, revised = [], [], 0
     for fn in sorted(os.listdir(args.input)):
         if not fn.endswith(".cht"):
             continue
@@ -209,6 +235,14 @@ def main():
             misses.append(stem)
             continue
         code, ver, cc, title, reg = hit
+        # The filename wins over the database row's version, in both directions. rom_info names a
+        # revision only when the save type depends on it, so it usually says ANY; and when it does
+        # name one, it names the revision whose save type it describes, not the revision these
+        # cheat addresses were written against. The corpus filename is the one that knows.
+        rev = revision_of(stem)
+        if rev is not None:
+            ver = rev
+            revised += 1
         rows.append((stem, code or "????", ver, cc))
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
@@ -228,6 +262,7 @@ def main():
         f.write("\n".join("  " + m for m in misses))
 
     print("%d of %d corpus files keyed -> %s" % (len(rows), len(rows) + len(misses), args.output))
+    print("%d of those carry a revision from the filename rather than the ANY sentinel" % revised)
     print("unmatched: %d (see %s)" % (len(misses), args.report))
     return 0
 

@@ -196,25 +196,45 @@ static const cheatdb_index_t *find_row (uint64_t check_code, const char *game_co
     }
 
     /* Linear from here: the index is sorted by check_code, so a game-code lookup has no order to
-     * exploit. 350 rows is a few microseconds and it only runs on a miss. */
-    const cheatdb_index_t *any = NULL;
+     * exploit. 390 rows is a few microseconds and it only runs on a miss.
+     *
+     * Most specific wins, not first-found, and that is a correction. Several games have both a
+     * wildcard row and a region-specific one -- Super Mario 64 carries `NSM?` and `NSMJ`, and both
+     * match a Japanese cartridge asking for NSMJ. Returning whichever sat earlier in the index
+     * handed the Japanese release the merged all-regions row, which is the same class of mistake
+     * as handing a V1.2 cartridge V1.0's addresses (AUDIT 2aa): a cheat that writes faithfully to
+     * an address that means nothing in this binary.
+     *
+     * Rank, best first: an exact four-character code beats a three-character wildcard, and within
+     * each, an exact version beats the ANY sentinel. */
+    const cheatdb_index_t *best = NULL;
+    int best_rank = 0;
+
     for (uint32_t i = 0; i < db_head.game_count; i++) {
         /* A '?' in the region position is a wildcard, because the upstream database's MATCH_ID
          * rows match any region and the converter carries that through rather than inventing a
          * region byte. Without this, every non-USA release misses. */
         const char *stored = db_index[i].game_code;
-        int keylen = (stored[3] == '?') ? 3 : 4;
-        if (memcmp(stored, game_code, keylen) != 0) {
+        bool wild = (stored[3] == '?');
+        if (memcmp(stored, game_code, wild ? 3 : 4) != 0) {
             continue;
         }
+
+        int rank;
         if (db_index[i].version == version) {
-            return &db_index[i];
+            rank = wild ? 3 : 4;
+        } else if (db_index[i].version == CHEATDB_ANY_VERSION) {
+            rank = wild ? 1 : 2;
+        } else {
+            continue;                   /* a different revision of the same game: not ours */
         }
-        if (db_index[i].version == CHEATDB_ANY_VERSION && any == NULL) {
-            any = &db_index[i];
+
+        if (rank > best_rank) {
+            best_rank = rank;
+            best = &db_index[i];
         }
     }
-    return any;
+    return best;
 }
 
 bool cheatdb_has (uint64_t check_code, const char *game_code, uint8_t version) {
