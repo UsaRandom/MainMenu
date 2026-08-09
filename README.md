@@ -4,6 +4,12 @@ A box-art game launcher for the N64, run from a [SummerCart64](https://github.co
 
 ![The grid](docs/images/demo-grid-scrolled.png)
 
+
+<br>
+<br>
+<img width="640" height="480" alt="1-profile-picker" src="https://github.com/user-attachments/assets/13b6c3d2-9fc4-4381-ab98-5529c618d54a" />
+
+
 *Every game, every cover and every cheat in that picture is invented —
 [`tools/mkdemo.py`](tools/mkdemo.py) draws original art for titles that do not exist. Nothing is
 written on the covers; the menu is what puts a name under one.*
@@ -19,7 +25,7 @@ written on the covers; the menu is what puts a name under one.*
   lays out four across (above) where a tab of tall ones lays out five. Nothing is cropped to fit.
 - **Tabs per system** — N64, NES, SNES, GB, GBC, SMS — plus Recent, Most Played and Favourites.
   Empty tabs do not appear.
-- **Remembers what you played** and for how long, and offers it back at the top.
+- **Remembers what you played** and offers it back at the top.
 - **Runs other systems** through emulator cores kept on the card.
 - **Up to ten players share one card.** Each picks a name and a face out of 3,894 icons in two
   colours of their own, and keeps their own saves, favourites, play history, cheat selections and
