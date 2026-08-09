@@ -546,7 +546,7 @@ static void do_load (app_t *app) {
         }
 
         diag_reportf("cheats %s  %d line(s)  %d carried",
-                cheats_fit ? "fit" : "refused (plain 8/16-bit writes only)",
+                cheats_fit ? "fit" : "refused (a line this engine cannot emit, or over 128 words)",
                 cheat_lines, launch_patch.engine_codes);
         diag_reportf("engine rom+%06lx ram %08lx  %lu words in %d run(s)",
                 (unsigned long)launch_patch.engine_rom_off,

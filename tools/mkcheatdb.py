@@ -17,21 +17,31 @@ protectable, so taking an MIT compilation sidesteps the question instead of answ
 
 ## What gets dropped, and why it has to be
 
-The filter list is derived from what src/boot/cheats.c actually executes, not from what the
-format allows. Anything the engine silently ignores is dropped here, because a cheat that appears
-in the menu and does nothing is worse than one that is absent:
+The filter is not a list here. It is `rompatch.body_words()`, imported, which mirrors
+`rompatch_body_words()` in src/menu/rompatch_find.c -- the console's own answer to "can this line
+be emitted". Anything written into the database that the engine then refuses is a cheat a player
+can tick and watch do nothing, on a machine with no diagnosis available, which is worse than one
+that is absent.
 
-  * every GS-button variant -- bit 3 set: 88 89 A8 A9 D8-DB. IS_CONDITION_GS_BUTTON causes an
-    explicit `continue` in cheats_install, so these emit no instructions at all.
-  * a 50 repeater or D0-D3 conditional whose next line is not a write -- same silent no-op.
-  * anything outside the accepted set below.
+That used to be a list, and it drifted from the engine in both directions: it wrote 652 repeater
+groups and 348 boot-write groups the console silently refused at launch, and it dropped 51 groups
+as "GS-button-only" that had nothing to do with the button (0xEE and 0xFF have bit 3 set, but bit
+3 only means the button in a write or conditional type byte).
+
+What is left out, measured over the corpus, is now only what genuinely cannot run:
+
+  * every GS-button variant -- 88 89 A8 A9 D8-DB. There is no GameShark button on this console
+    and nothing in RDRAM stands in for one, so these can never do anything. 2,520 groups.
+  * a conditional or repeater with nothing after it to guard. 16,653 groups -- and almost all of
+    them are not cheats: 20,142 of the 20,154 dangling conditionals in the corpus are named
+    "Activator", building blocks the corpus lists separately for a player to combine by hand.
+  * CC DE FF, which emit nothing even on Datel's own engine. 29 groups.
+  * a 16-bit access at an odd address, which would not misbehave but hang: `sh` off an odd
+    address takes an Address Error at the exception vector with EXL set and vectors straight back
+    in. 531 groups, all of which earlier versions of this converter wrote out.
 
 **A group in which any line is dropped is dropped whole**, and counted. Half a cheat is not a
 cheat: a conditional without its write leaves the engine pairing the D0 with an unrelated code.
-
-Accepted: 80 81 A0 A1 writes, D0-D3 conditionals, 50 repeater, F0 F1 boot writes, 20 clear
-memory, EE disable Expansion Pak, and CC DE FF which the engine accepts and ignores (kept so
-groups stay intact).
 
 Coverage is written to build/cheatdb-report.txt so what was lost is visible rather than implied.
 """
@@ -53,27 +63,16 @@ ANY_VERSION = 0xFF
 CORPUS_ZIP = "https://github.com/libretro/libretro-database/archive/refs/heads/master.zip"
 CORPUS_SUBDIR = "cht/Nintendo - Nintendo 64/"
 
-# Types the engine emits something for. Keyed by the high byte of the address word.
-ACCEPTED = {
-    0x80, 0x81,             # 8/16-bit write
-    0xA0, 0xA1,             # same, uncached (preserved by the & 0xA07FFFFF mask)
-    0xD0, 0xD1, 0xD2, 0xD3, # conditionals
-    0x50,                   # repeater
-    0xF0, 0xF1,             # boot-time writes
-    0x20,                   # clear memory
-    0xEE,                   # disable Expansion Pak
-    0xCC, 0xDE, 0xFF,       # accepted and ignored; kept so groups stay whole
-}
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rompatch
 
-# Bit 3 of the type byte means "only while the GS button is held", which cheats_install skips.
-def is_gs_button(t):
-    return (t & 0x08) != 0
-
-def is_write(t):
-    return (t & 0xF0) in (0x80, 0xA0)
-
-def needs_following_write(t):
-    return t == 0x50 or (t & 0xF0) == 0xD0
+# What the runtime engine can and cannot emit is rompatch.body_words(), which is itself a mirror of
+# rompatch_body_words() in src/menu/rompatch_find.c. Imported rather than restated: this file used
+# to carry its own ACCEPTED set and its own idea of what a conditional may guard, and the two
+# drifted -- it counted 51 groups as "GS-button-only" that were nothing of the sort, and it wrote
+# 652 repeater groups and 348 boot-write groups into the database that the console then refused at
+# launch, silently, with no way for a player to tell why the cheat they ticked did nothing.
+ENGINE_MAX_WORDS = 128
 
 
 def fetch_corpus(dest):
@@ -132,20 +131,67 @@ def parse_cht(path):
     return groups
 
 
+def why_refused(lines, i, tests):
+    """A reason a reader of the report can act on, for the block starting at lines[i]."""
+    t = (lines[i][0] >> 24) & 0xFF
+    j = i + tests
+    if j >= len(lines):
+        return "type %02X with nothing after it to guard" % t
+    bt = (lines[j][0] >> 24) & 0xFF
+    # The specials are matched before the bit-field reading, exactly as the switch in
+    # src/boot/cheats.c does. 0xDE is SPECIAL_SET_ENTRYPOINT_ADDR, not "a 16-bit not-equal
+    # conditional behind the GS button" -- reading its bits was how 15 groups came to be reported
+    # as GS-button-only when the button has nothing to do with them.
+    if bt in (0xCC, 0xDE, 0xFF, 0x20, 0x00):
+        return "type %02X emits nothing even on Datel's own engine" % bt
+    if (bt & 0x08) and (bt & 0xF0) in (0x80, 0xA0, 0xD0):
+        return "type %02X only acts while the GS button is held, and there is no button" % bt
+    if rompatch.halfword_misaligned(lines[j][0]):
+        return "type %02X is 16-bit at the odd address %08X, which would hang the console" \
+               % (bt, lines[j][0] & 0x00FFFFFF)
+    if bt == 0x50:
+        if (lines[j][0] >> 8) & 0xFF == 0:
+            return "repeater with a count of zero"
+        if j + 1 >= len(lines):
+            return "repeater with no write after it to multiply"
+        nt = (lines[j + 1][0] >> 24) & 0xFF
+        if rompatch.halfword_misaligned(lines[j + 1][0]):
+            return "repeater over a 16-bit write at an odd address, which would hang the console"
+        if (nt & 0x01) and ((lines[j][0] & 0xFF) & 1):
+            return "repeater stepping a 16-bit write by an odd %d bytes" % (lines[j][0] & 0xFF)
+        return "repeater over type %02X, which is not a write" % nt
+    if tests:
+        return "type %02X guards type %02X, which is not something the engine can emit" % (t, bt)
+    return "type %02X is not something the engine can emit" % bt
+
+
 def filter_group(lines):
-    """Return (kept_lines, reason) -- reason is None when the whole group is usable."""
-    for i, (addr, _val) in enumerate(lines):
-        t = (addr >> 24) & 0xFF
-        if t not in ACCEPTED:
-            return None, "type %02X not supported by the engine" % t
-        if is_gs_button(t):
-            return None, "type %02X is GS-button-only and emits nothing" % t
-        if needs_following_write(t):
-            if i + 1 >= len(lines):
-                return None, "type %02X with no following line" % t
-            nt = (lines[i + 1][0] >> 24) & 0xFF
-            if not is_write(nt) or is_gs_button(nt):
-                return None, "type %02X followed by %02X, which is not a plain write" % (t, nt)
+    """Return (kept_lines, reason) -- reason is None when the whole group is usable.
+
+    The question this asks is exactly the one the console asks at launch, because it asks it with
+    the console's own code: rompatch.body_words() is a line-for-line mirror of
+    rompatch_body_words() in src/menu/rompatch_find.c. A group written here that the engine then
+    refuses is a cheat a player can tick and watch do nothing, with no diagnosis available on the
+    hardware -- so the two filters agreeing is not tidiness, it is the only way the database can
+    mean what it says.
+    """
+    words, i = 4, 0
+    while i < len(lines):
+        tests = 0
+        while i + tests < len(lines) and ((lines[i + tests][0] >> 24) & 0xF8) == 0xD0 \
+                and not rompatch.halfword_misaligned(lines[i + tests][0]):
+            tests += 1
+        body, eaten = rompatch.body_words(lines, i + tests)
+        if body == 0:
+            return None, why_refused(lines, i, tests)
+        words += 4 * tests + body
+        i += tests + eaten
+
+    # The engine's own ceiling, checked here so the report says so once rather than the console
+    # discovering it per launch. It is the looser of the two limits: how much dead padding the game
+    # has decides most of them, and that is a per-ROM number no converter can know.
+    if words > ENGINE_MAX_WORDS:
+        return None, "%d engine words, over the %d the engine holds" % (words, ENGINE_MAX_WORDS)
     return lines, None
 
 

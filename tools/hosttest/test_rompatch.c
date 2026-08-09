@@ -241,8 +241,18 @@ int main (void) {
         const uint32_t dangling[] = { 0x8111ACAE, 0x0140, 0xD011ACB9, 0x0008, 0, 0 };
         const uint32_t stacked[]  = { 0xD011ACB9, 0x0008, 0xD011ACBA, 0x0001, 0, 0 };
         const uint32_t gsbutton[] = { 0xD811ACB9, 0x0008, 0x8011ACBA, 0x0001, 0, 0 };
-        const uint32_t repeater[] = { 0x50000102, 0x0000, 0x8011ACBA, 0x0001, 0, 0 };
+        const uint32_t gswrite[]  = { 0x8811ACBA, 0x0001, 0, 0 };
+        const uint32_t repeater[] = { 0x50000502, 0x0000, 0x8111ACBA, 0x0001, 0, 0 };
+        const uint32_t repincr[]  = { 0x50000502, 0x0001, 0x8111ACBA, 0x0001, 0, 0 };
+        const uint32_t rep0[]     = { 0x50000002, 0x0000, 0x8111ACBA, 0x0001, 0, 0 };
+        const uint32_t repdangle[] = { 0x50000502, 0x0000, 0, 0 };
         const uint32_t bootwrite[] = { 0xF1000318, 0x0000, 0, 0 };
+        const uint32_t expoff[]   = { 0xEE000000, 0x0000, 0, 0 };
+        const uint32_t setentry[] = { 0xDE000000, 0x0000, 0, 0 };
+        const uint32_t twotests[] = { 0xD011ACB9, 0x0008, 0xD011ACBA, 0x0001,
+                                      0x8011ACBC, 0x0001, 0, 0 };
+        const uint32_t condrep[]  = { 0xD011ACB9, 0x0008, 0x50000502, 0x0000,
+                                      0x8111ACBA, 0x0001, 0, 0 };
 
         check(rompatch_cheats_fit(plain, &lines) && lines == 1,
               "one plain 16-bit write fits, and counts as one line");
@@ -251,12 +261,44 @@ int main (void) {
         check(!rompatch_cheats_fit(dangling, NULL),
               "a conditional with nothing after it is refused, not silently dropped");
         check(!rompatch_cheats_fit(stacked, NULL),
-              "a conditional guarding another conditional is refused");
+              "a run of conditionals with no body after it is refused");
         check(!rompatch_cheats_fit(gsbutton, NULL),
               "a GS-button conditional is refused -- there is no button to read");
-        check(!rompatch_cheats_fit(repeater, NULL), "a repeater is still refused");
-        check(!rompatch_cheats_fit(bootwrite, NULL), "a boot-time write is still refused");
+        check(!rompatch_cheats_fit(gswrite, NULL), "nor a GS-button write");
         check(!rompatch_cheats_fit(NULL, NULL), "no selection at all is not a selection that fits");
+
+        check(rompatch_cheats_fit(repeater, &lines) && lines == 2,
+              "a repeater and the write it multiplies: two lines, carried as a loop");
+        check(rompatch_cheats_fit(repincr, NULL), "and again when the value increments too");
+        check(!rompatch_cheats_fit(rep0, NULL),
+              "a repeater counting zero times is refused -- the loop counter would underflow to 2^32");
+        check(!rompatch_cheats_fit(repdangle, NULL), "a repeater with no write after it is refused");
+        check(rompatch_cheats_fit(bootwrite, &lines) && lines == 1,
+              "a boot-time write is carried, as the ordinary write it is");
+        check(rompatch_cheats_fit(expoff, NULL), "disabling the Expansion Pak is carried");
+        check(!rompatch_cheats_fit(setentry, NULL),
+              "0xDE is a special that emits nothing, not a GS-button conditional");
+        check(rompatch_cheats_fit(twotests, &lines) && lines == 3,
+              "two conditionals stack in front of one write");
+        check(rompatch_cheats_fit(condrep, &lines) && lines == 3,
+              "and a conditional can guard a repeater");
+
+        /* The hang, which is the one refusal that is about the console and not about the cheat.
+         * `sh`/`lhu` off an odd address takes an Address Error at the exception vector with EXL
+         * set, which vectors straight back in and locks the machine. 1,964 of the corpus's 149,687
+         * 16-bit writes name one, and every engine before this one carried them. */
+        {
+            const uint32_t oddw[] = { 0x8108CD69, 0x0041, 0, 0 };
+            const uint32_t oddb[] = { 0x8008CD69, 0x0041, 0, 0 };
+            const uint32_t oddc[] = { 0xD111ACB9, 0x0008, 0x8011ACBA, 0x0001, 0, 0 };
+            const uint32_t oddrep[] = { 0x50000501, 0x0000, 0x8111ACBA, 0x0001, 0, 0 };
+            check(!rompatch_cheats_fit(oddw, NULL),
+                  "a 16-bit write to an odd address is refused: it would hang, not misbehave");
+            check(rompatch_cheats_fit(oddb, NULL), "...while the 8-bit write beside it is fine");
+            check(!rompatch_cheats_fit(oddc, NULL), "an `lhu` off an odd address hangs the same way");
+            check(!rompatch_cheats_fit(oddrep, NULL),
+                  "and a repeater stepping a 16-bit write by an odd 1 goes odd on iteration two");
+        }
 
         /* The budget, from both sides. A plain write is three words and the tail is four, so
          * (128 - 4) / 3 = 41 writes fit and 42 do not. Getting this off by one would overrun
@@ -290,6 +332,57 @@ int main (void) {
             check(got == (n == 17), (n == 17) ? "17 guarded pairs fit, at seven words each"
                                               : "18 do not -- a pair is seven words, not three");
         }
+
+        /* The repeater's price, from both sides. Twelve words whatever the count, which is the
+         * whole reason it is a loop: at Datel's three-per-iteration a count of 254 is 762 words
+         * and no game on the reference shelf has that much padding. (128 - 4) / 12 = 10. */
+        for (int n = 10; n <= 11; n++) {
+            for (int i = 0; i < n; i++) {
+                many[i * 4 + 0] = 0x5000FE02u;          /* 254 iterations, step 2 */
+                many[i * 4 + 1] = 0x0000;
+                many[i * 4 + 2] = 0x8111AD00u + (uint32_t)(i * 2);
+                many[i * 4 + 3] = 0x0001;
+            }
+            many[n * 4] = 0;
+            many[n * 4 + 1] = 0;
+            bool got = rompatch_cheats_fit(many, NULL);
+            check(got == (n == 10),
+                  (n == 10) ? "10 repeaters fit, at twelve words each whatever the count"
+                            : "11 do not, and 254 iterations still costs twelve");
+        }
+
+        /* What the pricing function says, line by line, so a change to the emitter that forgets to
+         * change the price cannot pass. emit_engine() checks the two against each other at run
+         * time and writes nothing when they disagree; this checks the numbers themselves. */
+        {
+            int eaten = 0, tests = 0;
+            check(rompatch_body_words(plain, &eaten) == 3 && eaten == 1, "a plain write is 3 words");
+            check(rompatch_body_words(repeater, &eaten) == 12 && eaten == 2,
+                  "a flat repeater is 12 words and eats both its lines");
+            check(rompatch_body_words(repincr, &eaten) == 13,
+                  "one that increments the value as well is 13");
+            check(rompatch_body_words(expoff, &eaten) == 4, "disabling the Expansion Pak is 4");
+            check(rompatch_atom_words(twotests, &eaten, &tests) == 11 && tests == 2 && eaten == 3,
+                  "two tests over one write is 4 + 4 + 3 words in one indivisible atom");
+            check(rompatch_atom_words(condrep, &eaten, &tests) == 16 && tests == 1 && eaten == 3,
+                  "one test over a repeater is 4 + 12, and the branch has to clear all of it");
+        }
+
+        /* Where each conditional branches to when it fails, in words past its delay slot. The
+         * numbers, not the formula: this is the one place an error puts the console into somebody
+         * else's boot code on every exception, and it is checked against hand-counted blocks.
+         *
+         *   1 test, 3-word body:  [lui lbu ori bne] [lui ori sh] -- branch at 3, delay 4,
+         *                         target 7, so +3. This is the number src/boot/cheats.c uses.
+         *   2 tests:              [0..3][4..7][8..10] -- both branch to 11, so +7 and +3.
+         *   1 test, 12-word body: [0..3][4..15] -- target 16, so +12. */
+        check(rompatch_test_branch(1, 0, 3) == 3, "one test over one write branches +3");
+        check(rompatch_test_branch(2, 0, 3) == 7, "the first of two branches +7");
+        check(rompatch_test_branch(2, 1, 3) == 3, "and the second +3, to the same word");
+        check(rompatch_test_branch(5, 0, 3) == 19, "the first of five branches +19");
+        check(rompatch_test_branch(5, 4, 3) == 3, "and the last of five, +3");
+        check(rompatch_test_branch(1, 0, 12) == 12, "one test over a repeater loop clears all 12");
+        check(rompatch_test_branch(1, 0, 4) == 4, "and over the Expansion Pak special, all 4");
     }
 
     printf("  %d checks, %d failures\n", checks, failures);

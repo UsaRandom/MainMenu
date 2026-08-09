@@ -129,6 +129,15 @@ echo "== finding the preamble to patch in a cartridge image"
 $CC $CFLAGS -Isrc/menu tools/hosttest/test_rompatch.c src/menu/rompatch_find.c -o "$OUT/test_rompatch"
 "$OUT/test_rompatch"
 
+echo
+echo "== running the emitted engine against Datel's"
+# The C suite above pins what a line costs and where a conditional branches to; nothing in it
+# executes an instruction. This does: tools/rompatch.py emits the same shapes and runs them through
+# a small VR4300 interpreter, then checks the bytes against the reference expansion in
+# src/boot/cheats.c. It is the only check on the repeater, which is the one shape here that is a
+# rewrite rather than a transcription -- a loop where Datel emits `count` copies of the write.
+python3 tools/rompatch.py --self-test
+
 if [ "${1:-}" = "--mutate" ]; then
     echo
     echo "== mutation: drop the address test, the preamble suite must go red"
@@ -145,6 +154,37 @@ if [ "${1:-}" = "--mutate" ]; then
         echo "  MUTATION SURVIVED -- the suite does not check the bogus-target rejection"
     else
         sed 's/^/  /' "$OUT/rompatch_mut.log"
+    fi
+
+    echo
+    echo "== mutation: shift every conditional's branch by one word, the suite must go red"
+    # The most dangerous number in the engine. One word late and the branch lands on the store it
+    # exists to skip, doing the thing the conditional was there to prevent; one word early and it
+    # lands in the middle of the body. The formula is out in rompatch_find.c only so that this can
+    # be done to it.
+    sed -e 's/return 4 \* (tests - k - 1) + (int)body;/return 4 * (tests - k) + (int)body;/' \
+        src/menu/rompatch_find.c > "$OUT/rompatch_branch_mut.c"
+    $CC $CFLAGS -Isrc/menu tools/hosttest/test_rompatch.c \
+        "$OUT/rompatch_branch_mut.c" -o "$OUT/test_rompatch_branch_mut"
+    if "$OUT/test_rompatch_branch_mut" >"$OUT/rompatch_branch_mut.log" 2>&1; then
+        echo "  MUTATION SURVIVED -- nothing pins where a conditional branches to"
+    else
+        sed 's/^/  /' "$OUT/rompatch_branch_mut.log"
+    fi
+
+    echo
+    echo "== mutation: let a 16-bit write take an odd address, the suite must go red"
+    # 1,964 of the corpus's 149,687 16-bit writes name one, and `sh` off an odd address takes an
+    # Address Error at the exception vector with EXL set: it vectors straight back in and the
+    # console locks. This is the check that stops a bad cheat being a dead machine.
+    sed -e 's/return (((word >> 24) & 0x01u) != 0) && ((word & 1u) != 0);/return false;/' \
+        src/menu/rompatch_find.c > "$OUT/rompatch_align_mut.c"
+    $CC $CFLAGS -Wno-unused-parameter -Isrc/menu tools/hosttest/test_rompatch.c \
+        "$OUT/rompatch_align_mut.c" -o "$OUT/test_rompatch_align_mut"
+    if "$OUT/test_rompatch_align_mut" >"$OUT/rompatch_align_mut.log" 2>&1; then
+        echo "  MUTATION SURVIVED -- the alignment refusal is not checked"
+    else
+        sed 's/^/  /' "$OUT/rompatch_align_mut.log"
     fi
 
     echo

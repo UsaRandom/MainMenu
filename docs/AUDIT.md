@@ -5724,6 +5724,109 @@ ejects. Deploys go through it now.
 
 ---
 
+## 1au. Going through the database line by line, and what was in it
+
+Every type byte in the corpus, counted over the 393 games a key table can reach, and asked of each
+one: can this engine emit it, and if not, is that because of the cheat or because of us?
+
+| type | lines | what it is | now |
+|------|-------|------------|-----|
+| `80 81 A0 A1` | 211,402 | 8/16-bit write, cached and uncached | emitted, 3 words |
+| `D0`-`D3` | 23,594 | conditionals | emitted, 4 words each, **stacked** |
+| `50` | 888 | repeater | emitted as a **loop**, 12 words |
+| `F0 F1` | 726 | write once at boot | emitted as ordinary writes |
+| `EE` | 23 | disable Expansion Pak | emitted, 4 words |
+| `88 89 D8 D9` | 2,804 | the same, but only while the GS button is held | refused |
+| `CC DE FF 00` | 29 | specials Datel's own engine emits nothing for | refused |
+
+Four of those rows are new. The measured result at database level, after the merge that collapses
+regional variants: **42,366 of 53,653 groups carried, up from 42,196**, and the composition of the
+change matters more than the total -- 701 groups newly carried, 531 removed because they would
+hang the console.
+
+### The repeater had to stop being an unroll
+
+`cheats_install()` emits `3 * count` instructions for a `50`, and the corpus goes to `count = 254`:
+762 words for one cheat. Against that, the measured padding capacity of the fifteen-ROM shelf --
+the space the engine actually has, `--list-gaps` over each image:
+
+| game | usable words | game | usable words |
+|------|-----|------|-----|
+| Star Wars: Shadows of the Empire | 15 | Donkey Kong 64 | 141 |
+| Banjo-Kazooie | 24 | Harvest Moon 64 | 299 |
+| GoldenEye 007 | 25 | Pokemon Stadium | 530 |
+| 1080 Snowboarding | 36 | Mario Kart 64 | 718 |
+| Ocarina of Time | 38 | Mario Party 2 | 1,115 |
+| Tony Hawk's Pro Skater 2 | 43 | Mario Party | 1,128 |
+
+Half the shelf is under 45 words. So an unrolled repeater is not expensive, it is impossible, and
+a loop is the only form that fits. **This is also the number that matters more than
+`ENGINE_MAX_WORDS`**, which is 128: raising it to 256 buys 77 groups out of 177,579, while the
+game's own padding decides everything on the left-hand column. The cap bounds the stack arrays; it
+does not express a policy.
+
+A loop needs three live values -- address, value, counter -- and an exception handler has two
+registers it may touch. The third is borrowed: `$t0` is parked in one word of reserved padding for
+eleven instructions and put back. Safe here and nowhere else, because the cell is a word we held
+back out of a run that already passed the padding test, it is KSEG0 so the store cannot take a TLB
+miss, and EXL is set for the whole loop so nothing can nest in and find it occupied.
+
+### 1,964 codes in the corpus would not have misbehaved, they would have hung
+
+`sh` and `lhu` off an odd address raise an Address Error. This engine runs *at* the general
+exception vector with EXL already set, and a nested exception there does not update EPC: it
+vectors straight back to 0x80000180, into the engine, into the same store. The console locks and
+only the power switch gets it back.
+
+Measured: **1,964 of 149,687 16-bit writes name an odd address**, in 531 database groups.
+AeroGauge's "Name 1" is `8108CD69 8108CD6A 8108CD6B` -- three consecutive bytes typed as 16-bit
+writes. Every engine this project has shipped carried them. They are refused now, whole groups at
+a time, and the report says which and why.
+
+Deliberately not "fixed" by splitting an unaligned halfword into two `sb`: for AeroGauge that
+would write two overlapping bytes per line and produce garbage. The codes are wrong at the source
+and inventing a reading for them is worse than declining.
+
+### The 20,154 dangling conditionals are not cheats
+
+The largest single drop, and it stays a drop. `20,142 of 20,154` are named "Activator", "Dual
+Activator", "Joker Code" -- a `D0` line on its own, listed separately so a player can combine it
+with a code of their choice. TWINE alone carries 96 of them. Applying one on its own does nothing
+by construction, and pairing it with whatever group happens to sit next in the list is exactly the
+bug the group model exists to prevent (2.2).
+
+### What is left
+
+Of the 43,986 database groups that are actually cheats rather than fragments or no-ops,
+**42,366 are carried -- 96.3%**. The remainder is 988 GS-button groups, 543 that would hang, 88
+over the engine ceiling, and one repeater that steps a 16-bit write by an odd byte. The GS-button
+set is the only one that is a capability gap rather than a refusal, and it is not closable: there
+is no button, and no address in RDRAM stands in for one.
+
+### How it is checked
+
+The C suite pins what each line costs and where each conditional branches to, including
+`rompatch_test_branch()`, which is out in `rompatch_find.c` for no reason other than that the host
+suite can reach it there. Nothing in it executes an instruction.
+
+`tools/rompatch.py --self-test` does: it emits the same shapes, runs them through a small VR4300
+interpreter, and checks the bytes written against the reference expansion in `cheats.c`. 87 checks.
+Four mutations confirmed red -- shifting the branch by one word either way, starting the loop
+counter at `count` instead of `count - 1`, and inverting `beq`/`bne`.
+
+**One of those mutations initially survived**, and the reason is worth keeping: a branch that
+overshoots by one word lands on a harmless instruction, so a test that only asks "did the guarded
+store happen" cannot see it. The fix is a sentinel write immediately after the guarded atom, *in a
+different 64 KB page* -- with both in `0x8011xxxx`, 11 of 12 cases still passed, because the delay
+slot the overshooting branch ran on the way past was the guarded write's own `lui`, which loaded
+the high half the sentinel happened to need.
+
+**Not verified: any of this running on a console.** ares cannot be screenshotted while the machine
+is in use -- two attempts captured a browser window -- and no game has been booted with a repeater
+or a stacked conditional in its engine.
+
+---
+
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon

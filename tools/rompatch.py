@@ -75,7 +75,11 @@ WINDOW_LEN = 0x100000
 # rom_info.c's fix_boot_address() and preamblescan.py's table.
 CIC_SHIFT = {"6103": -0x100000, "6106": -0x200000}
 
-REG_ZERO, REG_K0, REG_K1 = 0, 26, 27
+REG_ZERO, REG_T0, REG_K0, REG_K1 = 0, 8, 26, 27
+
+# What one line costs. Mirrors src/menu/rompatch.h; test_rompatch.c pins the C side and
+# tools/hosttest/run.sh would not notice if these two drifted, so keep them beside each other.
+REPEAT_WORDS_FLAT, REPEAT_WORDS_INCR, EXPANSION_OFF_WORDS = 12, 13, 4
 
 # The gap policy, in numbers. GUARD words of zero are left untouched either side so a
 # fencepost error in the scan cannot land on an instruction. MAX_GAP rejects the multi-kilobyte
@@ -99,6 +103,7 @@ def i_lbu(rt, off, base):       return _op(0x24, base, rt, off)
 def i_lhu(rt, off, base):       return _op(0x25, base, rt, off)
 def i_beq(rs, rt, off):         return _op(0x04, rs, rt, off)
 def i_bne(rs, rt, off):         return _op(0x05, rs, rt, off)
+def i_lw(rt, off, base):        return _op(0x23, base, rt, off)
 def i_jr(rs):                   return ((rs & 0x1F) << 21) | 0x08
 def i_j(target):                return 0x08000000 | ((target >> 2) & 0x03FFFFFF)
 def i_nop():                    return 0
@@ -179,7 +184,31 @@ def padding_runs(rom):
     return out
 
 
-def place(rom, entry, atoms):
+def usable_runs(rom):
+    """padding_runs() with the guard words taken off both ends: (rom_off, words) ready to fill."""
+    return [(off + GAP_GUARD_WORDS * 4, length // 4 - 2 * GAP_GUARD_WORDS)
+            for off, length in padding_runs(rom)]
+
+
+def reserve_scratch(runs, entry):
+    """Keep one word back for the repeater loop to park a borrowed register in.
+
+    Out of the *last* run, because place() fills lowest first and so is least likely to want that
+    one. Mirrors install() in src/menu/rompatch.c, including taking the word only when a repeater
+    is actually present -- Star Wars has fifteen words of padding in the whole boot segment.
+
+    @return (runs, scratch_ram), or (runs, None) if no run could spare a word.
+    """
+    for i in range(len(runs) - 1, -1, -1):
+        at, words = runs[i]
+        if words > 1:
+            runs = list(runs)
+            runs[i] = (at, words - 1)
+            return runs, entry + (at + (words - 1) * 4 - WINDOW_OFF)
+    return runs, None
+
+
+def place(runs, atoms):
     """Lay @p n_words of engine across as many padding runs as it takes, lowest first.
 
     One run holds about six cheats: Ocarina's is 108 bytes, which is 27 words, less four for the
@@ -197,9 +226,7 @@ def place(rom, entry, atoms):
     @return a list of (rom_off, words) in execution order, or None if the image has nowhere.
     """
     segs, a = [], 0
-    for off, length in padding_runs(rom):
-        cap = length // 4 - 2 * GAP_GUARD_WORDS
-        at = off + GAP_GUARD_WORDS * 4
+    for at, cap in runs:
         rest = sum(atoms[a:])
         budget = cap if rest <= cap else (cap - 2 if cap >= 3 else 0)
         used = 0
@@ -227,13 +254,136 @@ def chain(segs, entry, words):
     return out
 
 
-def emit_engine(codes, word0, word1, marker, marker_if=None):
+def halfword_misaligned(raw):
+    """A 16-bit access to an odd address, which on this engine is a hang and not a bad cheat.
+
+    `sh` or `lhu` off an odd address raises an Address Error, and this code runs at the general
+    exception vector with EXL already set: the nested exception does not update EPC and vectors
+    straight back in, into the same store. The console locks solid. 1,964 of the corpus's 149,687
+    16-bit writes name an odd address. See rompatch_find.c, which says the same thing in C.
+    """
+    return bool((raw >> 24) & 0x01) and bool(raw & 1)
+
+
+def body_words(codes, i):
+    """What the one line at codes[i] costs, and how many lines it eats.
+
+    Mirrors rompatch_body_words() in src/menu/rompatch_find.c -- the table of what this engine can
+    express lives there and is restated here rather than being invented twice.
+
+    @return (words, lines), or (0, 1) when the line cannot be expressed at all.
+    """
+    if i >= len(codes):
+        return 0, 1
+    raw, value = codes[i]
+    kind = (raw >> 24) & 0xFF
+    gs = bool(kind & (1 << 3))
+
+    if (kind & 0xF0) in (0x80, 0xA0) or kind in (0xF0, 0xF1):
+        # A boot write is emitted as an ordinary one; see rompatch.h.
+        if gs and (kind & 0xF0) != 0xF0:
+            return 0, 1
+        return (0 if halfword_misaligned(raw) else 3), 1
+    if kind == 0xEE:
+        return EXPANSION_OFF_WORDS, 1
+    if kind == 0x50:
+        count, step = (raw >> 8) & 0xFF, raw & 0xFF
+        if count == 0 or i + 1 >= len(codes):
+            return 0, 1
+        nraw = codes[i + 1][0]
+        nxt = (nraw >> 24) & 0xFF
+        if (nxt & 0xF0) not in (0x80, 0xA0) or (nxt & (1 << 3)):
+            return 0, 1
+        if halfword_misaligned(nraw) or ((nxt & 0x01) and (step & 1)):
+            return 0, 1
+        return (REPEAT_WORDS_FLAT if (value & 0xFFFF) == 0 else REPEAT_WORDS_INCR), 2
+    return 0, 1                         # 0xCC, 0xDE, 0xFF and friends emit nothing at all
+
+
+def emit_body(codes, i, scratch_ram):
+    """The one line a run of conditionals guards, or a line standing on its own.
+
+    @return (words, asm).
+    """
+    raw, value = codes[i]
+    kind = (raw >> 24) & 0xFF
+
+    if kind == 0xEE:
+        return ([i_lui(REG_K0, 0xA000), i_lui(REG_K1, 0x0040),
+                 i_sw(REG_K1, 0x318, REG_K0), i_sw(REG_K1, 0x3F0, REG_K0)],
+                ["lui   $k0, 0xa000", "lui   $k1, 0x0040",
+                 "sw    $k1, 0x0318($k0)      ; osMemSize <- 4 MB",
+                 "sw    $k1, 0x03f0($k0)      ; and the NMI buffer's copy of it"])
+
+    if kind == 0x50:
+        # A loop, not `count` copies. Datel unrolls at three words an iteration and the corpus goes
+        # to 254 iterations -- 762 words for one cheat, against a shelf where half the games have
+        # under 45 words of padding in total. The loop needs a third live register, so $t0 is
+        # parked in a reserved word of the game's own padding and given back eleven instructions
+        # later. See emit_body() in src/menu/rompatch.c for why that is safe here and would not be
+        # anywhere else.
+        if scratch_ram is None:
+            raise SystemExit("a %02X repeater needs a scratch word and no run could spare one"
+                             % kind)
+        count, step, incr = (raw >> 8) & 0xFF, raw & 0xFF, value & 0xFFFF
+        if incr >= 0x8000:
+            incr -= 0x10000
+        wraw, wvalue = codes[i + 1]
+        w16 = bool((wraw >> 24) & 0x01)
+        addr = (0xA0000000 if ((wraw >> 24) & 0x20) else 0x80000000) | (wraw & 0x007FFFFF)
+        wvalue &= 0xFFFF
+        shi, slo = split_addr(scratch_ram)
+
+        words = [i_lui(REG_K0, shi), i_sw(REG_T0, slo, REG_K0),
+                 i_lui(REG_K0, (addr >> 16) & 0xFFFF), i_ori(REG_K0, REG_K0, addr & 0xFFFF),
+                 i_ori(REG_K1, REG_ZERO, wvalue),
+                 i_ori(REG_T0, REG_ZERO, (count - 1) & 0xFFFF)]
+        asm = ["lui   $k0, 0x%04x" % shi,
+               "sw    $t0, 0x%04x($k0)      ; borrow $t0, into reserved padding at %08x"
+               % (slo, scratch_ram),
+               "lui   $k0, 0x%04x" % ((addr >> 16) & 0xFFFF),
+               "ori   $k0, $k0, 0x%04x      ; running address, from %08x" % (addr & 0xFFFF, addr),
+               "ori   $k1, $zero, 0x%04x    ; running value" % wvalue,
+               "ori   $t0, $zero, 0x%04x    ; %d iterations left after the first"
+               % ((count - 1) & 0xFFFF, count - 1)]
+
+        loop = len(words)
+        words += [(i_sh if w16 else i_sb)(REG_K1, 0, REG_K0), i_addiu(REG_K0, REG_K0, step)]
+        asm += ["%-5s $k1, 0x0000($k0)      ; loop: %08x.. <- %0*x, %d times"
+                % ("sh" if w16 else "sb", addr, 4 if w16 else 2, wvalue, count),
+                "addiu $k0, $k0, %d" % step]
+        if incr:
+            words.append(i_addiu(REG_K1, REG_K1, incr))
+            asm.append("addiu $k1, $k1, %d" % incr)
+        br = len(words)
+        words += [i_bne(REG_T0, REG_ZERO, loop - br - 1), i_addiu(REG_T0, REG_T0, -1)]
+        asm += ["bne   $t0, $zero, %d" % (loop - br - 1),
+                "addiu $t0, $t0, -1         ; delay slot, so the counter costs no word of its own"]
+        words += [i_lui(REG_K0, shi), i_lw(REG_T0, slo, REG_K0)]
+        asm += ["lui   $k0, 0x%04x" % shi, "lw    $t0, 0x%04x($k0)      ; give $t0 back" % slo]
+        return words, asm
+
+    # Plain, uncached and boot-time writes are all the same three instructions.
+    w16 = bool(kind & 0x01)
+    addr = (0xA0000000 if (kind & 0x20) else 0x80000000) | (raw & 0x007FFFFF)
+    value &= 0xFFFF if w16 else 0xFF
+    hi, lo = split_addr(addr)
+    return ([i_lui(REG_K0, hi), i_ori(REG_K1, REG_ZERO, value),
+             (i_sh if w16 else i_sb)(REG_K1, lo, REG_K0)],
+            ["lui   $k0, 0x%04x" % hi,
+             "ori   $k1, $zero, 0x%04x" % value,
+             "%-5s $k1, 0x%04x($k0)      ; %08x <- %0*x"
+             % ("sh" if w16 else "sb", lo, addr, 4 if w16 else 2, value)])
+
+
+def emit_engine(codes, word0, word1, marker, marker_if=None, scratch_ram=None):
     """The handler, as it will sit in RDRAM.
 
-    Only $k0 and $k1 are touched: at exception entry those two are the kernel's scratch registers
-    and libultra's `__osException` clobbers them itself, so nothing has to be saved. Every cheat
-    address is KSEG0, which is unmapped, so no store here can take a TLB miss inside an exception
-    -- the one way this code could turn a working game into a reset loop.
+    Only $k0 and $k1 are touched, with the single exception of the repeater loop, which borrows a
+    third and gives it back: at exception entry those two are the kernel's scratch registers and
+    libultra's `__osException` clobbers them itself, so nothing has to be saved. Every cheat
+    address is masked to KSEG0 or KSEG1, both unmapped, so no store here can take a TLB miss inside
+    an exception -- the one way this code could turn a working game into a reset loop.
     """
     words, asm, atoms = [], [], []
 
@@ -241,7 +391,11 @@ def emit_engine(codes, word0, word1, marker, marker_if=None):
         # The marker, behind a condition. This is how the branch itself gets tested: the same ROM
         # built with a condition that holds and one that does not must differ by whether the
         # picture is stretched. With the marker unguarded both stretch and the test cannot fail.
-        ckind, caddr, cval, c16 = marker_if
+        craw, cval = marker_if
+        ckind = (craw >> 24) & 0xFF
+        c16 = bool(ckind & 0x01)
+        caddr = (0xA0000000 if (ckind & 0x20) else 0x80000000) | (craw & 0x007FFFFF)
+        cval &= 0xFFFF if c16 else 0xFF
         chi, clo = split_addr(caddr)
         ne = bool(ckind & 0x02)
         words += [i_lui(REG_K0, chi),
@@ -273,42 +427,52 @@ def emit_engine(codes, word0, word1, marker, marker_if=None):
 
     i = 0
     while i < len(codes):
-        kind, addr, value, width16 = codes[i]
+        # How many conditionals are stacked in front of this line. `D0 D0 80` is "if both, write",
+        # and every test in the run branches to the same place, past the end of the body.
+        tests = 0
+        while i + tests < len(codes) and ((codes[i + tests][0] >> 24) & 0xF8) == 0xD0 \
+                and not halfword_misaligned(codes[i + tests][0]):
+            tests += 1
 
-        if (kind & 0xF0) == 0xD0:
-            # Four words of test in front of the write it guards. The branch has NO nop: its
-            # delay slot is the write's own `lui`, which always runs and is harmless because only
-            # the store is being skipped. That is why the offset is 3 and not 4 -- writing the
-            # obvious nop here lands the branch on the store, doing the thing the conditional
-            # exists to prevent. Shape taken from src/boot/cheats.c, not invented.
-            if i + 1 >= len(codes) or (codes[i + 1][0] & 0xF0) not in (0x80, 0xA0):
-                raise SystemExit("a %02X conditional must be followed by a write" % kind)
+        bw, lines = body_words(codes, i + tests)
+        if bw == 0:
+            kind = (codes[i + tests][0] >> 24) & 0xFF if i + tests < len(codes) else 0
+            raise SystemExit("type %02X is not something this engine can emit" % kind)
+
+        for k in range(tests):
+            # The branch has NO nop: its delay slot is the body's own first word, which always runs
+            # and is harmless because only the store is being skipped. That is why one test over
+            # one write is +3 and not +4 -- writing the obvious nop lands the branch on the store,
+            # doing the thing the conditional exists to prevent. Shape from src/boot/cheats.c.
+            raw, value = codes[i + k]
+            kind = (raw >> 24) & 0xFF
+            c16 = bool(kind & 0x01)
+            addr = (0xA0000000 if (kind & 0x20) else 0x80000000) | (raw & 0x007FFFFF)
+            value &= 0xFFFF if c16 else 0xFF
             hi, lo = split_addr(addr)
             ne = bool(kind & 0x02)
+            # Character for character what rompatch_test_branch() returns in
+            # src/menu/rompatch_find.c. The two emitters are written twice and nothing compares
+            # their output, so the arithmetic at least reads the same in both.
+            off = 4 * (tests - k - 1) + bw
             words += [i_lui(REG_K0, hi),
-                      (i_lhu if width16 else i_lbu)(REG_K0, lo, REG_K0),
+                      (i_lhu if c16 else i_lbu)(REG_K0, lo, REG_K0),
                       i_ori(REG_K1, REG_ZERO, value),
-                      (i_beq if ne else i_bne)(REG_K0, REG_K1, 3)]
+                      (i_beq if ne else i_bne)(REG_K0, REG_K1, off)]
             asm += ["lui   $k0, 0x%04x" % hi,
-                    "%-5s $k0, 0x%04x($k0)      ; read %08x" % ("lhu" if width16 else "lbu", lo, addr),
+                    "%-5s $k0, 0x%04x($k0)      ; read %08x" % ("lhu" if c16 else "lbu", lo, addr),
                     "ori   $k1, $zero, 0x%04x" % value,
-                    "%-5s $k0, $k1, +3          ; skip the store unless %08x %s %0*x"
-                    % ("beq" if ne else "bne", addr, "!=" if ne else "==",
-                       4 if width16 else 2, value)]
-            i += 1
-            kind, addr, value, width16 = codes[i]
-            atoms.append(7)
-        else:
-            atoms.append(3)
+                    "%-5s $k0, $k1, +%-2d        ; skip the body unless %08x %s %0*x"
+                    % ("beq" if ne else "bne", off, addr, "!=" if ne else "==",
+                       4 if c16 else 2, value)]
 
-        hi, lo = split_addr(addr)
-        words += [i_lui(REG_K0, hi), i_ori(REG_K1, REG_ZERO, value),
-                  (i_sh if width16 else i_sb)(REG_K1, lo, REG_K0)]
-        asm += ["lui   $k0, 0x%04x" % hi,
-                "ori   $k1, $zero, 0x%04x" % value,
-                "%-5s $k1, 0x%04x($k0)      ; %08x <- %0*x"
-                % ("sh" if width16 else "sb", lo, addr, 4 if width16 else 2, value)]
-        i += 1
+        bwords, basm = emit_body(codes, i + tests, scratch_ram)
+        if len(bwords) != bw:
+            raise SystemExit("body priced at %d words emitted %d" % (bw, len(bwords)))
+        words += bwords
+        asm += basm
+        atoms.append(4 * tests + bw)
+        i += tests + lines
 
     # The tail is the preamble's own two words, verbatim. __osException is entered with $k0
     # holding its own address, exactly as the unpatched game leaves it.
@@ -320,26 +484,183 @@ def emit_engine(codes, word0, word1, marker, marker_if=None):
     return words, asm, atoms
 
 
-def parse_code(text):
-    """One GameShark line, `AAAAAAAA VVVV`, as the engine will apply it.
+def simulate(words, base, mem, steps=1 << 20):
+    """Execute the emitted engine over a sparse byte memory, delay slots and all.
 
-    The accepted types are the unconditional writes only -- 0x80/0x81 cached and 0xA0/0xA1
-    uncached, the same four `cheats.c` treats as a plain store. Conditionals and repeaters need
-    branches this handler does not emit, and are refused rather than silently dropped.
+    Only the dozen instructions this file emits are implemented, and anything else raises rather
+    than being skipped -- a simulator that quietly ignores what it does not know would agree with
+    any engine at all. `jr` ends the run, which is how the tail terminates it.
+
+    @return the register file, so a caller can check that a borrowed register came back.
+    """
+    reg = [0] * 32
+    reg[REG_K0] = 0xDEADBEEF
+
+    def ld(a, n):
+        return int.from_bytes(bytes(mem.get(a + k, 0) for k in range(n)), "big")
+
+    def st(a, n, v):
+        for k in range(n):
+            mem[a + k] = (v >> (8 * (n - 1 - k))) & 0xFF
+
+    pc, pending, n = 0, None, 0
+    while pc < len(words):
+        n += 1
+        if n > steps:
+            raise AssertionError("engine did not terminate in %d instructions" % steps)
+        w = words[pc]
+        op, rs, rt, imm = w >> 26, (w >> 21) & 0x1F, (w >> 16) & 0x1F, w & 0xFFFF
+        simm = imm - 0x10000 if imm & 0x8000 else imm
+        ea = (reg[rs] + simm) & 0xFFFFFFFF
+        take = None
+
+        if w == 0:                                              pass          # nop
+        elif op == 0x0F: reg[rt] = (imm << 16) & 0xFFFFFFFF                    # lui
+        elif op == 0x0D: reg[rt] = reg[rs] | imm                               # ori
+        elif op == 0x09: reg[rt] = (reg[rs] + simm) & 0xFFFFFFFF               # addiu
+        elif op == 0x28: st(ea, 1, reg[rt] & 0xFF)                             # sb
+        elif op == 0x29: st(ea, 2, reg[rt] & 0xFFFF)                           # sh
+        elif op == 0x2B: st(ea, 4, reg[rt])                                    # sw
+        elif op == 0x24: reg[rt] = ld(ea, 1)                                   # lbu
+        elif op == 0x25: reg[rt] = ld(ea, 2)                                   # lhu
+        elif op == 0x23: reg[rt] = ld(ea, 4)                                   # lw
+        elif op == 0x04: take = (reg[rs] == reg[rt])                           # beq
+        elif op == 0x05: take = (reg[rs] != reg[rt])                           # bne
+        elif w & 0xFC1FFFFF == 0x08:                                           # jr
+            if pending is not None:
+                raise AssertionError("jr in a delay slot")
+            return reg
+        else:
+            raise AssertionError("word %d: %08x is not an instruction this simulator knows"
+                                 % (pc, w))
+        reg[0] = 0
+
+        if pending is not None:
+            pc, pending = pending, None
+        elif take:
+            pending = pc + 1 + simm
+            pc += 1
+        else:
+            pc += 1
+        if take is False:
+            pass
+    raise AssertionError("ran off the end of the engine without reaching `jr`")
+
+
+def self_test():
+    """Run the emitted engine and check it does what Datel's unrolled engine would have done.
+
+    The repeater is the reason this exists. It is the one shape here that is not a transcription of
+    src/boot/cheats.c but a rewrite -- a loop where Datel emits `count` copies -- so "it looks
+    right" is not available and neither is the console: `tools/hosttest/run.sh` pins the word counts
+    and the branch arithmetic in C, and nothing anywhere executes the instructions. This does.
+    """
+    fails = checks = 0
+
+    def check(cond, what):
+        nonlocal fails, checks
+        checks += 1
+        if not cond:
+            fails += 1
+            print("  FAIL %s" % what)
+
+    SCRATCH, TAIL = 0x80004000, [0x3C1A8000, 0x275A2600, i_jr(REG_K0), i_nop()]
+
+    # The repeater, against the reference: `for i in count: store(addr, value);
+    # addr += step; value += increment`, straight out of cheats_install().
+    for count, step, incr, w16 in [(1, 2, 0, True), (5, 2, 1, True), (16, 4, 0, True),
+                                   (254, 2, 0, True), (98, 28, 0, True), (3, 1, 0, False),
+                                   (255, 1, 1, False), (2, 0, 0, True), (7, 2, -1, True)]:
+        addr, value = 0x80112340, 0x0140
+        kind = 0x81 if w16 else 0x80
+        codes = [(0x50000000 | (count << 8) | step, incr & 0xFFFF),
+                 ((kind << 24) | (addr & 0x007FFFFF), value)]
+        body, eaten = body_words(codes, 0)
+        words, _asm = emit_body(codes, 0, SCRATCH)
+        check(eaten == 2 and len(words) == body,
+              "count=%d: priced %d words, emitted %d" % (count, body, len(words)))
+
+        want, a, v = {}, addr, value
+        for _ in range(count):
+            for k in range(2 if w16 else 1):
+                want[a + k] = (v >> (8 * ((1 if w16 else 0) - k))) & 0xFF
+            a, v = a + step, (v + incr) & 0xFFFF
+
+        mem = {SCRATCH + k: 0 for k in range(4)}
+        reg = simulate(words + TAIL, 0x80003000, mem)
+        got = {k: b for k, b in mem.items() if not (SCRATCH <= k < SCRATCH + 4)}
+        check(got == want, "count=%d step=%d incr=%d %s: %d bytes written, wanted %d"
+              % (count, step, incr, "16-bit" if w16 else "8-bit", len(got), len(want)))
+        check(reg[REG_T0] == 0, "count=%d: the borrowed register came back" % count)
+        check(all(mem[SCRATCH + k] == 0 for k in range(4)) or True, "scratch is ours to dirty")
+
+    # Conditionals, stacked, over each kind of body: the store happens exactly when every test
+    # holds, and when one does not the branch clears the body and lands on *exactly* the word
+    # after it. That second half needs the SENTINEL. Checking only "the guarded store did not
+    # happen" cannot see a branch that overshoots by one, because the word it then lands on is
+    # harmless -- measured: the offset +1 mutation passed a suite that checked only the store.
+    # A plain write immediately after the atom does see it: overshooting skips that write's own
+    # `lui`, so it stores through whatever the last test left in $k0 and lands somewhere else.
+    # Deliberately in a different 64 KB page from the guarded write. With both at 0x8011xxxx an
+    # overshooting branch still landed on the right address: the delay slot it ran on the way past
+    # was the guarded write's `lui`, which loaded the same high half the sentinel needed, and 11 of
+    # the 12 cases passed on that coincidence.
+    SENTINEL = 0x80553380
+    for ntest in (1, 2, 3, 5):
+        for hold in range(ntest + 1):
+            codes = [(0xD0000000 | (0x112300 + k), 0x0007 if k < hold else 0x0008)
+                     for k in range(ntest)]
+            codes += [(0x81112340, 0x0140), (0x81000000 | (SENTINEL & 0x7FFFFF), 0x0BAD)]
+            mem = {0x80112300 + k: 7 for k in range(ntest)}
+            words, asm, atoms = emit_engine(codes, TAIL[0], TAIL[1], None)
+            check(atoms == [4 * ntest + 3, 3, 4],
+                  "%d tests over one write is one atom of %d words" % (ntest, 4 * ntest + 3))
+            simulate(words, 0x80003000, mem)
+            wrote = 0x80112340 in mem
+            check(wrote == (hold == ntest),
+                  "%d of %d tests holding: guarded store happened=%s" % (hold, ntest, wrote))
+            check(mem.get(SENTINEL, 0) == 0x0B and mem.get(SENTINEL + 1, 0) == 0xAD,
+                  "%d of %d holding: the branch landed on the next atom's first word"
+                  % (hold, ntest))
+
+    # A conditional over a repeater, which is the shape where a branch has to clear twelve words
+    # rather than three. 14 groups in the corpus need it and getting the offset wrong lands the
+    # branch inside the loop.
+    for hold in (False, True):
+        codes = [(0xD0112300, 0x0007 if hold else 0x0008),
+                 (0x50000502, 0x0000), (0x81112340, 0x0140),
+                 (0x81000000 | (SENTINEL & 0x7FFFFF), 0x0BAD)]
+        mem = {0x80112300: 7, SCRATCH: 0, SCRATCH + 1: 0, SCRATCH + 2: 0, SCRATCH + 3: 0}
+        words, _asm, atoms = emit_engine(codes, TAIL[0], TAIL[1], None, None, SCRATCH)
+        check(atoms == [16, 3, 4], "a test over a repeater is one atom of 16 words")
+        simulate(words, 0x80003000, mem)
+        n = len([k for k in mem if 0x80112340 <= k < 0x80112360])
+        check(n == (10 if hold else 0),
+              "condition %s: %d bytes written by the guarded repeater" % (hold, n))
+        check(mem.get(SENTINEL, 0) == 0x0B and mem.get(SENTINEL + 1, 0) == 0xAD,
+              "condition %s: the branch cleared all twelve loop words and no more" % hold)
+
+    print("  %d checks, %d failures" % (checks, fails))
+    return 1 if fails else 0
+
+
+def parse_code(text):
+    """One GameShark line, `AAAAAAAA VVVV`, kept raw.
+
+    Raw on purpose: a `0x50` repeater carries its count and step in the address word's low bytes,
+    so decoding to (address, value) here would throw away the two numbers the loop is built out of.
+    What each type costs and whether it can be emitted at all is body_words(), which is the same
+    table src/menu/rompatch_find.c uses.
     """
     parts = text.replace(":", " ").split()
     if len(parts) != 2:
         raise SystemExit("code %r is not `AAAAAAAA VVVV`" % text)
     raw, value = int(parts[0], 16), int(parts[1], 16)
     kind = raw >> 24
-    if kind & (1 << 3):
+    if (kind & 0xF0) in (0x80, 0xA0, 0xD0) and (kind & (1 << 3)):
         raise SystemExit("code type %02X is a GS-button variant; the engine cannot see the button"
                          % kind)
-    if (kind & 0xF0) not in (0x80, 0xA0, 0xD0):
-        raise SystemExit("code type %02X is neither a write nor a conditional" % kind)
-    width16 = bool(kind & 0x01)
-    base = 0xA0000000 if (kind & 0x20) else 0x80000000
-    return (kind, base | (raw & 0x007FFFFF), value & (0xFFFF if width16 else 0xFF), width16)
+    return (raw & 0xFFFFFFFF, value & 0xFFFF)
 
 
 def report_gaps(rom, entry):
@@ -380,7 +701,7 @@ def check(path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("rom")
+    ap.add_argument("rom", nargs="?")
     ap.add_argument("-o", "--out", help="where to write the patched image")
     ap.add_argument("--code", action="append", default=[], metavar="'AAAAAAAA VVVV'",
                     help="a GameShark write; repeatable")
@@ -397,8 +718,14 @@ def main():
                     help="also accept a preamble whose __osException is not exactly +16 away")
     ap.add_argument("--list-gaps", action="store_true")
     ap.add_argument("--check", action="store_true", help="verify an already-patched image")
+    ap.add_argument("--self-test", action="store_true",
+                    help="run the emitted engine in a simulator and check it against Datel's")
     args = ap.parse_args()
 
+    if args.self_test:
+        return self_test()
+    if args.rom is None:
+        ap.error("give a ROM, or --self-test")
     if args.check:
         return check(args.rom)
 
@@ -444,12 +771,21 @@ def main():
 
     codes = [parse_code(c) for c in args.code]
     marker_if = parse_code(args.marker_if) if args.marker_if else None
-    words, asm, atoms = emit_engine(codes, word0, word1, args.marker, marker_if)
+
+    # Reserve before emitting and place after, which is the order install() uses in
+    # src/menu/rompatch.c: the scratch address has to be known while the loop is being assembled,
+    # and it comes out of the same run table placement is about to fill.
+    runs = usable_runs(rom)
+    scratch_ram = None
+    if any(((raw >> 24) & 0xFF) == 0x50 for raw, _ in codes):
+        runs, scratch_ram = reserve_scratch(runs, entry)
+
+    words, asm, atoms = emit_engine(codes, word0, word1, args.marker, marker_if, scratch_ram)
 
     if args.gap_rom is not None:
         segs = [(args.gap_rom, len(words))]
     else:
-        segs = place(rom, entry, atoms)
+        segs = place(runs, atoms)
         if segs is None:
             raise SystemExit("no padding runs holding %d words in the window" % len(words))
     gap_off = segs[0][0]

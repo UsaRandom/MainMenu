@@ -47,9 +47,29 @@
 #include "boot/cic.h"
 #include "romcrc.h"
 
-/** @brief How many words of engine the cartridge will hold. Three per plain write, seven per
- *  conditional and the write it guards, four for the tail. */
+/** @brief How many words of engine the cartridge will hold, before its padding is even looked at.
+ *
+ *  Costed by rompatch_body_words() plus four per conditional in front of the line it guards, plus
+ *  four for the tail. Raising it buys almost nothing: over the keyed corpus, 128 carries 157,795
+ *  groups and 256 carries 157,872 -- 77 more out of 177,579. What actually decides is how much dead
+ *  padding the game has, and that is a per-ROM number this constant knows nothing about. Measured
+ *  over the fifteen-ROM shelf: Star Wars 15 words, Banjo-Kazooie 24, Ocarina 38, Donkey Kong 64
+ *  141, Mario Party 1,128. So on most games place_engine() is the binding constraint and this is
+ *  slack; the cap is here to bound the stack arrays, not to express a policy. */
 #define ENGINE_MAX_WORDS 128
+
+/** @brief What one line costs, where it is not simply three instructions.
+ *
+ *  A repeater is a loop rather than `count` copies of the write. Datel's own engine unrolls -- 3
+ *  words per iteration, and the corpus has counts up to 254, so 762 words for one cheat. As a loop
+ *  it is a fixed twelve, thirteen when the value increments as well as the address. That is the
+ *  whole reason repeaters are expressible at all: no game on the reference shelf has 762 words of
+ *  padding, and half have under 45. */
+#define REPEAT_WORDS_FLAT 12
+#define REPEAT_WORDS_INCR 13
+
+/** @brief Disabling the Expansion Pak is two stores through one base, plus the constant. */
+#define EXPANSION_OFF_WORDS 4
 
 /** @brief What the scan found, and what was done about it. Every field ends up in launch.log. */
 typedef struct {
@@ -142,19 +162,80 @@ bool rompatch_install_engine (cic_type_t cic_type, uint32_t header_entry,
 bool rompatch_run_is_padding (uint32_t before2, uint32_t before1, uint32_t run_bytes);
 
 /**
+ * @brief What the one line at the head of @p list costs, and how many list entries it eats.
+ *
+ * The body of an atom: the line a run of conditionals guards, or a line standing on its own.
+ * Everything the engine can express is here and nowhere else, so the fit rule, the emitter and
+ * tools/rompatch.py cannot drift apart on what is supported.
+ *
+ * | line                        | words | why |
+ * |-----------------------------|-------|-----|
+ * | `80/81/A0/A1` write         | 3     | lui, ori, sb/sh |
+ * | `F0/F1` boot write          | 3     | the same three; see below |
+ * | `50` repeater + its write   | 12/13 | a loop, not `count` copies |
+ * | `EE` disable Expansion Pak  | 4     | two stores of 4 MB over osMemSize |
+ * | anything else               | 0     | cannot be expressed |
+ *
+ * `F0`/`F1` are Datel's write-once-at-boot, and this engine has no boot pass -- it runs on every
+ * exception. Emitting them as ordinary writes is a deliberate difference and it is safe because of
+ * what they are: 448 of the corpus's 726 boot writes store `0x2400`, the top half of
+ * `addiu $zero, $zero, x`, and 541 of them are word-aligned. They are instruction patches turning a
+ * check into a no-op, so writing the same constant over the same dead instruction repeatedly is
+ * idempotent. It also makes the twenty groups that mix a boot write with real cheats work.
+ *
+ * @param list  positioned at the line in question; may point at the `{0,0}` terminator
+ * @param lines receives how many cheat lines were consumed -- 1, or 2 for a repeater
+ * @return the word count, or 0 when this engine cannot express the line
+ */
+uint32_t rompatch_body_words (const uint32_t *list, int *lines);
+
+/**
+ * @brief What one indivisible block costs: a run of conditionals plus the body they guard.
+ *
+ * Four words per test in front of rompatch_body_words(). Both callers go through this rather than
+ * counting the conditionals themselves, because the two of them getting different answers about
+ * where a run ends is a branch into somebody else's boot code.
+ *
+ * A 16-bit access to an odd address is refused here as well, and it is the one refusal that is
+ * about the console rather than the cheat: `sh`/`lhu` off an odd address takes an Address Error at
+ * the exception vector with EXL set, which vectors straight back into this engine and locks the
+ * machine. 1,964 of the corpus's 149,687 16-bit writes name one.
+ *
+ * @param lines     receives the cheat lines consumed, always at least 1 so a caller can advance
+ * @param tests_out receives how many conditionals were in front
+ * @return the word count, or 0 when the block cannot be expressed
+ */
+uint32_t rompatch_atom_words (const uint32_t *list, int *lines, int *tests_out);
+
+/**
+ * @brief Where conditional @p k of @p tests, guarding a @p body-word body, branches to on failure.
+ *
+ * In words past the branch's delay slot, which is what a MIPS branch immediate counts. Out here
+ * rather than inline in emit_engine() for one reason: it is the most dangerous number in this
+ * file. Off by one and the branch lands on the store it was meant to skip; off by more and it
+ * lands in whatever the game keeps after the padding, executed on every exception forever. The
+ * host suite can pin an arithmetic function and cannot pin one that needs a cartridge.
+ */
+int rompatch_test_branch (int tests, int k, uint32_t body);
+
+/**
  * @brief Can this selection be carried at all, and how many lines is it?
  *
- * Carried: unconditional 8/16-bit writes (0x80/0x81/0xA0/0xA1) and the `D0`-`D3` conditionals,
- * each guarding the single write that follows it. Refused: repeaters (`0x50`, which emit three
- * instructions per iteration and up to 255 iterations), boot-time writes (`0xF0`/`0xF1`) and
- * every GS-button variant, since there is no button for this engine to read.
+ * Carried: everything rompatch_body_words() prices, with any number of `D0`-`D3` conditionals
+ * stacked in front of the line they guard at four words each.
+ *
+ * Refused: every GS-button variant (`0x88`, `0x89`, `0xA8`, `0xA9`, `0xD8`-`0xDB`), because the
+ * console has no GameShark button and nothing in RDRAM stands in for one; a conditional or repeater
+ * with nothing after it to guard; and the specials that Datel's own engine accepts and then emits
+ * nothing for (`0xCC`, `0xDE`, `0xFF`).
  *
  * A selection carrying any of those is refused **whole** rather than filtered, because a `D0` and
  * the write it guards are one indivisible thing and dropping half of a group is a bug this
- * project has already shipped once (AUDIT 2.2). Measured over the shipped database: 42,220 of
- * 42,898 groups are carried, up from 40,764 before conditionals.
+ * project has already shipped once (AUDIT 2.2).
  *
- * Answers before anything touches the cartridge, so the launch screen can say so.
+ * Answers before anything touches the cartridge, so the launch screen can say so. It does not
+ * answer whether the *game* has room -- that is place_engine(), and on most ROMs it is the tighter
+ * of the two. See ENGINE_MAX_WORDS.
  */
 bool rompatch_cheats_fit (const uint32_t *cheat_list, int *lines_out);
 

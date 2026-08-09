@@ -138,10 +138,11 @@ static int find_padding_runs (engine_seg_t *out, int max) {
  * @brief Lay the engine across as many runs as it takes, lowest first, without splitting an atom.
  *
  * An atom is a run of words that must land contiguously. A plain write is three and could be cut
- * anywhere; a conditional is four words of test whose branch is PC-relative and jumps a fixed
- * three instructions, so the test and the write it guards are seven words that cannot be
- * separated. A segment boundary between them would branch into whatever follows in an unrelated
- * part of the game's boot code.
+ * anywhere; a conditional is four words of test whose branch is PC-relative, so the test and the
+ * body it guards are one block that cannot be separated -- seven words for one test over one
+ * write, up to twenty-three for five tests over a repeater. The repeater loop is indivisible for
+ * the same reason. A segment boundary inside one of these would branch into whatever follows in an
+ * unrelated part of the game's boot code.
  *
  * Every segment but the last ends with `j` into the next and its delay slot, so two words are
  * reserved for the hop unless the rest of the engine fits here. A run too small for the next atom
@@ -182,17 +183,125 @@ static int place_engine (const engine_seg_t *runs, int n_runs,
     return (a == n_atoms) ? n : 0;          /* short: write nothing, leave the cartridge alone */
 }
 
+/** @brief Does this selection contain a repeater, and therefore need a scratch word reserved? */
+static bool list_has_repeater (const uint32_t *list) {
+    for (size_t i = 0; list != NULL && !(list[i] == 0 && list[i + 1] == 0); i += 2) {
+        if (((list[i] >> 24) & 0xFFu) == 0x50u) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief The one line a run of conditionals guards, or a line standing on its own.
+ *
+ * Priced by rompatch_body_words(), which is in rompatch_find.c so the host suite and the fit rule
+ * can reach it. This is the half that has to be on the console, and the two are checked against
+ * each other on every call: emit_engine() refuses to write anything if the words emitted here are
+ * not the words that were budgeted.
+ *
+ * @return words written, or 0 if this engine cannot express the line after all.
+ */
+static uint32_t emit_body (const uint32_t *list, uint32_t scratch_ram, uint32_t *out) {
+    uint32_t type = (list[0] >> 24) & 0xFFu;
+    uint32_t n = 0;
+
+    if (type == 0xEEu) {
+        /* osMemSize and the NMI buffer's copy of it, both set to 4 MB, exactly as
+         * SPECIAL_DISABLE_EXPANSION_PAK does it in src/boot/cheats.c. Uncached through 0xA000
+         * because the game reads them through libultra's own uncached pointers. */
+        out[n++] = I_LUI(REG_K0, 0xA000);
+        out[n++] = I_LUI(REG_K1, 0x0040);
+        out[n++] = I_SW(REG_K1, 0x318, REG_K0);
+        out[n++] = I_SW(REG_K1, 0x3F0, REG_K0);
+        return n;
+    }
+
+    if (type == 0x50u) {
+        /* The repeater, as a loop. Datel unrolls it and this engine cannot afford to: the corpus
+         * runs to 254 iterations, which is 762 words, and half the reference shelf has under 45
+         * words of padding in total.
+         *
+         * A loop needs three live values -- address, value, counter -- and an exception handler
+         * has two registers it may touch. The third is borrowed: $t0 is parked in a word of the
+         * game's own padding for the eleven instructions it takes, and put back. That is safe
+         * where a general "use some spare RAM" would not be, because the word is one we reserved
+         * out of a run that already passed the padding test, it is KSEG0 so the store cannot take
+         * a TLB miss inside an exception, and EXL is set for the whole loop so nothing can nest in
+         * between and find the cell occupied.
+         *
+         *     lui   $k0, %hi(scratch)          \  borrow $t0
+         *     sw    $t0, %lo(scratch)($k0)     /
+         *     lui   $k0, hi(addr)              \  running address; ori, not addiu, because the
+         *     ori   $k0, $k0, lo(addr)         /  low half is not to be sign-extended
+         *     ori   $k1, $zero, value             running value
+         *     ori   $t0, $zero, count-1           iterations left after this one
+         * loop:
+         *     sh    $k1, 0($k0)                   sb for the 8-bit types
+         *     addiu $k0, $k0, step
+         *     addiu $k1, $k1, increment           omitted entirely when it is zero -- 810 of the
+         *     bne   $t0, $zero, loop              corpus's 888 repeaters do not move the value
+         *     addiu $t0, $t0, -1               <- delay slot, so the counter costs no word of its own
+         *     lui   $k0, %hi(scratch)          \  give $t0 back
+         *     lw    $t0, %lo(scratch)($k0)     /
+         */
+        if (scratch_ram == 0) {
+            return 0;                   /* no word could be reserved; refuse rather than guess */
+        }
+        uint32_t addr = list[2] & 0xA07FFFFFu;
+        bool w16 = ((list[2] >> 24) & 0x01u) != 0;
+        uint16_t value = (uint16_t)(list[3] & 0xFFFFu);
+        uint32_t count = (list[0] >> 8) & 0xFFu;
+        uint32_t step = list[0] & 0xFFu;
+        int16_t incr = (int16_t)(list[1] & 0xFFFFu);
+
+        out[n++] = I_LUI(REG_K0, A_BASE(scratch_ram));
+        out[n++] = I_SW(REG_T0, A_OFFSET(scratch_ram), REG_K0);
+        out[n++] = I_LUI(REG_K0, (uint16_t)((addr >> 16) & 0xFFFFu));
+        out[n++] = I_ORI(REG_K0, REG_K0, (uint16_t)(addr & 0xFFFFu));
+        out[n++] = I_ORI(REG_K1, REG_ZERO, value);
+        out[n++] = I_ORI(REG_T0, REG_ZERO, (uint16_t)(count - 1u));
+
+        uint32_t loop = n;
+        out[n++] = w16 ? I_SH(REG_K1, 0, REG_K0) : I_SB(REG_K1, 0, REG_K0);
+        out[n++] = I_ADDIU(REG_K0, REG_K0, (int16_t)step);
+        if (incr != 0) {
+            out[n++] = I_ADDIU(REG_K1, REG_K1, incr);
+        }
+        uint32_t br = n;
+        out[n++] = I_BNE(REG_T0, REG_ZERO, (int16_t)((int32_t)loop - (int32_t)br - 1));
+        out[n++] = I_ADDIU(REG_T0, REG_T0, -1);
+
+        out[n++] = I_LUI(REG_K0, A_BASE(scratch_ram));
+        out[n++] = I_LW(REG_T0, A_OFFSET(scratch_ram), REG_K0);
+        return n;
+    }
+
+    /* Plain, uncached and boot-time writes are all the same three instructions. */
+    uint32_t addr = list[0] & 0xA07FFFFFu;
+    bool w16 = (type & 0x01u) != 0;
+    uint16_t value = (uint16_t)(list[1] & (w16 ? 0xFFFFu : 0x00FFu));
+
+    out[n++] = I_LUI(REG_K0, A_BASE(addr));
+    out[n++] = I_ORI(REG_K1, REG_ZERO, value);
+    out[n++] = w16 ? I_SH(REG_K1, A_OFFSET(addr), REG_K0)
+                   : I_SB(REG_K1, A_OFFSET(addr), REG_K0);
+    return n;
+}
+
 /**
  * @brief Assemble the engine, and record where it may be cut.
  *
- * $k0 and $k1 only. At exception entry those two are the kernel's scratch registers and libultra's
- * `__osException` clobbers $k0 in its own first instruction, so nothing downstream can observe
- * either and nothing has to be saved. Every cheat address is KSEG0, which is unmapped, so no store
- * here can take a TLB miss inside an exception -- the one way this could turn a working game into
- * a reset loop.
+ * $k0 and $k1 only, with the single exception of the repeater loop in emit_body(), which borrows a
+ * third and gives it back. At exception entry those two are the kernel's scratch registers and
+ * libultra's `__osException` clobbers $k0 in its own first instruction, so nothing downstream can
+ * observe either and nothing has to be saved. Every cheat address is masked to KSEG0 or KSEG1, both
+ * unmapped, so no store here can take a TLB miss inside an exception -- the one way this could turn
+ * a working game into a reset loop.
  *
- * A plain write is three instructions. A conditional is four more in front of them, and the shape
- * is lifted from src/boot/cheats.c rather than invented:
+ * A conditional is four words in front of the body it guards, and the shape is lifted from
+ * src/boot/cheats.c rather than invented:
  *
  *     lui   $k0, %hi(addr)
  *     lbu   $k0, %lo(addr)($k0)      # lhu for the 16-bit types
@@ -202,71 +311,69 @@ static int place_engine (const engine_seg_t *runs, int n_runs,
  *     ori   $k1, $zero, value
  *     sh    $k1, %lo(target)($k0)
  *
- * The branch has no `nop`: its delay slot is the write's `lui`, which always executes and is
- * harmless because it only loads a register the store is being skipped anyway. That is why the
- * offset is 3 rather than 4, and it is worth stating because writing the obvious `nop` here would
- * make the branch land one instruction short -- on the store, executing exactly what the
+ * The branch has no `nop`: its delay slot is the body's first word, which always executes and is
+ * harmless because all it does is load a register the store is being skipped anyway. That is why
+ * the offset is 3 rather than 4, and it is worth stating because writing the obvious `nop` here
+ * would make the branch land one instruction short -- on the store, executing exactly what the
  * conditional exists to prevent.
  *
+ * Conditionals stack. `D0 D0 80` is "if both hold, write", and every test in the run branches to
+ * the same place, past the end of the body -- rompatch_test_branch(), which is out in
+ * rompatch_find.c so the host suite can pin it. When a test is not the last, its delay slot is the
+ * *next* test's `lui`, harmless for the same reason. The corpus has runs of up to five.
+ *
  * Types, from the Datel encoding: bit 0 is 16-bit, bit 1 is NOT-EQUAL, bit 3 is the GS button.
- * A conditional guards the single line after it, which must be a write -- a dangling one is
- * refused by rompatch_cheats_fit() before anything is written.
+ * Everything a body may be, and what it costs, is rompatch_body_words().
  *
  * The tail is the preamble's own two words, verbatim, then `jr $k0`. `__osException` is entered
  * with exactly the register state it had before -- its own address in $k0. The inline stub of
  * AUDIT 2x reached it with `j` instead, having spent $k0 as a store base, and black-screened.
  *
- * @param atom     Filled with the word count of each indivisible block; see place_engine().
+ * @param scratch_ram A word of reserved padding for the repeater loop, or 0 if none was spared.
+ * @param atom        Filled with the word count of each indivisible block; see place_engine().
  * @return words emitted, or 0 if the selection does not fit in @p cap.
  */
 static uint32_t emit_engine (const uint32_t *list, uint32_t word0, uint32_t word1,
-                             uint32_t *out, uint32_t cap,
+                             uint32_t scratch_ram, uint32_t *out, uint32_t cap,
                              uint8_t *atom, int *n_atoms, int max_atoms, int *codes_out) {
     uint32_t n = 0;
     int codes = 0, atoms = 0;
 
     for (size_t i = 0; list != NULL && !(list[i] == 0 && list[i + 1] == 0); ) {
-        uint32_t type = (list[i] >> 24) & 0xFFu;
         uint32_t start = n;
 
-        if ((type & 0xF0u) == 0xD0u) {
-            /* Four words of test, then the write it guards, consumed together. */
-            uint32_t caddr = list[i] & 0xA07FFFFFu;
-            bool c16 = (type & 0x01u) != 0;
-            uint16_t cval = (uint16_t)(list[i + 1] & (c16 ? 0xFFFFu : 0x00FFu));
+        int consumed = 0, tests = 0;
+        uint32_t total = rompatch_atom_words(&list[i], &consumed, &tests);
+        uint32_t bw = total - 4u * (uint32_t)tests;
 
-            if (n + 7 + 4 > cap || atoms >= max_atoms) {
-                return 0;
-            }
+        /* Everything unsupportable lands here, including the case rompatch_cheats_fit() exists to
+         * keep out: a conditional with nothing after it would otherwise read the {0,0} terminator
+         * as a write and store to address 0. That is KUSEG, which is TLB-mapped, so it would take
+         * a TLB miss inside an exception handler and put the console in a reset loop. */
+        if (total == 0 || total > 255u || n + total + 4 > cap || atoms >= max_atoms) {
+            return 0;
+        }
+
+        for (int k = 0; k < tests; k++) {
+            uint32_t ctype = (list[i + 2u * (size_t)k] >> 24) & 0xFFu;
+            uint32_t caddr = list[i + 2u * (size_t)k] & 0xA07FFFFFu;
+            bool c16 = (ctype & 0x01u) != 0;
+            uint16_t cval = (uint16_t)(list[i + 2u * (size_t)k + 1] & (c16 ? 0xFFFFu : 0x00FFu));
+            int16_t off = (int16_t)rompatch_test_branch(tests, k, bw);
+
             out[n++] = I_LUI(REG_K0, A_BASE(caddr));
             out[n++] = c16 ? I_LHU(REG_K0, A_OFFSET(caddr), REG_K0)
                            : I_LBU(REG_K0, A_OFFSET(caddr), REG_K0);
             out[n++] = I_ORI(REG_K1, REG_ZERO, cval);
-            out[n++] = (type & 0x02u) ? I_BEQ(REG_K0, REG_K1, 3) : I_BNE(REG_K0, REG_K1, 3);
-            i += 2;
-
-            /* A dangling conditional is refused by rompatch_cheats_fit(), which is this
-             * function's documented precondition -- but getting here anyway would read the
-             * {0,0} terminator as a write and emit a store to address 0. That is KUSEG, which
-             * is TLB-mapped, so it would take a TLB miss inside an exception handler and put
-             * the console in a reset loop. Two lines against a catastrophic failure mode. */
-            if (list[i] == 0 && list[i + 1] == 0) {
-                return 0;
-            }
-        } else if (n + 3 + 4 > cap || atoms >= max_atoms) {
-            return 0;
+            out[n++] = (ctype & 0x02u) ? I_BEQ(REG_K0, REG_K1, off) : I_BNE(REG_K0, REG_K1, off);
         }
 
-        uint32_t wtype = (list[i] >> 24) & 0xFFu;
-        uint32_t address = list[i] & 0xA07FFFFFu;
-        bool w16 = (wtype & 0x01u) != 0;
-        uint16_t value = (uint16_t)(list[i + 1] & (w16 ? 0xFFFFu : 0x00FFu));
-
-        out[n++] = I_LUI(REG_K0, A_BASE(address));
-        out[n++] = I_ORI(REG_K1, REG_ZERO, value);
-        out[n++] = w16 ? I_SH(REG_K1, A_OFFSET(address), REG_K0)
-                       : I_SB(REG_K1, A_OFFSET(address), REG_K0);
-        i += 2;
+        uint32_t got = emit_body(&list[i + 2u * (size_t)tests], scratch_ram, &out[n]);
+        if (got != bw) {
+            return 0;                   /* the price and the goods disagree; write nothing */
+        }
+        n += got;
+        i += 2u * (size_t)consumed;
 
         atom[atoms++] = (uint8_t)(n - start);
         codes++;
@@ -337,7 +444,25 @@ static bool install (cic_type_t cic_type, uint32_t header_entry,
         engine_seg_t runs[ENGINE_MAX_RUNS];
         int n_runs = find_padding_runs(runs, ENGINE_MAX_RUNS);
 
-        engine_len = emit_engine(cheat_list, out->word0, out->word1,
+        /* One word of the game's padding, kept back for a repeater loop to park a borrowed
+         * register in. Out of the *last* run, because place_engine() fills lowest first and so is
+         * least likely to want that one, and only when the selection actually contains a repeater
+         * -- Star Wars has fifteen words of padding in the whole boot segment and cannot spare a
+         * word to a feature it is not using. The cell itself is never written here: it is already
+         * zero, it stays inside the checksum window, and the loop writes it before it reads it. */
+        uint32_t scratch_ram = 0;
+        if (list_has_repeater(cheat_list)) {
+            for (int r = n_runs - 1; r >= 0; r--) {
+                if (runs[r].words > 1) {
+                    runs[r].words--;
+                    scratch_ram = out->entry
+                                + (runs[r].rom_off + runs[r].words * 4 - BOOTSEG_START);
+                    break;
+                }
+            }
+        }
+
+        engine_len = emit_engine(cheat_list, out->word0, out->word1, scratch_ram,
                                  engine, ENGINE_MAX_WORDS,
                                  atom, &n_atoms, ENGINE_MAX_ATOMS, &out->engine_codes);
         if (engine_len == 0) {

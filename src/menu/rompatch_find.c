@@ -72,6 +72,110 @@ bool rompatch_run_is_padding (uint32_t before2, uint32_t before1, uint32_t run_b
     return is_return(before1) || is_return(before2);
 }
 
+/**
+ * @brief A 16-bit access to an odd address, which on this engine is a hang and not a bad cheat.
+ *
+ * `sh` or `lhu` to an odd address raises an Address Error, and this code runs *at* the general
+ * exception vector with EXL already set. A nested exception there does not update EPC and vectors
+ * straight back to 0x80000180, into this engine, into the same store: the console locks solid and
+ * only the power switch gets it back.
+ *
+ * It is not hypothetical, which is why the check is here rather than in a comment. Measured over
+ * the keyed corpus: 1,964 of 149,687 16-bit writes name an odd address, spread over 1,179 groups
+ * -- AeroGauge's "Name 1" is `8108CD69 8108CD6A 8108CD6B`, three consecutive bytes typed as
+ * 16-bit writes. They were carried by every version of this engine before this one.
+ *
+ * @param word The raw address word, whose type byte's bit 0 must genuinely mean "16 bits wide".
+ */
+static bool halfword_misaligned (uint32_t word) {
+    return (((word >> 24) & 0x01u) != 0) && ((word & 1u) != 0);
+}
+
+uint32_t rompatch_body_words (const uint32_t *list, int *lines) {
+    if (list[0] == 0 && list[1] == 0) {
+        return 0;                       /* the terminator is not a body */
+    }
+    uint32_t type = (list[0] >> 24) & 0xFFu;
+    bool gs = (type & (1u << 3)) != 0;
+
+    /* The GS-button bit is bit 3 of a *write* or *conditional* type byte and means nothing
+     * anywhere else. Reading it out of 0xEE or 0xFF is a category error, and one this project
+     * made: mkcheatdb reported 51 groups as "GS-button-only" that are nothing of the sort. */
+    if (((type & 0xF0u) == 0x80u) || ((type & 0xF0u) == 0xA0u)
+        || (type == 0xF0u) || (type == 0xF1u)) {
+        /* Boot writes are the same three instructions as ordinary ones; see rompatch.h. */
+        *lines = 1;
+        if (gs && ((type & 0xF0u) != 0xF0u)) {
+            return 0;
+        }
+        return halfword_misaligned(list[0]) ? 0u : 3u;
+    }
+    if (type == 0xEEu) {
+        *lines = 1;
+        return (uint32_t)EXPANSION_OFF_WORDS;
+    }
+    if (type == 0x50u) {
+        /* A repeater is two entries: itself, and the write it multiplies. A count of zero would
+         * emit nothing in Datel's unrolled engine and would underflow the loop counter into four
+         * billion iterations in this one, so it is refused rather than special-cased. The step
+         * has to keep the run aligned as well as the address it starts from. */
+        uint32_t count = (list[0] >> 8) & 0xFFu;
+        uint32_t step = list[0] & 0xFFu;
+        uint32_t next = (list[2] >> 24) & 0xFFu;
+        bool next_write = ((next & 0xF0u) == 0x80u) || ((next & 0xF0u) == 0xA0u);
+        bool tail = (list[2] == 0 && list[3] == 0);
+        if (count == 0 || tail || !next_write || (next & (1u << 3))) {
+            return 0;
+        }
+        if (halfword_misaligned(list[2]) || (((next & 0x01u) != 0) && ((step & 1u) != 0))) {
+            return 0;
+        }
+        *lines = 2;
+        return ((int16_t)(list[1] & 0xFFFFu) != 0) ? (uint32_t)REPEAT_WORDS_INCR
+                                                   : (uint32_t)REPEAT_WORDS_FLAT;
+    }
+    return 0;                           /* 0xCC, 0xDE, 0xFF and friends emit nothing at all */
+}
+
+int rompatch_test_branch (int tests, int k, uint32_t body) {
+    /* Test k's branch is the fourth word of its own block, its delay slot the fifth. Everything
+     * after it -- the remaining `tests - k - 1` blocks of four, and the body -- has to be cleared,
+     * so the target is `4*(tests-k-1) + body` words past the delay slot.
+     *
+     * The delay slot is the *next* thing's first word rather than a `nop`, which always executes
+     * and is always harmless: for the last test that is the body's `lui`, loading a register whose
+     * store is being skipped anyway, and for any earlier test it is the next test's `lui`, doing
+     * the same. Writing the obvious `nop` here would put every target one word short -- on the
+     * store, executing exactly what the conditional exists to prevent. */
+    return 4 * (tests - k - 1) + (int)body;
+}
+
+uint32_t rompatch_atom_words (const uint32_t *list, int *lines, int *tests_out) {
+    /* Conditionals stack: `D0 D0 80` is "if both, write", and the corpus has runs of up to five.
+     * Each is four words in front of a body they all branch past, so the run and its body are one
+     * indivisible block -- priced here, and placed as one atom by place_engine(). `& 0xF8 == 0xD0`
+     * is D0-D3 with the GS-button bit clear, so a `D8` ends the run and is then priced as a body,
+     * which refuses it. */
+    int tests = 0;
+    while ((((list[2u * (size_t)tests] >> 24) & 0xF8u) == 0xD0u)) {
+        if (halfword_misaligned(list[2u * (size_t)tests])) {
+            break;                      /* an `lhu` off an odd address hangs exactly as `sh` does */
+        }
+        tests++;
+    }
+
+    int consumed = 0;
+    uint32_t body = rompatch_body_words(&list[2u * (size_t)tests], &consumed);
+    if (body == 0) {
+        *lines = 1;
+        *tests_out = 0;
+        return 0;
+    }
+    *lines = tests + consumed;
+    *tests_out = tests;
+    return 4u * (uint32_t)tests + body;
+}
+
 bool rompatch_cheats_fit (const uint32_t *cheat_list, int *lines_out) {
     if (cheat_list == NULL) {
         return false;
@@ -80,34 +184,17 @@ bool rompatch_cheats_fit (const uint32_t *cheat_list, int *lines_out) {
     uint32_t words = 4;                 /* the tail */
     bool ok = true;
 
-    for (size_t i = 0; !(cheat_list[i] == 0 && cheat_list[i + 1] == 0); i += 2) {
-        uint32_t type = (cheat_list[i] >> 24) & 0xFFu;
-        bool gs = (type & (1u << 3)) != 0;
-        bool write = ((type & 0xF0u) == 0x80u) || ((type & 0xF0u) == 0xA0u);
-        bool cond = ((type & 0xF0u) == 0xD0u);
-        lines++;
-
-        if (write && !gs) {
-            words += 3;
-            continue;
+    for (size_t i = 0; !(cheat_list[i] == 0 && cheat_list[i + 1] == 0); ) {
+        int consumed = 0, tests = 0;
+        uint32_t atom = rompatch_atom_words(&cheat_list[i], &consumed, &tests);
+        if (atom == 0) {
+            /* Walk on one line rather than stopping, so lines_out still describes the whole
+             * selection -- it is what the launch screen and the log report. */
+            ok = false;
         }
-        if (cond && !gs) {
-            /* A conditional guards the one line after it, and that line has to be a write we can
-             * emit -- a dangling `D0` at the end of a group, or one guarding another conditional,
-             * is refused rather than half-applied. */
-            uint32_t next = (cheat_list[i + 2] >> 24) & 0xFFu;
-            bool next_write = ((next & 0xF0u) == 0x80u) || ((next & 0xF0u) == 0xA0u);
-            bool tail = (cheat_list[i + 2] == 0 && cheat_list[i + 3] == 0);
-            if (tail || !next_write || (next & (1u << 3))) {
-                ok = false;
-                continue;
-            }
-            words += 7;
-            lines++;
-            i += 2;
-            continue;
-        }
-        ok = false;                     /* repeater, boot write, or a GS-button variant */
+        words += atom;
+        lines += consumed;
+        i += 2u * (size_t)consumed;
     }
 
     if (lines_out != NULL) {
