@@ -5752,12 +5752,16 @@ the space the engine actually has, `--list-gaps` over each image:
 
 | game | usable words | game | usable words |
 |------|-----|------|-----|
-| Star Wars: Shadows of the Empire | 15 | Donkey Kong 64 | 141 |
-| Banjo-Kazooie | 24 | Harvest Moon 64 | 299 |
-| GoldenEye 007 | 25 | Pokemon Stadium | 530 |
-| 1080 Snowboarding | 36 | Mario Kart 64 | 718 |
-| Ocarina of Time | 38 | Mario Party 2 | 1,115 |
-| Tony Hawk's Pro Skater 2 | 43 | Mario Party | 1,128 |
+| Star Wars: Shadows of the Empire | 11 | Donkey Kong 64 | 133 |
+| GoldenEye 007 | 17 | Mario Kart 64 | 137 |
+| Banjo-Kazooie | 20 | AeroFighters Assault | 151 |
+| 1080 Snowboarding | 28 | Pokemon Stadium | 238 |
+| Ocarina of Time | 30 | Harvest Moon 64 | 279 |
+| Tony Hawk's Pro Skater 2 | 35 | Mario Party | 825 |
+
+(Guard words deducted, which is what `tools/cheatshelf.py` reports and what placement actually
+has. An earlier draft of this table gave the raw run lengths and called them usable, which
+overstated every row by 4 words per run.)
 
 Half the shelf is under 45 words. So an unrolled repeater is not expensive, it is impossible, and
 a loop is the only form that fits. **This is also the number that matters more than
@@ -5824,6 +5828,135 @@ the high half the sentinel happened to need.
 **Not verified: any of this running on a console.** ares cannot be screenshotted while the machine
 is in use -- two attempts captured a browser window -- and no game has been booted with a repeater
 or a stacked conditional in its engine.
+
+---
+
+## 1av. Going through the shelf game by game, and the two lookups that were wrong
+
+Prompted by a report that Star Wars Episode I: Racer's "Infinite Money" did nothing. It did
+exactly what it was told; it was told the wrong address.
+
+### The region wildcard put four binaries in one row
+
+`rom_info.c`'s rows are `MATCH_ID`, which matches any region on purpose -- that is the right
+granularity for a save type and the wrong one for a cheat address. `mkcheatkeys.py` carried the
+wildcard through, so 1,029 of the 1,043 key rows ended in `?` and every regional corpus file for a
+game merged into one row. Racer's USA, Europe, Japan and (E) files all became `NEP?`.
+
+The result on a USA cartridge was two entries in the list:
+
+| name | address | from |
+|---|---|---|
+| Infinite Money | `8111CB1A` / `8111CB18` | Racer (Europe) |
+| Infinite Trugets (Money) | `81113E7A` / `81113E78` | Racer (USA) |
+
+0x8CA0 apart. The obvious-sounding one is the European one.
+
+Racer got off lightly, because the two names differ. **183 of the 394 keys are fed by more than
+one region, and the merge deduplicates by name keeping the first file alphabetically -- so `(E)`,
+`(Europe)` and `(F)` beat `(USA)`. Measured: 11,162 USA cheats across 136 games were being
+replaced outright by a same-named foreign one.** Tetrisphere lost 7,183, Turok 640, GoldenEye 390.
+
+Fixed by deriving the header's region byte from the corpus filename and emitting a *second*,
+narrower row -- `NEPE` from the USA files alone -- beside the wildcard one, which is left holding
+everything merged exactly as before. `find_row()` already ranked an exact four-character code above
+a three-character wildcard, so this is strictly better or equal: a release whose region byte the
+filename did not predict (a German build is `D`, some PAL builds are `X`) simply misses the narrow
+row and lands on the fallback. 802 rows instead of 392, and 3.37 MB instead of 1.75.
+
+### "+16" was a linker-order assumption, and it is wrong three times in fifteen
+
+`__osExceptionPreamble` is four words that jump to `__osException`, and the finder identified it by
+the target sitting exactly sixteen bytes on. Measured over the shelf:
+
+| game | candidates | what the old rule did |
+|---|---|---|
+| 1080 Snowboarding | 1, at +212 | refused; no cheat could ever run |
+| Harvest Moon 64 | 1, at +212 | refused; same |
+| Mario Party 3 | 3: +212, +16, bogus | **took the +16 one, which is a dispatcher stub** |
+| Banjo-Kazooie | 2: +32, +16 | took +16, correctly |
+| the other eleven | 1, at +16 | correct |
+
++212 is the same number in two unrelated games, so it is a build variant and not a coincidence:
+disassembly shows a second preamble-shaped stub and an exception dispatcher linked in between.
+Mario Party 3 is the bad one -- its +16 target begins `sw $k0,-16($sp)` / `sw $k1,-8($sp)` /
+`mfc0 $k0,$13`, a dispatcher, not `__osException`, and not what `osInitialize` copies to
+0x80000180. Its cheats were being written into a stub nothing executes.
+
+So the target is identified by what it *is*. `rompatch_is_exception()` reads the four words it
+points at and checks them against libultra's prologue -- `lui $k0` / `addiu $k0` / `sd $at,0x20($k0)`
+/ `mfc0 $k1,$12`, two of the four exact. It matched the target of all fourteen real candidates
+across the shelf and none of the three false ones. Distance survives only as a tie-break, ranked
+2 (`__osException` at +16) > 1 (`__osException` anywhere) > 0 (+16, unidentified), so no game that
+already worked can change and Banjo-Kazooie's two back-to-back preambles still resolve the way
+they always have.
+
+Shelf result: **13 of 15 games can hook, up from 10.**
+
+### The two that still cannot, and why
+
+**GoldenEye 007** has exactly one preamble in twelve megabytes, at rom+0x010D90, and
+`__osException` sits at rom+0x010DA0 -- sixteen bytes on, exactly where it should be. But the
+preamble reads `lui $k0, 0x7001` where the handler is at `0x800101A0`: it names an address
+0x10000000 below its own exception handler. The word is inside the checksummed window and the
+header CRC agrees with it, so it is the intended content of the ROM and not a bad dump. Nothing
+here explains it and the honest move is to change nothing: replaying those two words in the engine
+tail would `jr` to 0x700101A0. 2,268 cheats unreachable. **Open.**
+
+**Star Wars: Shadows of the Empire** has no preamble-shaped block and no `__osException` prologue
+anywhere in the file, so it is either not using libultra's exception path or keeps it compressed.
+It also has 11 words of padding, which would hold two cheats. Refused. **Open.**
+
+**Pokemon Stadium** still fails the CRC gate, as it has since that gate existed: its header
+disagreed with its own contents before this project touched it.
+
+### What the audit is
+
+`tools/cheatshelf.py` -- one line per ROM: header key, which database row it reaches and how, how
+many of that row's cheats its own padding could hold, and where the engine would attach or why it
+cannot. It imports `cheatlook.py` (which transcribes `find_row`), `preamblescan` and `rompatch`
+rather than reimplementing any of them, because a second opinion that shares no code with the
+console is worth having and one that quietly differs is worth nothing.
+
+`tools/cheatlook.py` answers the narrower question -- what would this game code be offered -- and
+is what turned "Infinite Money does nothing" into a diagnosis in one command.
+
+### Two of the mutation tests had not been mutating anything
+
+Found while adding more of them. `--mutate` prints `MUTATION SURVIVED` when the mutant binary
+passes, and it printed exactly the same thing when the `sed` matched nothing at all -- so a
+mutation that has rotted looks identical to a check that is missing, and both look like a line of
+output nobody reads twice.
+
+Two were dead. The preamble one targeted a line this session rewrote. The 6103 one was
+`s/^        case CIC_x103:$/.../`, and **`.gitattributes` checks this tree out CRLF**, so the line
+really ends `:\r` and `$` can never match it -- that one had been a no-op for as long as the tree
+has been CRLF, quietly asserting that the ROM checksum suite pins the per-CIC final mix without
+ever testing it. It does, as it turns out: 21 checks, 1 failure once the pattern fires.
+
+`run.sh` now has a `mutated` helper that compares the mutant against the original and says
+`MUTATION DID NOT APPLY` in its own words. Every mutation goes through it.
+
+The third finding is smaller and worth stating anyway: the bogus-target rejection in
+`rompatch_find()` turned out to have *three* independent guards, and no single-line mutation could
+expose it because two always remained. That is defence in depth and it stays, but the mutation now
+removes all three at once, because a survival report that means "the other guards held" is not
+what the word survived is for.
+
+### One more thing the numbers say, not yet acted on
+
+**63.5% of carryable groups never reach the database**, and not for any reason above: 99,618 of
+156,807 are dropped because another group in the same file has the same name. They are not
+duplicates. GoldenEye has 36 cheats called "Clip Size", one per weapon; Turok has 160 called
+"Pur-Lin #1", one per enemy slot; Racer has 35 called "Anti Skid". The corpus genuinely fails to
+name them apart, and the dedup that exists to collapse the same cheat arriving from three regional
+files eats them too.
+
+Not fixed here, because none of the three options is obviously right: keeping them all makes a
+menu with 160 identical-looking rows, merging them into one group is wrong wherever the copies are
+alternatives rather than a set (GoldenEye's "Number Of Shots Fired Modifier" has 78 copies, two of
+which write the same address), and numbering them is honest but unusable. Recorded as the largest
+remaining loss.
 
 ---
 

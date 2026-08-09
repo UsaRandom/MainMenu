@@ -25,6 +25,23 @@ mkdir -p "$OUT"
 
 CFLAGS="-std=c11 -Wall -Wextra -Werror -Itools/hosttest/shim -Isrc -Isrc/library"
 
+# Did the mutation actually change anything? Call it right after every sed, before compiling.
+#
+# "MUTATION SURVIVED" and "the sed matched nothing" print the same green-looking nothing, and this
+# harness has been reporting the second as the first. Two of its mutations were no-ops when this
+# was written: one because the line it targeted had been rewritten, and one because .gitattributes
+# checks the tree out CRLF, so a pattern anchored with `$` can never match a line that really ends
+# `:\r`. A mutation test that cannot mutate is worse than no mutation test, because it is a green
+# tick over an unasked question.
+mutated () {   # mutated MUTANT ORIGINAL "what it was meant to break"
+    if cmp -s "$1" "$2"; then
+        echo "  MUTATION DID NOT APPLY -- the pattern matched nothing in $2, so this proves nothing"
+        echo "  (was meant to break: $3)"
+        return 1
+    fi
+    return 0
+}
+
 echo "== cache round trip"
 rm -rf "$OUT/dir"
 # paths.c comes along because cache_init() calls menu_path(). It did not always: the /menu ->
@@ -140,22 +157,34 @@ python3 tools/rompatch.py --self-test
 
 if [ "${1:-}" = "--mutate" ]; then
     echo
-    echo "== mutation: drop the address test, the preamble suite must go red"
-    # Without it, Conker's Bad Fur Day and GoldenEye 007 both get two words of live game code
-    # rewritten at a run of data that merely looks like a preamble. One in twelve of the ROMs on
-    # the reference card.
-    sed -e 's/if (target < 0x80000000u || target >= ram_top || target != ram + 16) {/if (false) {/' \
+    echo "== mutation: accept a target that is neither __osException nor +16"
+    # Conker's Bad Fur Day and GoldenEye 007 both match a run of data whose reconstructed target
+    # is 0x100071e0 and 0x700101a0. Neither is RDRAM, and without a rejection those two get two
+    # words of live game code rewritten at a coincidence -- one in twelve of the reference card.
+    #
+    # This used to mutate the explicit `target < 0x80000000 || target >= ram_top` test, and that
+    # stopped proving anything: since the target is identified by reading the four words it points
+    # at, a bogus one fails the identification too and the explicit test is now the second of two
+    # guards. Removing either alone changes nothing, so the mutation has to remove the decision
+    # both feed. There turned out to be three of them -- the explicit range test, the `rank < 0`
+    # continue, and the -1 floor `best_rank` starts at -- each of which alone is enough, so the
+    # mutation removes all three. Defence in depth is worth having and worth saying out loud;
+    # what is not worth having is a mutation that reports a survival because two guards remain.
+    sed -e 's/if (target < 0x80000000u || target >= ram_top) {/if (false) {/' \
+        -e 's/if (rank < 0) {/if (false) {/' \
+        -e 's/int best_rank = -1;/int best_rank = -2;/' \
         src/menu/rompatch_find.c > "$OUT/rompatch_mut.c"
-    # -Wno-unused-parameter: the mutation is what makes ram_top unused, and -Werror would turn
-    # that into a build failure that reads as the mutation not applying.
-    $CC $CFLAGS -Wno-unused-parameter -Isrc/menu tools/hosttest/test_rompatch.c \
-        "$OUT/rompatch_mut.c" -o "$OUT/test_rompatch_mut"
-    if "$OUT/test_rompatch_mut" >"$OUT/rompatch_mut.log" 2>&1; then
-        echo "  MUTATION SURVIVED -- the suite does not check the bogus-target rejection"
+    if ! mutated "$OUT/rompatch_mut.c" src/menu/rompatch_find.c "the bogus-target rejection"; then
+        :
     else
-        sed 's/^/  /' "$OUT/rompatch_mut.log"
+        $CC $CFLAGS -Wno-unused-parameter -Isrc/menu tools/hosttest/test_rompatch.c \
+            "$OUT/rompatch_mut.c" -o "$OUT/test_rompatch_mut"
+        if "$OUT/test_rompatch_mut" >"$OUT/rompatch_mut.log" 2>&1; then
+            echo "  MUTATION SURVIVED -- the suite does not check the bogus-target rejection"
+        else
+            sed 's/^/  /' "$OUT/rompatch_mut.log"
+        fi
     fi
-
     echo
     echo "== mutation: shift every conditional's branch by one word, the suite must go red"
     # The most dangerous number in the engine. One word late and the branch lands on the store it
@@ -191,12 +220,19 @@ if [ "${1:-}" = "--mutate" ]; then
     echo "== mutation: give 6103 the ordinary final mix, the ROM checksum suite must go red"
     # The seeds differ per CIC, so every per-CIC vector would still pass if the three final mixes
     # collapsed into one -- which is why the suite pins them as distinct as well as as correct.
-    sed -e 's/^        case CIC_x103:$/        case CIC_5167:/' src/menu/romcrc.c > "$OUT/romcrc_mut.c"
-    $CC $CFLAGS -Isrc/menu tools/hosttest/test_romcrc.c "$OUT/romcrc_mut.c" -o "$OUT/test_romcrc_mut"
-    if "$OUT/test_romcrc_mut" >"$OUT/romcrc_mut.log" 2>&1; then
-        echo "  MUTATION SURVIVED -- the suite does not check the 6103 mix"
+    # No `$` anchor: .gitattributes checks the tree out CRLF, so the line really ends `:\r` and an
+    # anchored pattern silently matches nothing -- which is what this one did, reporting a
+    # survival that was really a sed that never fired.
+    sed -e 's/case CIC_x103:\r*$/case CIC_5167:/' src/menu/romcrc.c > "$OUT/romcrc_mut.c"
+    if ! mutated "$OUT/romcrc_mut.c" src/menu/romcrc.c "the per-CIC final mix"; then
+        :
     else
-        sed 's/^/  /' "$OUT/romcrc_mut.log"
+        $CC $CFLAGS -Isrc/menu tools/hosttest/test_romcrc.c "$OUT/romcrc_mut.c" -o "$OUT/test_romcrc_mut"
+        if "$OUT/test_romcrc_mut" >"$OUT/romcrc_mut.log" 2>&1; then
+            echo "  MUTATION SURVIVED -- the suite does not check the 6103 mix"
+        else
+            sed 's/^/  /' "$OUT/romcrc_mut.log"
+        fi
     fi
 
     echo

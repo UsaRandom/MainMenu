@@ -750,24 +750,18 @@ def main():
         raise SystemExit("header says %08x %08x, image computes %08x %08x -- refusing to patch"
                          % (h1, h2, g1, g2))
 
-    # "real" means the target is exactly +16, which is where libultra links __osException in the
-    # builds most of the shelf uses. It is not the only build: 1080 Snowboarding and Harvest Moon
-    # 64 both carry a preamble whose target is +212, the same number in two unrelated games, which
-    # is a variant rather than a coincidence. --accept-odd takes any forward target inside 4 KB,
-    # which still rejects GoldenEye's 0x700101A0 -- not a KSEG0 address, so not an address.
-    # Relaxing it is a guess until the ROM has been booted; that is what tools/aresshot.sh is for.
-    def usable(h):
-        ram, target = entry + (h[0] - WINDOW_OFF), h[3]
-        if preamblescan.verdict(ram, target) == "real":
-            return True
-        return args.accept_odd and 0x80000000 <= target < 0x80800000 \
-            and 0 < target - ram <= 0x1000
-
-    hits = [h for h in preamblescan.scan(rom) if usable(h)]
-    if not hits:
+    # The candidate is identified by what it points AT -- preamblescan.rank(), which is the same
+    # ranking rompatch_find() uses on the console. "+16" was the whole test until the shelf was
+    # measured: 1080 Snowboarding and Harvest Moon 64 link __osException +212 away, and Mario Party
+    # 3 has a dispatcher stub sitting at exactly +16 in front of its real preamble.
+    win = preamblescan.best(rom, entry)
+    if win is None:
         raise SystemExit("no __osExceptionPreamble in the window")
-    pre_off, word0, word1, target = hits[0]
+    pre_off, word0, word1, target, prank = win
     pre_ram = entry + (pre_off - WINDOW_OFF)
+    if prank < 2:
+        print("  note: preamble %+d away, and the target %s __osException"
+              % (target - pre_ram, "is" if prank == 1 else "does NOT look like"), file=sys.stderr)
 
     codes = [parse_code(c) for c in args.code]
     marker_if = parse_code(args.marker_if) if args.marker_if else None

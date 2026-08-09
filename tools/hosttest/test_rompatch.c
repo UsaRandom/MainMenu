@@ -229,6 +229,30 @@ int main (void) {
     check(!rompatch_run_is_padding(0x00000000, 0x08000000, 64),
           "...but `j 0` is a zero word wearing an opcode");
 
+    /* What a preamble candidate's target has to look like. Every word here was read out of a real
+     * cartridge on the reference shelf, which is the point: the rule used to be "__osException is
+     * exactly sixteen bytes on", and measured over fifteen ROMs that is wrong three times. */
+    {
+        const uint32_t oot[]  = { 0x3C1A8001, 0x275AA270, 0xFF410020, 0x401B6000 };
+        const uint32_t s1080[] = { 0x3C1A8002, 0x275A9320, 0xFF410020, 0x401B6000 };
+        const uint32_t harvest[] = { 0x3C1A8017, 0x275AF6E8, 0xFF410020, 0x401B6000 };
+        const uint32_t mp3ok[] = { 0x3C1A800D, 0x275AB9B0, 0xFF410020, 0x401B6000 };
+        const uint32_t mp3bad[] = { 0xAFBAFFF0, 0xAFBBFFF8, 0x401A6800, 0x00000000 };
+        const uint32_t pre[]  = { 0x3C1A8000, 0x275A2600, 0x03400008, 0x00000000 };
+
+        check(rompatch_is_exception(oot), "Ocarina's __osException, at the usual +16");
+        check(rompatch_is_exception(s1080), "1080 Snowboarding's, +212 away");
+        check(rompatch_is_exception(harvest), "Harvest Moon 64's, +212 away in a different game");
+        check(rompatch_is_exception(mp3ok), "Mario Party 3's real one, at +212");
+        /* The one that matters. Mario Party 3 carries a dispatcher stub at exactly +16 in front of
+         * its real preamble, so "take the first thing at +16" took a stub that osInitialize never
+         * copies to 0x80000180 -- and every cheat written into it did nothing at all. */
+        check(!rompatch_is_exception(mp3bad),
+              "...and the dispatcher stub sitting at Mario Party 3's +16 is not one");
+        check(!rompatch_is_exception(pre),
+              "nor is another preamble: the last two words are jr/nop, not sd/mfc0");
+    }
+
     /* Which selections the engine will carry. All or nothing across the whole selection, because
      * a D0 and the write it guards are one indivisible thing and half a group is worse than none
      * (AUDIT 2.2). Ocarina's "Infinite Magic" is the case this was written for: four lines whose

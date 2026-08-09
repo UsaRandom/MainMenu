@@ -63,6 +63,7 @@ static void checkf (bool ok, const char *fmt, ...) {
 
 typedef struct {
     char     code[8];
+    char     probe[8];
     unsigned version;
     unsigned groups;
     unsigned codes;
@@ -97,22 +98,20 @@ int main (void) {
         /* %159[^\t] rather than %s: cheat names contain spaces, and a name read with %s stops at
          * the first one -- which would silently compare "Infinite" against "Infinite Health" and
          * report a mismatch that is the harness's fault, not the reader's. */
-        if (sscanf(line, "%7[^\t]\t%u\t%u\t%u\t%159[^\t]\t%x\t%x\t%x\t%x",
-                   e.code, &e.version, &e.groups, &e.codes, e.first_name,
-                   &e.a0, &e.v0, &e.aN, &e.vN) != 9) {
+        if (sscanf(line, "%7[^\t]\t%7[^\t]\t%u\t%u\t%u\t%159[^\t]\t%x\t%x\t%x\t%x",
+                   e.code, e.probe, &e.version, &e.groups, &e.codes, e.first_name,
+                   &e.a0, &e.v0, &e.aN, &e.vN) != 10) {
             continue;
         }
         described++;
 
         /* Looked up the way the menu looks a game up: by game code and version, since the corpus
-         * supplies no check codes. A '?' in the region slot is the reader's wildcard, so a real
-         * ROM's fourth character is substituted here to exercise that path rather than sidestep
-         * it -- 'E' is arbitrary and any letter must match equally. */
-        char code[5];
-        snprintf(code, sizeof(code), "%s", e.code);
-        if (code[3] == '?') {
-            code[3] = 'E';
-        }
+         * supplies no check codes. For a wildcard row the probe carries a real region byte, so the
+         * reader's wildcard path is exercised rather than sidestepped -- and it is a byte
+         * cheatdb_expect.py has checked no narrower row claims, which a hard-coded 'E' was not:
+         * once the converter began emitting `NBYE` beside `NBY?`, the reader rightly preferred the
+         * narrower row and 661 checks went red about the harness rather than about the reader. */
+        const char *code = e.probe;
         uint8_t ver = (e.version == CHEATDB_ANY_VERSION) ? 7 : (uint8_t)e.version;
 
         cheatset_t set;

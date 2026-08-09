@@ -46,6 +46,10 @@ ADDIU_K0_HI16 = 0x275A
 JR_K0 = 0x03400008
 NOP = 0x00000000
 
+# The third and fourth instructions of __osException: `sd $at, 0x20($k0)`, `mfc0 $k1, $12`.
+SD_AT_K0 = 0xFF410020
+MFC0_K1_STATUS = 0x401B6000
+
 # What IPL3 copies, and where from. The patcher scans [entry, entry + 1 MB); IPL3 filled that
 # from ROM offset 0x1000, so this is the same window seen from the other side.
 IPL3_LOAD_OFFSET = 0x1000
@@ -108,18 +112,65 @@ def scan(data):
     return hits
 
 
-def verdict(ram, target):
-    """How much the match looks like a real preamble rather than a coincidence.
+def is_exception(words):
+    """Do these four words begin libultra's __osException?
 
-    The pattern fixes eight of sixteen bytes and half the rest, so a megabyte of arbitrary data
-    can produce one by accident -- and on the reference card two of twenty-four ROMs do. The
-    giveaway is the target: libultra links __osException immediately after the stub that jumps to
-    it, so a genuine match points exactly sixteen bytes forward. A target that is not even a KSEG0
-    address is not an address at all.
+        lui   $k0, %hi(__osThreadSave)
+        addiu $k0, $k0, %lo(__osThreadSave)
+        sd    $at, 0x20($k0)
+        mfc0  $k1, $12
 
-    This matters more than it looks. The patcher takes the FIRST match and rewrites two words of
-    live game code at it. On a bogus match that is two words of something else.
+    Two of the four are exact, which is what makes it an identification rather than a pattern.
+    Mirrors rompatch_is_exception() in src/menu/rompatch_find.c.
     """
+    return ((words[0] >> 16) == LUI_K0_HI16 and (words[1] >> 16) == ADDIU_K0_HI16
+            and words[2] == SD_AT_K0 and words[3] == MFC0_K1_STATUS)
+
+
+def rank(data, entry, ram, target):
+    """How well the match is identified, highest first. Mirrors rompatch_find()'s ranking.
+
+        2  the target is __osException and it is exactly +16
+        1  the target is __osException
+        0  it is +16 but does not look like __osException
+       -1  neither: not a preamble, or not ours to touch
+
+    "+16" was the whole test until the shelf was measured. libultra usually links __osException
+    immediately after the stub that jumps to it, but 1080 Snowboarding and Harvest Moon 64 link it
+    +212 away -- the same number in two unrelated games -- and Mario Party 3 has a *dispatcher*
+    stub sitting at exactly +16 in front of the real preamble, so the old rule picked the wrong one
+    of its three candidates and its cheats went nowhere.
+
+    The pattern fixes eight of sixteen bytes and half the rest, so a megabyte of arbitrary data can
+    produce one by accident -- on the reference card two of twenty-four ROMs do, with targets
+    0x100071e0 and 0x700101a0, neither of them RDRAM. The patcher rewrites two words of live game
+    code at whatever it picks, so being sure matters more than reaching one more game.
+    """
+    if not (0x80000000 <= target < 0x80800000):
+        return -1
+    off = IPL3_LOAD_OFFSET + (target - entry)
+    exc = False
+    if entry <= target and off + 16 <= min(len(data), IPL3_LOAD_OFFSET + IPL3_LOAD_BYTES):
+        exc = is_exception(struct.unpack_from(">IIII", data, off))
+    if exc:
+        return 2 if target - ram == 16 else 1
+    return 0 if target - ram == 16 else -1
+
+
+def best(data, entry):
+    """The candidate rompatch_find() would settle on, or None. (rom_off, w0, w1, target, rank)."""
+    win = None
+    for off, w0, w1, target in scan(data):
+        ram = entry + (off - IPL3_LOAD_OFFSET)
+        r = rank(data, entry, ram, target)
+        if r >= 0 and (win is None or r > win[4]):
+            win = (off, w0, w1, target, r)
+    return win
+
+
+def verdict(ram, target):
+    """Kept for the reports that print one line per candidate. Distance only -- rank() is what
+    decides anything, because distance alone was wrong three times in fifteen."""
     if not (0x80000000 <= target < 0x80800000):
         return "BOGUS"
     return "real" if target - ram == 16 else "odd"

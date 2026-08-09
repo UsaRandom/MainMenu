@@ -196,7 +196,11 @@ def filter_group(lines):
 
 
 def load_keys(path):
-    """filename -> (game_code, version, check_code), from a committed table of pure facts."""
+    """filename -> (game_code, version, check_code, region_byte), from a table of pure facts.
+
+    The region byte is the fifth column and may be empty. It is not part of the key; it is what
+    the key would be *narrowed to* if the cartridge's header agrees. See region_rows().
+    """
     keys = {}
     if not path or not os.path.exists(path):
         return keys
@@ -206,7 +210,8 @@ def load_keys(path):
         parts = line.rstrip("\n").split("\t")
         if len(parts) < 4:
             continue
-        keys[parts[0]] = (parts[1], int(parts[2]), int(parts[3], 16))
+        keys[parts[0]] = (parts[1], int(parts[2]), int(parts[3], 16),
+                          parts[4].strip() if len(parts) > 4 else "")
     return keys
 
 
@@ -263,7 +268,7 @@ def main():
         # Counted only once the game is actually written. Counting here originally included
         # games that were dropped for want of a key two lines later, so the report claimed
         # 199,675 cheats when a third of them were in games nothing could ever look up.
-        game_code, version, check_code = keys.get(stem, (None, ANY_VERSION, 0))
+        game_code, version, check_code, region = keys.get(stem, (None, ANY_VERSION, 0, ""))
         if game_code is None:
             # No key: the entry is still emitted, keyed by check_code 0, so it can never match.
             # Recorded rather than silently skipped, because "350 games converted" meaning "40 of
@@ -290,7 +295,7 @@ def main():
 
         dropped_total += len(drops)
         kept_total += len(kept)
-        games.append((check_code, game_code, version, kept))
+        games.append((check_code, game_code, version, region, kept))
 
     if not games:
         sys.exit("no games could be keyed; supply --keys (see tools/data/n64_keys.tsv)")
@@ -302,23 +307,61 @@ def main():
     #
     # Merged rather than "keep the biggest", because the variants genuinely differ; deduplicated
     # by name so the same cheat from three files appears once.
+    #
+    # ## And then narrowed again, per region
+    #
+    # Merging every region into one row is what made "Infinite Money" on a USA Star Wars Racer
+    # write to 0x8111CB18, which is where the truguts live in the *European* binary, 0x8CA0 away
+    # from where they live in this one. It is not a rare shape: 183 of the 394 keys are fed by more
+    # than one region, and because the dedup keeps the first file alphabetically -- and "(E)",
+    # "(Europe)" and "(F)" all sort before "(USA)" -- 11,162 USA cheats across 136 games were being
+    # replaced outright by a same-named foreign one. Tetrisphere lost 7,183 of them.
+    #
+    # So every file whose name states a region also feeds a second, narrower row whose fourth
+    # character is the byte the header will actually carry. find_row() in cheatdb.c ranks an exact
+    # four-character code above the three-character wildcard, so a cartridge takes the narrow row
+    # when there is one -- and the wildcard row is left exactly as it was, holding everything
+    # merged, so a release whose region byte the filename did not predict is no worse off than
+    # before. Never worse, usually right; the cost is that a mixed game's cheats are stored twice.
     merged = {}
-    for check_code, game_code, version, kept in games:
-        k = (check_code, game_code, version)
-        if k not in merged:
-            merged[k] = ([], set())
-        rows, seen = merged[k]
-        for name, lines in kept:
-            if name in seen:
-                continue
-            seen.add(name)
-            rows.append((name, lines))
+    narrowed = 0
+    for check_code, game_code, version, region, kept in games:
+        want = [(check_code, game_code, version)]
+        if region and game_code.endswith("?"):
+            want.append((check_code, game_code[:3] + region, version))
+            narrowed += 1
+        for k in want:
+            if k not in merged:
+                merged[k] = ([], set())
+            rows, seen = merged[k]
+            for name, lines in kept:
+                if name in seen:
+                    continue
+                seen.add(name)
+                rows.append((name, lines))
+
+    # A narrow row that came out identical to its wildcard parent is pure duplication: the game had
+    # only one region's files, so there was nothing to separate. Dropping those is worth 1.1 MB of
+    # the 2.2 MB the split would otherwise cost, and it costs nothing at all -- the cartridge falls
+    # through to the wildcard row and finds the same cheats in the same order.
+    identical = 0
+    for (cc, gc, v) in list(merged):
+        if gc.endswith("?"):
+            continue
+        parent = merged.get((cc, gc[:3] + "?", v))
+        if parent is not None and parent[1] == merged[(cc, gc, v)][1]:
+            del merged[(cc, gc, v)]
+            identical += 1
+    if identical:
+        report.append("dropped %d region rows that matched their wildcard row exactly" % identical)
 
     before = len(games)
     games = [(cc, gc, v, rows) for (cc, gc, v), (rows, _s) in merged.items()]
     if before != len(games):
         report.append("")
-        report.append("merged %d corpus entries into %d unique header keys" % (before, len(games)))
+        report.append("merged %d corpus entries into %d unique header keys, of which %d are "
+                      "region-specific rows beside a wildcard one"
+                      % (before, len(games), narrowed))
 
     kept_total = sum(len(rows) for _c, _g, _v, rows in games)
 

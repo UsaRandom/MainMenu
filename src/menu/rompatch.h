@@ -162,6 +162,16 @@ bool rompatch_install_engine (cic_type_t cic_type, uint32_t header_entry,
 bool rompatch_run_is_padding (uint32_t before2, uint32_t before1, uint32_t run_bytes);
 
 /**
+ * @brief Do these four words begin libultra's `__osException`?
+ *
+ * What a preamble candidate's target is checked against, and the reason a preamble is now
+ * identified by where it points rather than by how far. Exposed so the host suite can pin it
+ * against the four words measured at the target of every real candidate on the reference shelf --
+ * and against the dispatcher stub in Mario Party 3 that sits at the +16 the old rule trusted.
+ */
+bool rompatch_is_exception (const uint32_t *words);
+
+/**
  * @brief What the one line at the head of @p list costs, and how many list entries it eats.
  *
  * The body of an atom: the line a run of conditionals guards, or a line standing on its own.

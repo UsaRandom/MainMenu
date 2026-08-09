@@ -39,6 +39,11 @@
 #define PREAMBLE_JR_K0      (0x03400008u)
 #define PREAMBLE_NOP        (0x00000000u)
 
+/* And what the thing it jumps to looks like: `sd $at, 0x20($k0)` then `mfc0 $k1, $12`, the third
+ * and fourth instructions of libultra's __osException. Literals for the same reason. */
+#define EXCEPTION_SD_AT     (0xFF410020u)
+#define EXCEPTION_MFC0_K1   (0x401B6000u)
+
 /* IPL3 does not always load to the entry point in the header: two CICs shift it. Same two numbers
  * as rom_info.c's fix_boot_address(), duplicated because that function takes a rom_cic_type_t and
  * this file has a cic_type_t. Getting it wrong does not look like an error -- it looks like a
@@ -227,17 +232,58 @@ static uint32_t preamble_target (const uint32_t *w) {
     return ((w[0] & 0xFFFF) << 16) + (uint32_t)lo;
 }
 
+bool rompatch_is_exception (const uint32_t *w) {
+    /* libultra's __osException, first four instructions, in every build on the reference shelf:
+     *
+     *     lui   $k0, %hi(__osThreadSave)
+     *     addiu $k0, $k0, %lo(__osThreadSave)
+     *     sd    $at, 0x20($k0)
+     *     mfc0  $k1, $12                     # Status
+     *
+     * Two of the four are exact words, which is what makes this an identification rather than a
+     * pattern: it matched the target of all seventeen preamble candidates across the fifteen-ROM
+     * shelf that were real, and none of the three that were not. */
+    return ((w[0] >> 16) == PREAMBLE_LUI_HI16)
+        && ((w[1] >> 16) == PREAMBLE_ADDIU_HI16)
+        && (w[2] == EXCEPTION_SD_AT)
+        && (w[3] == EXCEPTION_MFC0_K1);
+}
+
 /**
- * @brief Walk the loaded megabyte for a preamble, taking the first that survives every test.
+ * @brief Walk the loaded megabyte for a preamble, taking the best-identified one.
  *
  * The address test is not cosmetic. tools/preamblescan.py ran this pattern over the 24 N64 ROMs
  * on the reference card and two of them -- Conker's Bad Fur Day and GoldenEye 007 -- match a run
  * of data whose reconstructed target is 0x100071e0 and 0x700101a0. Neither is RDRAM. Without the
  * test those two get two words of live game code rewritten at a coincidence. One in twelve.
+ *
+ * ## Why "+16" stopped being the test
+ *
+ * It was a linker-order assumption -- __osException sits immediately after the stub that jumps to
+ * it -- and measured over the shelf it is wrong three times in fifteen. 1080 Snowboarding and
+ * Harvest Moon 64 both link it +212 away, the same number in two unrelated games, with a second
+ * preamble-shaped stub and an exception dispatcher in between. Both were refused outright and
+ * neither could run a cheat at all.
+ *
+ * Worse, Mario Party 3 carries three candidates: a real preamble at +212, a *dispatcher* stub at
+ * +16, and a bogus one. Taking the first thing at +16 took the dispatcher -- so its cheats were
+ * being written into a stub that is not what osInitialize copies to 0x80000180, and did nothing.
+ *
+ * So the target is identified by what it *is* now: rompatch_is_exception() reads the four words it
+ * points at. Distance is kept only as a tie-break and as a fallback, ranked:
+ *
+ *   2  the target is __osException and it is exactly +16   -- everything that already worked
+ *   1  the target is __osException                         -- the +212 builds, and Mario Party 3
+ *   0  it is +16 but does not look like __osException      -- kept so no working game can regress
+ *
+ * Banjo-Kazooie is why rank 2 outranks rank 1 rather than the scan simply taking the first
+ * identified target: it has two back-to-back preambles pointing at the same __osException, and
+ * the +16 one is the one this has always chosen and booted.
  */
 bool rompatch_find (romcrc_read_t read, void *ctx, uint32_t entry, uint32_t ram_top,
                     rompatch_result_t *out) {
     uint32_t buf[SCAN_WORDS];
+    int best_rank = -1;
 
     /* Overlapping windows by three words, so a preamble that straddles a chunk boundary is still
      * seen whole. Cheaper than the alternative and impossible to get subtly wrong. */
@@ -260,25 +306,48 @@ bool rompatch_find (romcrc_read_t read, void *ctx, uint32_t entry, uint32_t ram_
             }
             out->candidates++;
 
-            /* The target has to be an address, and it has to be the address libultra links:
-             * __osException sits immediately after the stub that jumps to it, so a genuine match
-             * points exactly sixteen bytes forward. */
             uint32_t ram = entry + at + i * 4;
-            if (target < 0x80000000u || target >= ram_top || target != ram + 16) {
+            if (target < 0x80000000u || target >= ram_top) {
                 out->rejected++;
                 continue;
             }
 
+            /* Read the target rather than assume it. It is somewhere else in the window, so this
+             * is its own four-word read -- sixteen bytes, once per candidate, and there are never
+             * more than a handful. A target outside the loaded megabyte cannot be checked and
+             * cannot be ours: the engine only exists inside what IPL3 copies. */
+            bool is_exc = false;
+            if (target >= entry && (target - entry) + 16u <= ROMCRC_LENGTH) {
+                uint32_t tw[4];
+                if (!read(ctx, ROMCRC_START + (target - entry), tw, sizeof(tw))) {
+                    return false;
+                }
+                is_exc = rompatch_is_exception(tw);
+            }
+
+            int rank = is_exc ? ((target == ram + 16) ? 2 : 1)
+                              : ((target == ram + 16) ? 0 : -1);
+            if (rank < 0) {
+                out->rejected++;
+                continue;
+            }
+            if (rank <= best_rank) {
+                continue;               /* first of equal rank wins, which keeps ROM order */
+            }
+
+            best_rank = rank;
             out->found = true;
             out->rom_offset = ROMCRC_START + at + i * 4;
             out->ram_address = ram;
             out->target = target;
             out->word0 = buf[i];
             out->word1 = buf[i + 1];
-            return true;
+            if (rank == 2) {
+                return true;            /* nothing can beat it; stop reading the cartridge */
+            }
         }
     }
 
-    return false;
+    return out->found;
 }
 
