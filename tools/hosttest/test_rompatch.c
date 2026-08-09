@@ -229,6 +229,69 @@ int main (void) {
     check(!rompatch_run_is_padding(0x00000000, 0x08000000, 64),
           "...but `j 0` is a zero word wearing an opcode");
 
+    /* Which selections the engine will carry. All or nothing across the whole selection, because
+     * a D0 and the write it guards are one indivisible thing and half a group is worse than none
+     * (AUDIT 2.2). Ocarina's "Infinite Magic" is the case this was written for: four lines whose
+     * first is a conditional, refused outright until the engine learned to branch. */
+    {
+        int lines = 0;
+        const uint32_t plain[]   = { 0x8111ACAE, 0x0140, 0, 0 };
+        const uint32_t magic[]   = { 0xD011ACB9, 0x0008, 0x8011ACBA, 0x0001,
+                                     0x8011ACBC, 0x0001, 0x8011ACB3, 0x0060, 0, 0 };
+        const uint32_t dangling[] = { 0x8111ACAE, 0x0140, 0xD011ACB9, 0x0008, 0, 0 };
+        const uint32_t stacked[]  = { 0xD011ACB9, 0x0008, 0xD011ACBA, 0x0001, 0, 0 };
+        const uint32_t gsbutton[] = { 0xD811ACB9, 0x0008, 0x8011ACBA, 0x0001, 0, 0 };
+        const uint32_t repeater[] = { 0x50000102, 0x0000, 0x8011ACBA, 0x0001, 0, 0 };
+        const uint32_t bootwrite[] = { 0xF1000318, 0x0000, 0, 0 };
+
+        check(rompatch_cheats_fit(plain, &lines) && lines == 1,
+              "one plain 16-bit write fits, and counts as one line");
+        check(rompatch_cheats_fit(magic, &lines) && lines == 4,
+              "Ocarina's Infinite Magic: a conditional and three writes, four lines, carried");
+        check(!rompatch_cheats_fit(dangling, NULL),
+              "a conditional with nothing after it is refused, not silently dropped");
+        check(!rompatch_cheats_fit(stacked, NULL),
+              "a conditional guarding another conditional is refused");
+        check(!rompatch_cheats_fit(gsbutton, NULL),
+              "a GS-button conditional is refused -- there is no button to read");
+        check(!rompatch_cheats_fit(repeater, NULL), "a repeater is still refused");
+        check(!rompatch_cheats_fit(bootwrite, NULL), "a boot-time write is still refused");
+        check(!rompatch_cheats_fit(NULL, NULL), "no selection at all is not a selection that fits");
+
+        /* The budget, from both sides. A plain write is three words and the tail is four, so
+         * (128 - 4) / 3 = 41 writes fit and 42 do not. Getting this off by one would overrun
+         * engine[] in install(), which is a stack array. */
+        static uint32_t many[2 * 64 + 2];
+        for (int n = 41; n <= 42; n++) {
+            for (int i = 0; i < n; i++) {
+                many[i * 2] = 0x8011AD00u + (uint32_t)i;
+                many[i * 2 + 1] = 0x0009;
+            }
+            many[n * 2] = 0;
+            many[n * 2 + 1] = 0;
+            bool got = rompatch_cheats_fit(many, NULL);
+            check(got == (n == 41), (n == 41) ? "41 plain writes fit the engine budget"
+                                              : "42 do not, and are refused before anything is written");
+        }
+
+        /* And the same from the conditional side, which is the accounting that is easy to get
+         * wrong: a guarded pair is SEVEN words, not three. (128 - 4) / 7 is 17. Charging three
+         * would let eighteen pairs through and overrun engine[] by two words. */
+        for (int n = 17; n <= 18; n++) {
+            for (int i = 0; i < n; i++) {
+                many[i * 4 + 0] = 0xD011ACB9u;
+                many[i * 4 + 1] = 0x0008;
+                many[i * 4 + 2] = 0x8011AD00u + (uint32_t)i;
+                many[i * 4 + 3] = 0x0001;
+            }
+            many[n * 4] = 0;
+            many[n * 4 + 1] = 0;
+            bool got = rompatch_cheats_fit(many, NULL);
+            check(got == (n == 17), (n == 17) ? "17 guarded pairs fit, at seven words each"
+                                              : "18 do not -- a pair is seven words, not three");
+        }
+    }
+
     printf("  %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

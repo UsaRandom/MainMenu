@@ -45,8 +45,8 @@
  * selection that needs more than this is refused rather than scattered. Ten segments is what the
  * unbounded version chose for Ocarina, and it black-screened. */
 #define ENGINE_MAX_SEGMENTS 4
-#define ENGINE_MAX_WORDS    128
 #define ENGINE_MAX_RUNS     16
+#define ENGINE_MAX_ATOMS    48
 
 typedef struct {
     uint32_t rom_off;   /**< Where the engine may be written, guard already skipped */
@@ -135,38 +135,55 @@ static int find_padding_runs (engine_seg_t *out, int max) {
 }
 
 /**
- * @brief Lay @p n_words of engine across as many runs as it takes, lowest first.
+ * @brief Lay the engine across as many runs as it takes, lowest first, without splitting an atom.
  *
- * Every segment but the last ends with `j` into the next and its delay slot, so a run has to hold
- * at least three words to be worth stopping at. Lowest-first means the runs nearest the entry
- * point -- the ones inside the code that boots the game and therefore stays resident -- are spent
- * before anything further out, and a one-cheat selection never uses more than one.
+ * An atom is a run of words that must land contiguously. A plain write is three and could be cut
+ * anywhere; a conditional is four words of test whose branch is PC-relative and jumps a fixed
+ * three instructions, so the test and the write it guards are seven words that cannot be
+ * separated. A segment boundary between them would branch into whatever follows in an unrelated
+ * part of the game's boot code.
+ *
+ * Every segment but the last ends with `j` into the next and its delay slot, so two words are
+ * reserved for the hop unless the rest of the engine fits here. A run too small for the next atom
+ * is skipped rather than half-filled. Lowest-first means the runs nearest the entry point -- the
+ * ones inside the code that boots the game and therefore stays resident -- are spent first, and a
+ * one-cheat selection never uses more than one.
  *
  * @return the number of segments used, or 0 if the image has nowhere to put this.
  */
-static int place_engine (const engine_seg_t *runs, int n_runs, uint32_t n_words,
+static int place_engine (const engine_seg_t *runs, int n_runs,
+                         const uint8_t *atom, int n_atoms,
                          engine_seg_t *segs, int max_segs) {
-    int n = 0;
-    uint32_t left = n_words;
+    int n = 0, a = 0;
 
-    for (int i = 0; i < n_runs && n < max_segs; i++) {
-        if (left <= runs[i].words) {
-            segs[n].rom_off = runs[i].rom_off;
-            segs[n].words = left;
-            return n + 1;
+    for (int i = 0; i < n_runs && a < n_atoms && n < max_segs; i++) {
+        uint32_t rest = 0;
+        for (int k = a; k < n_atoms; k++) {
+            rest += atom[k];
         }
-        if (runs[i].words >= 3) {
-            segs[n].rom_off = runs[i].rom_off;
-            segs[n].words = runs[i].words - 2;
-            left -= segs[n].words;
-            n++;
+
+        /* The hop costs two words, and is not owed if everything left fits here. */
+        uint32_t budget = (rest <= runs[i].words) ? runs[i].words
+                        : (runs[i].words >= 3 ? runs[i].words - 2 : 0);
+
+        uint32_t used = 0;
+        while (a < n_atoms && used + atom[a] <= budget) {
+            used += atom[a];
+            a++;
         }
+        if (used == 0) {
+            continue;                       /* too small for the next atom; leave it alone */
+        }
+        segs[n].rom_off = runs[i].rom_off;
+        segs[n].words = used;
+        n++;
     }
-    return 0;                    /* nowhere it fits: write nothing, leave the cartridge alone */
+
+    return (a == n_atoms) ? n : 0;          /* short: write nothing, leave the cartridge alone */
 }
 
 /**
- * @brief Assemble the engine: three instructions per cheat, then home to __osException.
+ * @brief Assemble the engine, and record where it may be cut.
  *
  * $k0 and $k1 only. At exception entry those two are the kernel's scratch registers and libultra's
  * `__osException` clobbers $k0 in its own first instruction, so nothing downstream can observe
@@ -174,69 +191,101 @@ static int place_engine (const engine_seg_t *runs, int n_runs, uint32_t n_words,
  * here can take a TLB miss inside an exception -- the one way this could turn a working game into
  * a reset loop.
  *
+ * A plain write is three instructions. A conditional is four more in front of them, and the shape
+ * is lifted from src/boot/cheats.c rather than invented:
+ *
+ *     lui   $k0, %hi(addr)
+ *     lbu   $k0, %lo(addr)($k0)      # lhu for the 16-bit types
+ *     ori   $k1, $zero, value
+ *     bne   $k0, $k1, +3             # beq for the NOT-EQUAL types
+ *     lui   $k0, %hi(target)         # the guarded write's own first word, in the delay slot
+ *     ori   $k1, $zero, value
+ *     sh    $k1, %lo(target)($k0)
+ *
+ * The branch has no `nop`: its delay slot is the write's `lui`, which always executes and is
+ * harmless because it only loads a register the store is being skipped anyway. That is why the
+ * offset is 3 rather than 4, and it is worth stating because writing the obvious `nop` here would
+ * make the branch land one instruction short -- on the store, executing exactly what the
+ * conditional exists to prevent.
+ *
+ * Types, from the Datel encoding: bit 0 is 16-bit, bit 1 is NOT-EQUAL, bit 3 is the GS button.
+ * A conditional guards the single line after it, which must be a write -- a dangling one is
+ * refused by rompatch_cheats_fit() before anything is written.
+ *
  * The tail is the preamble's own two words, verbatim, then `jr $k0`. `__osException` is entered
  * with exactly the register state it had before -- its own address in $k0. The inline stub of
  * AUDIT 2x reached it with `j` instead, having spent $k0 as a store base, and black-screened.
  *
+ * @param atom     Filled with the word count of each indivisible block; see place_engine().
  * @return words emitted, or 0 if the selection does not fit in @p cap.
  */
 static uint32_t emit_engine (const uint32_t *list, uint32_t word0, uint32_t word1,
-                             uint32_t *out, uint32_t cap, int *codes_out) {
+                             uint32_t *out, uint32_t cap,
+                             uint8_t *atom, int *n_atoms, int max_atoms, int *codes_out) {
     uint32_t n = 0;
-    int codes = 0;
+    int codes = 0, atoms = 0;
 
-    /* DIAGNOSTIC. Set to 0 to ship.
-     *
-     * A launch has now come back with every check the console can make passing -- engine written,
-     * read back, checksum agreeing, hook pointing at it -- and no cheat taking effect. "The engine
-     * never executed" and "the engine executed and the stores did nothing" produce exactly that,
-     * and the console cannot tell them apart, which is the same shape of dead end that cost this
-     * investigation four rounds before.
-     *
-     * So the engine's first three instructions store 0x0100 to VI_X_SCALE. It is not a cheat and
-     * it does not depend on the game, the save, or any address being right: if these run, the
-     * picture is stretched exactly 2x, and if they do not, it is not. One launch, one photograph,
-     * and the fork closes. Proven in ares on five games and on this console on two.
-     *
-     * It has done its job and is off. On hardware, with four cheats ticked, the picture stretched
-     * and no cheat took effect -- so the engine was running and its stores were executing, and the
-     * addresses were wrong. They were V1.0's, out of a cheat database that had merged every
-     * Ocarina revision into a single entry (AUDIT 2aa). Set it back to 1 the next time "did
-     * anything execute" and "did it do anything" need separating. */
-#define ROMPATCH_MARKER 0
-#if ROMPATCH_MARKER
-    if (n + 3 + 4 <= cap) {
-        out[n++] = I_LUI(REG_K0, A_BASE(0xA4400030u));          /* VI_X_SCALE */
-        out[n++] = I_ORI(REG_K1, REG_ZERO, 0x0100);
-        out[n++] = I_SW(REG_K1, A_OFFSET(0xA4400030u), REG_K0);
-    }
-#endif
+    for (size_t i = 0; list != NULL && !(list[i] == 0 && list[i + 1] == 0); ) {
+        uint32_t type = (list[i] >> 24) & 0xFFu;
+        uint32_t start = n;
 
-    for (size_t i = 0; list != NULL && !(list[i] == 0 && list[i + 1] == 0); i += 2) {
-        if (n + 3 + 4 > cap) {
+        if ((type & 0xF0u) == 0xD0u) {
+            /* Four words of test, then the write it guards, consumed together. */
+            uint32_t caddr = list[i] & 0xA07FFFFFu;
+            bool c16 = (type & 0x01u) != 0;
+            uint16_t cval = (uint16_t)(list[i + 1] & (c16 ? 0xFFFFu : 0x00FFu));
+
+            if (n + 7 + 4 > cap || atoms >= max_atoms) {
+                return 0;
+            }
+            out[n++] = I_LUI(REG_K0, A_BASE(caddr));
+            out[n++] = c16 ? I_LHU(REG_K0, A_OFFSET(caddr), REG_K0)
+                           : I_LBU(REG_K0, A_OFFSET(caddr), REG_K0);
+            out[n++] = I_ORI(REG_K1, REG_ZERO, cval);
+            out[n++] = (type & 0x02u) ? I_BEQ(REG_K0, REG_K1, 3) : I_BNE(REG_K0, REG_K1, 3);
+            i += 2;
+
+            /* A dangling conditional is refused by rompatch_cheats_fit(), which is this
+             * function's documented precondition -- but getting here anyway would read the
+             * {0,0} terminator as a write and emit a store to address 0. That is KUSEG, which
+             * is TLB-mapped, so it would take a TLB miss inside an exception handler and put
+             * the console in a reset loop. Two lines against a catastrophic failure mode. */
+            if (list[i] == 0 && list[i + 1] == 0) {
+                return 0;
+            }
+        } else if (n + 3 + 4 > cap || atoms >= max_atoms) {
             return 0;
         }
+
+        uint32_t wtype = (list[i] >> 24) & 0xFFu;
         uint32_t address = list[i] & 0xA07FFFFFu;
-        bool w16 = (list[i] & 0x01000000u) != 0;
+        bool w16 = (wtype & 0x01u) != 0;
         uint16_t value = (uint16_t)(list[i + 1] & (w16 ? 0xFFFFu : 0x00FFu));
 
         out[n++] = I_LUI(REG_K0, A_BASE(address));
         out[n++] = I_ORI(REG_K1, REG_ZERO, value);
         out[n++] = w16 ? I_SH(REG_K1, A_OFFSET(address), REG_K0)
                        : I_SB(REG_K1, A_OFFSET(address), REG_K0);
+        i += 2;
+
+        atom[atoms++] = (uint8_t)(n - start);
         codes++;
     }
 
-    if (n + 4 > cap) {
+    if (n + 4 > cap || atoms >= max_atoms) {
         return 0;
     }
     out[n++] = word0;
     out[n++] = word1;
     out[n++] = I_JR(REG_K0);
     out[n++] = I_NOP();
+    atom[atoms++] = 4;
 
     if (codes_out != NULL) {
         *codes_out = codes;
+    }
+    if (n_atoms != NULL) {
+        *n_atoms = atoms;
     }
     return n;
 }
@@ -249,8 +298,9 @@ static bool install (cic_type_t cic_type, uint32_t header_entry,
                      const uint32_t *cheat_list, rompatch_result_t *out) {
     engine_seg_t segs[ENGINE_MAX_SEGMENTS];
     uint32_t engine[ENGINE_MAX_WORDS];
+    uint8_t atom[ENGINE_MAX_ATOMS];
     uint32_t engine_len = 0;
-    int n_segs = 0;
+    int n_atoms = 0, n_segs = 0;
 
     memset(out, 0, sizeof(*out));
     out->attempted = true;
@@ -288,11 +338,12 @@ static bool install (cic_type_t cic_type, uint32_t header_entry,
         int n_runs = find_padding_runs(runs, ENGINE_MAX_RUNS);
 
         engine_len = emit_engine(cheat_list, out->word0, out->word1,
-                                 engine, ENGINE_MAX_WORDS, &out->engine_codes);
+                                 engine, ENGINE_MAX_WORDS,
+                                 atom, &n_atoms, ENGINE_MAX_ATOMS, &out->engine_codes);
         if (engine_len == 0) {
             return false;
         }
-        n_segs = place_engine(runs, n_runs, engine_len, segs, ENGINE_MAX_SEGMENTS);
+        n_segs = place_engine(runs, n_runs, atom, n_atoms, segs, ENGINE_MAX_SEGMENTS);
         if (n_segs == 0) {
             return false;
         }
@@ -393,29 +444,3 @@ bool rompatch_install_engine (cic_type_t cic_type, uint32_t header_entry,
     return install(cic_type, header_entry, cheat_list, out);
 }
 
-bool rompatch_cheats_fit (const uint32_t *cheat_list, int *lines_out) {
-    if (cheat_list == NULL) {
-        return false;
-    }
-    int lines = 0;
-    bool all_writes = true;
-
-    for (size_t i = 0; !(cheat_list[i] == 0 && cheat_list[i + 1] == 0); i += 2) {
-        uint32_t type = (cheat_list[i] >> 24) & 0xFFu;
-        bool is_write = ((type & 0xF0u) == 0x80u) || ((type & 0xF0u) == 0xA0u);
-        bool gs_button = (type & (1u << 3)) != 0;
-        if (!is_write || gs_button) {
-            all_writes = false;
-        }
-        lines++;
-    }
-
-    if (lines_out != NULL) {
-        *lines_out = lines;
-    }
-    /* All or nothing, and deliberately not per line. A `D0` conditional and the write it guards
-     * are one indivisible thing, and this engine emits no branches, so a selection containing one
-     * cannot be half-applied -- it is refused whole. AUDIT 2.2 is what per-line filtering did. */
-    return lines > 0 && all_writes
-        && (uint32_t)(lines * 3 + 4) <= (uint32_t)ENGINE_MAX_WORDS;
-}

@@ -72,6 +72,53 @@ bool rompatch_run_is_padding (uint32_t before2, uint32_t before1, uint32_t run_b
     return is_return(before1) || is_return(before2);
 }
 
+bool rompatch_cheats_fit (const uint32_t *cheat_list, int *lines_out) {
+    if (cheat_list == NULL) {
+        return false;
+    }
+    int lines = 0;
+    uint32_t words = 4;                 /* the tail */
+    bool ok = true;
+
+    for (size_t i = 0; !(cheat_list[i] == 0 && cheat_list[i + 1] == 0); i += 2) {
+        uint32_t type = (cheat_list[i] >> 24) & 0xFFu;
+        bool gs = (type & (1u << 3)) != 0;
+        bool write = ((type & 0xF0u) == 0x80u) || ((type & 0xF0u) == 0xA0u);
+        bool cond = ((type & 0xF0u) == 0xD0u);
+        lines++;
+
+        if (write && !gs) {
+            words += 3;
+            continue;
+        }
+        if (cond && !gs) {
+            /* A conditional guards the one line after it, and that line has to be a write we can
+             * emit -- a dangling `D0` at the end of a group, or one guarding another conditional,
+             * is refused rather than half-applied. */
+            uint32_t next = (cheat_list[i + 2] >> 24) & 0xFFu;
+            bool next_write = ((next & 0xF0u) == 0x80u) || ((next & 0xF0u) == 0xA0u);
+            bool tail = (cheat_list[i + 2] == 0 && cheat_list[i + 3] == 0);
+            if (tail || !next_write || (next & (1u << 3))) {
+                ok = false;
+                continue;
+            }
+            words += 7;
+            lines++;
+            i += 2;
+            continue;
+        }
+        ok = false;                     /* repeater, boot write, or a GS-button variant */
+    }
+
+    if (lines_out != NULL) {
+        *lines_out = lines;
+    }
+    /* All or nothing, and deliberately not per line. A `D0` conditional and the write it guards
+     * are one indivisible thing, so a selection carrying anything this engine cannot emit is
+     * refused whole. AUDIT 2.2 is what per-line filtering did. */
+    return lines > 0 && ok && words <= (uint32_t)ENGINE_MAX_WORDS;
+}
+
 uint32_t rompatch_entry_for (cic_type_t cic_type, uint32_t header_entry) {
     switch (cic_type) {
         case CIC_x103: return header_entry - 0x100000;

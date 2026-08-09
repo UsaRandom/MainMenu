@@ -95,6 +95,10 @@ def i_addiu(rt, rs, imm):       return _op(0x09, rs, rt, imm)
 def i_sb(rt, off, base):        return _op(0x28, base, rt, off)
 def i_sh(rt, off, base):        return _op(0x29, base, rt, off)
 def i_sw(rt, off, base):        return _op(0x2B, base, rt, off)
+def i_lbu(rt, off, base):       return _op(0x24, base, rt, off)
+def i_lhu(rt, off, base):       return _op(0x25, base, rt, off)
+def i_beq(rs, rt, off):         return _op(0x04, rs, rt, off)
+def i_bne(rs, rt, off):         return _op(0x05, rs, rt, off)
 def i_jr(rs):                   return ((rs & 0x1F) << 21) | 0x08
 def i_j(target):                return 0x08000000 | ((target >> 2) & 0x03FFFFFF)
 def i_nop():                    return 0
@@ -175,7 +179,7 @@ def padding_runs(rom):
     return out
 
 
-def place(rom, entry, n_words):
+def place(rom, entry, atoms):
     """Lay @p n_words of engine across as many padding runs as it takes, lowest first.
 
     One run holds about six cheats: Ocarina's is 108 bytes, which is 27 words, less four for the
@@ -192,16 +196,20 @@ def place(rom, entry, n_words):
 
     @return a list of (rom_off, words) in execution order, or None if the image has nowhere.
     """
-    segs, left = [], n_words
+    segs, a = [], 0
     for off, length in padding_runs(rom):
         cap = length // 4 - 2 * GAP_GUARD_WORDS
         at = off + GAP_GUARD_WORDS * 4
-        if left <= cap:
-            segs.append((at, left))
+        rest = sum(atoms[a:])
+        budget = cap if rest <= cap else (cap - 2 if cap >= 3 else 0)
+        used = 0
+        while a < len(atoms) and used + atoms[a] <= budget:
+            used += atoms[a]
+            a += 1
+        if used:
+            segs.append((at, used))
+        if a >= len(atoms):
             return segs
-        if cap >= 3:                       # a hop costs two, so fewer than three buys nothing
-            segs.append((at, cap - 2))
-            left -= cap - 2
     return None
 
 
@@ -219,7 +227,7 @@ def chain(segs, entry, words):
     return out
 
 
-def emit_engine(codes, word0, word1, marker):
+def emit_engine(codes, word0, word1, marker, marker_if=None):
     """The handler, as it will sit in RDRAM.
 
     Only $k0 and $k1 are touched: at exception entry those two are the kernel's scratch registers
@@ -227,9 +235,31 @@ def emit_engine(codes, word0, word1, marker):
     address is KSEG0, which is unmapped, so no store here can take a TLB miss inside an exception
     -- the one way this code could turn a working game into a reset loop.
     """
-    words, asm = [], []
+    words, asm, atoms = [], [], []
 
-    if marker is not None:
+    if marker is not None and marker_if is not None:
+        # The marker, behind a condition. This is how the branch itself gets tested: the same ROM
+        # built with a condition that holds and one that does not must differ by whether the
+        # picture is stretched. With the marker unguarded both stretch and the test cannot fail.
+        ckind, caddr, cval, c16 = marker_if
+        chi, clo = split_addr(caddr)
+        ne = bool(ckind & 0x02)
+        words += [i_lui(REG_K0, chi),
+                  (i_lhu if c16 else i_lbu)(REG_K0, clo, REG_K0),
+                  i_ori(REG_K1, REG_ZERO, cval),
+                  (i_beq if ne else i_bne)(REG_K0, REG_K1, 3)]
+        asm += ["lui   $k0, 0x%04x" % chi,
+                "%-5s $k0, 0x%04x($k0)      ; read %08x" % ("lhu" if c16 else "lbu", clo, caddr),
+                "ori   $k1, $zero, 0x%04x" % cval,
+                "%-5s $k0, $k1, +3          ; skip the marker unless %08x %s %04x"
+                % ("beq" if ne else "bne", caddr, "!=" if ne else "==", cval)]
+        hi, lo = split_addr(0xA4400030)
+        words += [i_lui(REG_K0, hi), i_ori(REG_K1, REG_ZERO, marker), i_sw(REG_K1, lo, REG_K0)]
+        asm += ["lui   $k0, 0x%04x" % hi,
+                "ori   $k1, $zero, 0x%04x" % marker,
+                "sw    $k1, 0x%04x($k0)      ; VI_X_SCALE marker, guarded" % lo]
+        atoms.append(7)
+    elif marker is not None:
         # A store to VI_X_SCALE, which the game rewrites only on a mode change but this handler
         # rewrites on every exception. Nothing about the game changes; the picture's horizontal
         # scale does, visibly, which is how "the handler ran" gets told apart from "the game
@@ -239,8 +269,38 @@ def emit_engine(codes, word0, word1, marker):
         asm += ["lui   $k0, 0x%04x" % hi,
                 "ori   $k1, $zero, 0x%04x" % marker,
                 "sw    $k1, 0x%04x($k0)      ; VI_X_SCALE marker" % lo]
+        atoms.append(3)
 
-    for addr, value, width16 in codes:
+    i = 0
+    while i < len(codes):
+        kind, addr, value, width16 = codes[i]
+
+        if (kind & 0xF0) == 0xD0:
+            # Four words of test in front of the write it guards. The branch has NO nop: its
+            # delay slot is the write's own `lui`, which always runs and is harmless because only
+            # the store is being skipped. That is why the offset is 3 and not 4 -- writing the
+            # obvious nop here lands the branch on the store, doing the thing the conditional
+            # exists to prevent. Shape taken from src/boot/cheats.c, not invented.
+            if i + 1 >= len(codes) or (codes[i + 1][0] & 0xF0) not in (0x80, 0xA0):
+                raise SystemExit("a %02X conditional must be followed by a write" % kind)
+            hi, lo = split_addr(addr)
+            ne = bool(kind & 0x02)
+            words += [i_lui(REG_K0, hi),
+                      (i_lhu if width16 else i_lbu)(REG_K0, lo, REG_K0),
+                      i_ori(REG_K1, REG_ZERO, value),
+                      (i_beq if ne else i_bne)(REG_K0, REG_K1, 3)]
+            asm += ["lui   $k0, 0x%04x" % hi,
+                    "%-5s $k0, 0x%04x($k0)      ; read %08x" % ("lhu" if width16 else "lbu", lo, addr),
+                    "ori   $k1, $zero, 0x%04x" % value,
+                    "%-5s $k0, $k1, +3          ; skip the store unless %08x %s %0*x"
+                    % ("beq" if ne else "bne", addr, "!=" if ne else "==",
+                       4 if width16 else 2, value)]
+            i += 1
+            kind, addr, value, width16 = codes[i]
+            atoms.append(7)
+        else:
+            atoms.append(3)
+
         hi, lo = split_addr(addr)
         words += [i_lui(REG_K0, hi), i_ori(REG_K1, REG_ZERO, value),
                   (i_sh if width16 else i_sb)(REG_K1, lo, REG_K0)]
@@ -248,14 +308,16 @@ def emit_engine(codes, word0, word1, marker):
                 "ori   $k1, $zero, 0x%04x" % value,
                 "%-5s $k1, 0x%04x($k0)      ; %08x <- %0*x"
                 % ("sh" if width16 else "sb", lo, addr, 4 if width16 else 2, value)]
+        i += 1
 
     # The tail is the preamble's own two words, verbatim. __osException is entered with $k0
     # holding its own address, exactly as the unpatched game leaves it.
     words += [word0, word1, i_jr(REG_K0), i_nop()]
+    atoms.append(4)
     asm += ["lui   $k0, 0x%04x            ; original preamble word 0" % (word0 & 0xFFFF),
             "addiu $k0, $k0, 0x%04x       ; original preamble word 1" % (word1 & 0xFFFF),
             "jr    $k0", "nop"]
-    return words, asm
+    return words, asm, atoms
 
 
 def parse_code(text):
@@ -270,12 +332,14 @@ def parse_code(text):
         raise SystemExit("code %r is not `AAAAAAAA VVVV`" % text)
     raw, value = int(parts[0], 16), int(parts[1], 16)
     kind = raw >> 24
-    if kind not in (0x80, 0x81, 0xA0, 0xA1):
-        raise SystemExit("code type %02X is not an unconditional write; only 80/81/A0/A1 fit"
+    if kind & (1 << 3):
+        raise SystemExit("code type %02X is a GS-button variant; the engine cannot see the button"
                          % kind)
+    if (kind & 0xF0) not in (0x80, 0xA0, 0xD0):
+        raise SystemExit("code type %02X is neither a write nor a conditional" % kind)
     width16 = bool(kind & 0x01)
     base = 0xA0000000 if (kind & 0x20) else 0x80000000
-    return base | (raw & 0x007FFFFF), value & (0xFFFF if width16 else 0xFF), width16
+    return (kind, base | (raw & 0x007FFFFF), value & (0xFFFF if width16 else 0xFF), width16)
 
 
 def report_gaps(rom, entry):
@@ -326,6 +390,9 @@ def main():
                          "whether the handler ran at all")
     ap.add_argument("--gap-rom", type=lambda s: int(s, 0),
                     help="place the engine at this ROM offset instead of scanning")
+    ap.add_argument("--marker-if", metavar="'AAAAAAAA VVVV'",
+                    help="put the marker behind this conditional, so a run where the condition "
+                         "fails must NOT stretch the picture -- the test for the branch itself")
     ap.add_argument("--accept-odd", action="store_true",
                     help="also accept a preamble whose __osException is not exactly +16 away")
     ap.add_argument("--list-gaps", action="store_true")
@@ -376,12 +443,13 @@ def main():
     pre_ram = entry + (pre_off - WINDOW_OFF)
 
     codes = [parse_code(c) for c in args.code]
-    words, asm = emit_engine(codes, word0, word1, args.marker)
+    marker_if = parse_code(args.marker_if) if args.marker_if else None
+    words, asm, atoms = emit_engine(codes, word0, word1, args.marker, marker_if)
 
     if args.gap_rom is not None:
         segs = [(args.gap_rom, len(words))]
     else:
-        segs = place(rom, entry, len(words))
+        segs = place(rom, entry, atoms)
         if segs is None:
             raise SystemExit("no padding runs holding %d words in the window" % len(words))
     gap_off = segs[0][0]

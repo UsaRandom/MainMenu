@@ -47,6 +47,10 @@
 #include "boot/cic.h"
 #include "romcrc.h"
 
+/** @brief How many words of engine the cartridge will hold. Three per plain write, seven per
+ *  conditional and the write it guards, four for the tail. */
+#define ENGINE_MAX_WORDS 128
+
 /** @brief What the scan found, and what was done about it. Every field ends up in launch.log. */
 typedef struct {
     bool     attempted;     /**< The menu tried; false means cheats were off or there is no cart */
@@ -140,11 +144,15 @@ bool rompatch_run_is_padding (uint32_t before2, uint32_t before1, uint32_t run_b
 /**
  * @brief Can this selection be carried at all, and how many lines is it?
  *
- * The engine emits no branches, so it carries unconditional 8/16-bit writes and nothing else:
- * types 0x80/0x81/0xA0/0xA1 with the GS-button bit clear. A selection containing a conditional, a
- * repeater or a boot-time special is refused **whole** rather than filtered, because a `D0` and
+ * Carried: unconditional 8/16-bit writes (0x80/0x81/0xA0/0xA1) and the `D0`-`D3` conditionals,
+ * each guarding the single write that follows it. Refused: repeaters (`0x50`, which emit three
+ * instructions per iteration and up to 255 iterations), boot-time writes (`0xF0`/`0xF1`) and
+ * every GS-button variant, since there is no button for this engine to read.
+ *
+ * A selection carrying any of those is refused **whole** rather than filtered, because a `D0` and
  * the write it guards are one indivisible thing and dropping half of a group is a bug this
- * project has already shipped once (AUDIT 2.2).
+ * project has already shipped once (AUDIT 2.2). Measured over the shipped database: 42,220 of
+ * 42,898 groups are carried, up from 40,764 before conditionals.
  *
  * Answers before anything touches the cartridge, so the launch screen can say so.
  */
