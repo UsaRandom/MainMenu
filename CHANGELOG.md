@@ -36,6 +36,38 @@
 ### Deprecation notices
 - None.
 
+## Release Notes 2026-08-11 - Tagged 1.1.0
+
+Boot time on a large card. A 278-title library took about 0.7 s per title to scan on hardware;
+this release addresses two of the reasons and covers the remainder with the boot plate.
+
+- **Performance**
+	- The menu no longer looks for a metadata pack that is not on the card. `menu/metadata/<G>/<A>/<M>/<E>/metadata.ini` was opened once per title, and on a card without an art pack every one of those missed; the answer is now looked up once at boot.
+	- Loose box art is found by binary search rather than by walking the whole table, and the table no longer compares every entry against every other while it is built. On 278 covers that is about 116,000 string compares and 556 allocations on the boot path reduced to about 6,700 and none.
+
+- **New Features**
+	- The boot plate is now held up while the card is scanned, with the title count climbing as titles are found, instead of the screen staying blank until the scan finished. The plate's animation runs during the scan rather than after it, so the curtain lifts as soon as the grid is ready.
+
+- **Bug Fixes**
+	- Audio no longer runs dry during a long scan. Nothing fed the mixer while the scan blocked, and an N64 whose audio interface is not given a new buffer repeats the last one it had.
+
+- **Documentation**
+	- `docs/AUDIT.md` 1aw records what the scan costs on a card and why the emulator could not measure it. The previous 11,499 us/rom figure is marked superseded as a predictor rather than replaced.
+	- Corrected a claim in `library.c` that duplicate art resolution favours the shallowest copy. It follows scan order, which is not the same thing.
+
+- **Other**
+	- New host test covering the loose-art table, 156 checks, with seven mutations proving it can fail.
+
+### Breaking changes
+- None.
+
+### Notes
+- **A flat folder of several hundred ROMs is slow, and no amount of this fixes that.** The cost is titles multiplied by entries in the directory, because the filesystem resolves every path by walking the directory linearly. Splitting a large library into subfolders is worth more than anything in this release: one folder per initial letter took a 556-entry directory to about 21 on the card this was measured against.
+
+### Current known Issues
+- Three more per-title file probes (`<rom>.ini`, `<rom>.meta`, `<rom>.metadata.ini`) still miss on every title on a typical card. Removing them requires changing the order the scan walks directories in, which is what decides duplicate art resolution, so it has been left for a change of its own.
+- On consoles where the menu cannot write to the card, `library.idx` and the thumbnail atlas never persist, so the full scan and every cover decode happen on every boot. That is the larger remaining cost and is not addressed here.
+
 ## Release Notes 2026-05-23 - Tagged 0.3.2
 
 - **New Features**

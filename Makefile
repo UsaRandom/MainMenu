@@ -19,7 +19,7 @@ OUTPUT_DIR = output
 #
 # It is in CONFIG_STAMP below, because it is baked into three objects by -D and make has no other
 # way to know it changed.
-MENU_VERSION ?= "v1.0.0"
+MENU_VERSION ?= "v1.1.0"
 BUILD_TIMESTAMP = "$(shell TZ='UTC' date "+%Y-%m-%d %H:%M:%S %:z")"
 
 # A harness build stamps a fixed time instead. credits.o is force-rebuilt every make, so the
