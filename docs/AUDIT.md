@@ -6078,8 +6078,17 @@ nothing, record that as `LIBF_ART_MISSING`, and stay wrong on every later boot -
 every directory matches again. The signature walk is already reading every filename on the card,
 so it now notes the images among them: **278 covers and 27 directories on the test card, about 310
 extra strdup/free pairs on a path that was already reading those names**, freed immediately on a
-plain hit. That is a count, not a time; the walk's own microseconds are in the boot record and the
-next round trip will say whether it moved. In the same breath, `library_resolve_loose_art()` now
+plain hit. That is a count, not a time.
+
+**Measured on the next round trip: it moved, by about 2.7%.** The walk had been 715,656 / 715,740
+/ 718,697 / 722,802 us across four boots -- a 1% spread -- and came back **741,920 us** with the
+art collection in it. That is 19,118 us above the previous worst, so it is outside the observed
+band rather than inside it, and it is the price of a repair being able to resolve a cover that
+lives in a different directory from its ROM. The same boot recorded a cold scan of 12,700,826 us
+at 43,947 us/rom against 14,404,611 and 49,842 in 1ax; the scan itself was not touched, so that
+gap is run and card variance, and a reminder not to read a single scan number too closely.
+
+In the same breath, `library_resolve_loose_art()` now
 clears `LIBF_ART_MISSING` when it assigns a path -- the flag and the path can only be set together
 on a record read back from the file, and an index carrying both loads as `ART_NONE` holding a
 perfectly good cover nothing will ever decode.
@@ -6190,6 +6199,25 @@ background() runs about 208 times per displayed frame during a scroll (1l), so a
 records not yet in the atlas cost thousands of probes a frame to re-establish sizes that had not
 changed. Nothing on the card moves while the menu is running; the size is now taken once per
 record per boot.
+
+**5. And the tile data was never durable either, which the card proved on the next boot.** It came
+back with `thumbs.pak` at **0 bytes and a 32-row `thumbs.idx` beside it** -- an index naming 32
+tiles against an empty atlas. FatFs writes a file's DIRECTORY ENTRY in `f_sync()`, not in
+`f_write()`, and libdragon exposes neither: `filesystem_t` has no fsync hook and `__fat_ioctl()`
+answers only the three cluster queries. `fclose()` is the only call in reach that commits the
+entry. The pak is opened at boot and closed in `app_deinit()`; `pak_create()` does not close
+either. So every `fflush()` laid the bytes down in clusters that no directory entry ever claimed,
+and the recorded length stayed at zero for the whole session. The index survived the same
+power-off because `cache_store()` opens, writes and **closes**. Two writers, one durable, and the
+difference was entirely the fclose. The pak is now closed and reopened after each tile, and before
+the index that names it is published -- an ordering that can only leave a tile missing rather than
+a claim pointing at nothing.
+
+Worth being clear about: fixing the index publish (item 1) alone would have fixed **nothing** on
+hardware, because the data the index pointed at was not on the card. **Neither fault is reachable
+from the host suite** -- POSIX commits a file's length immediately, so a synced and an unsynced
+build pass every check identically. This one is justified by the state the card came back in, not
+by a test, and that is the strongest evidence available for it.
 
 **What can be measured here, and what cannot.** Under ares `cache_writable()` is false, so
 `thumbstore_available()` is false, the build is a no-op and the grid takes the unchanged

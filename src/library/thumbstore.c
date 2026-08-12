@@ -122,6 +122,43 @@ static void pak_unbuffered (FILE *f) {
     setvbuf(f, NULL, _IONBF, 0);
 }
 
+/**
+ * @brief Commit the pak's length to the card, which on this stack means closing and reopening it.
+ *
+ * FatFs updates a file's DIRECTORY ENTRY in f_sync(), not in f_write(). libdragon exposes neither:
+ * `filesystem_t` has no fsync hook and __fat_ioctl() answers only the three cluster queries. So
+ * fclose() is the only call in reach that writes the entry, and this is what it costs.
+ *
+ * The card proved it. thumbs.pak came back **0 bytes with a 32-row thumbs.idx beside it** after a
+ * session that decoded 32 tiles and was powered off from the menu. Every put had fflush()'d, which
+ * pushes stdio through to f_write and lays the data down in clusters -- but no directory entry ever
+ * claimed them, so the file's recorded length stayed where pak_create() left it, which was also
+ * zero, because that does not close either. The index survived because cache_store() opens, writes
+ * and CLOSES. Two writers, one durable, and the difference was entirely the fclose.
+ *
+ * Per tile, deliberately. A reopen is a walk of `mainmenu/cache`, which holds a handful of entries,
+ * against a decode measured in whole fields -- and the alternative is a window in which decoded
+ * work is not on the card. That window is the entire complaint this came from.
+ */
+static void pak_sync (void) {
+    if (pak == NULL || !pak_writable) {
+        return;
+    }
+    char path[300];
+    cache_path(path, sizeof(path), PAK_FILE);
+
+    fclose(pak);
+    pak = fopen(path, "rb+");
+    if (pak == NULL) {
+        /* The atlas is gone for the rest of this session. Everything already written stays on the
+         * card and readable next boot; what stops is adding to it. Said out loud because a silently
+         * unavailable atlas looks exactly like a cold card. */
+        debugf("THUMBSTORE reopen after sync failed -- atlas is read-only for this session\n");
+        return;
+    }
+    pak_unbuffered(pak);
+}
+
 /** @brief Create a fresh pak with a valid header. Returns the open handle, or NULL. */
 static FILE *pak_create (const char *path) {
     FILE *f = fopen(path, "wb+");
@@ -152,7 +189,17 @@ static FILE *pak_create (const char *path) {
         remove(path);
         return NULL;
     }
-    fflush(f);
+
+    /* Closed and reopened rather than flushed, for the reason pak_sync() spells out: fflush() puts
+     * the bytes in clusters and leaves the directory entry saying zero. A pak whose header slot was
+     * never committed reads back as an empty file on the next boot, which is exactly what the card
+     * came back holding -- 0 bytes, with a 32-row index beside it. */
+    fclose(f);
+    f = fopen(path, "rb+");
+    if (f == NULL) {
+        return NULL;
+    }
+    pak_unbuffered(f);
     return f;
 }
 
@@ -438,6 +485,12 @@ void thumbstore_put (const char *src_path, int64_t src_size, const surface_t *ar
         }
     }
     fflush(pak);
+
+    /* The pak first, then the index that names it. A tile the index claims but the pak has not
+     * committed is the one ordering that can produce a wrong read rather than a missing one --
+     * self-healing here, because open() rejects a header it cannot read and drops both files, but
+     * relying on the recovery path for what the ordering settles for free is backwards. */
+    pak_sync();
 
     /* Publish on a count of tiles stored SINCE THE LAST FLUSH, not on the running total.
      *
