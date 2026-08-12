@@ -279,7 +279,18 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * which is the documented contract -- first caller wins. */
     boot_plate_arm();
 
-    if (!libindex_load(app->lib, app->storage, SCAN_ROOT)) {
+    /* Where the boot time actually goes, written to the card because nothing else on this console
+     * can say. The index either revalidates in a directory walk or it does not and the whole card
+     * is rescanned, and those two differ by seconds -- but from the outside they look identical:
+     * a plate, then a grid. Both are timed and both are reported, so "the list is slow" becomes a
+     * number with a cause attached instead of a hypothesis. */
+    uint32_t t_idx = TICKS_READ();
+    bool idx_hit = libindex_load(app->lib, app->storage, SCAN_ROOT);
+    uint32_t idx_us = TIMER_MICROS(TICKS_SINCE(t_idx));
+    uint32_t scan_us = 0;
+
+    if (!idx_hit) {
+        uint32_t t_scan = TICKS_READ();
         library_scan(app->lib, app->storage, SCAN_ROOT, scan_progress);
         /* Between the scan and the save, and it has to be between them. The scan is the only
          * thing that ever fills lib->art, and nothing rebuilds that table when the index loads
@@ -289,6 +300,26 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
          * among them. Memory only; the scan already saw every file. */
         library_resolve_loose_art(app->lib);
         libindex_save(app->lib, app->storage, SCAN_ROOT);
+        scan_us = TIMER_MICROS(TICKS_SINCE(t_scan));
+    }
+
+    /* Best-effort and never load-bearing, same as every other line this file writes. Opened here
+     * and closed immediately: the launch path opens the log again later with its own banner, and
+     * two open handles on one file is not something to find out about on a card. */
+    launchlog_begin_boot();
+    if (launchlog_open()) {
+        launchlog_line("%s %s  storage [%s]  cache %s", MENU_VERSION,
+                       idx_hit ? "index HIT" : "index MISS -> full scan",
+                       app->storage, cache_status());
+        launchlog_line("titles %d", app->lib->count);
+        if (idx_hit) {
+            launchlog_line("revalidate %lu us", (unsigned long)idx_us);
+        } else {
+            launchlog_line("revalidate %lu us (rejected), scan %lu us = %lu us/rom",
+                           (unsigned long)idx_us, (unsigned long)scan_us,
+                           (unsigned long)(app->lib->count ? scan_us / (uint32_t)app->lib->count : 0));
+        }
+        launchlog_end();
     }
 
     /* After the library exists, never before: playstate is applied onto records and keys on the

@@ -28,7 +28,7 @@ void launchlog_init (const char *storage_prefix) {
 
 static FILE *log_file;
 
-void launchlog_begin (void) {
+static void launchlog_begin_banner (const char *banner_text) {
     if (!ready || log_file != NULL) {
         return;
     }
@@ -62,7 +62,7 @@ void launchlog_begin (void) {
     }
     log_file = fopen(file_path, "ab");
     if (log_file != NULL) {
-        fputs("\n---------------- launch ----------------\n", log_file);
+        fputs(banner_text, log_file);
     } else {
         /* Fall back to truncating, and say so in the file itself. The card's launch.log has not
          * gained a single append-era banner since the append rewrite landed, and one candidate
@@ -75,6 +75,29 @@ void launchlog_begin (void) {
                   log_file);
         }
     }
+}
+
+/**
+ * @brief A launch record. Unchanged behaviour; the banner moved into a parameter.
+ */
+void launchlog_begin (void) {
+    launchlog_begin_banner("\n---------------- launch ----------------\n");
+}
+
+/**
+ * @brief A boot record, written before the first frame.
+ *
+ * Boot is the one thing this file could never say anything about. It records launches, and the
+ * question that keeps coming up -- is the library index being used, or is the card rescanned
+ * every time -- happens minutes earlier and left no trace anywhere a console could show it.
+ * debugf goes to a USB link this cart does not have, so guessing was the only option, and this
+ * session guessed wrong twice: first that the cache was dead (it is not, the probe passes and
+ * library.idx is on the card), then that the scan must therefore be the cost.
+ *
+ * Same channel, same best-effort rules, different banner. See boot_report() in app.c.
+ */
+void launchlog_begin_boot (void) {
+    launchlog_begin_banner("\n---------------- boot ----------------\n");
 }
 
 bool launchlog_open (void) {

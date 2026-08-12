@@ -44,6 +44,9 @@ void launchlog_init (const char *storage_prefix);
  */
 void launchlog_begin (void);
 
+/** @brief Same channel, boot banner. Records whether the index was used and what it cost. */
+void launchlog_begin_boot (void);
+
 /** @brief Did launchlog_begin() actually get a file? The card has silently swallowed two runs'
  *         worth of diagnostics, so the report says out loud which channel is alive. */
 bool launchlog_open (void);
