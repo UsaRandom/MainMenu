@@ -306,7 +306,8 @@ exists to prevent.
 
 ### 5.6 The chip breaks the "invisible with one profile" property, deliberately
 
-`screen_grid.c:387` draws the Z hint only when `profile_count() > 1`, and `screen_profiles.c`'s
+`screen_grid.c`'s footer draws the Players hint only when `profile_count() > 1` — that hint is on
+**B** now, not Z; Z pages the tab rail left alongside L — and `screen_profiles.c`'s
 header argues at length that the whole feature stays invisible until asked for. The chip is the
 entry point now, so it must draw always — otherwise a single-profile card has no route to
 `Who's playing?` at all.

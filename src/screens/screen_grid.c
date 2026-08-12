@@ -575,12 +575,13 @@ static void draw_footer (app_t *app) {
      * reserved for the worst case, so labelling this with the name would print it twice on one
      * screen. It says what the button does instead.
      *
-     * UI_BTN_TALL, matching the Cheats hint on the detail sheet. Z is a trigger under the
-     * controller, not a face button, and drawing it as another coloured disc says the wrong thing
-     * about where the finger goes -- the shape is the same information as the colour and survives
-     * being glanced at. Same button, same shape, both places. */
+     * UI_BTN_DISC, because this is B and B is a face button. It was Z drawn UI_BTN_TALL, on the
+     * reasoning that a trigger under the controller should not read as another coloured disc --
+     * that reasoning was right and it still applies, which is exactly why the shape has to move
+     * with the binding. A disc labelled Z, or a trigger labelled B, would each be telling the
+     * hand to go to the wrong place. */
     if (profile_count() > 1) {
-        (void)ui_hint(hx, FOOTER_Y + 32, "Z", BTN_Z_COLOR, UI_BTN_TALL, "Players");
+        (void)ui_hint(hx, FOOTER_Y + 32, "B", BTN_B_COLOR, UI_BTN_DISC, "Players");
     }
     if (buf[0]) {
         ui_text(SAFE_X, FOOTER_Y + 48, SAFE_W, ALIGN_RIGHT, STL_ORANGE, buf);
@@ -713,7 +714,10 @@ static void grid_update (app_t *app, float dt) {
     /* The rail runs left to right and stops at both ends: tabs 0..TAB_COUNT-1, then the chip.
      * It used to wrap with a modulo, which cannot survive the chip -- wrapping would make
      * "keep pressing L" cycle past the player plate forever instead of arriving at it. */
-    if (input_pressed(in, BTN_L)) {
+    /* Z pages left alongside L. Both triggers sit under the same finger on the left shoulder, and
+     * a rail that only moves one way from there is a rail you have to look at the controller to
+     * use. R alone pages right, because there is no second right trigger to pair it with. */
+    if (input_pressed(in, BTN_L) || input_pressed(in, BTN_Z)) {
         if (tab > 0) {
             sound_play_effect(SFX_CURSOR);
             tab = (tab_t)(tab - 1);
@@ -783,12 +787,16 @@ static void grid_update (app_t *app, float dt) {
         }
     }
 
-    /* Z, and only when there is somebody to switch to. Z is the one button this grid does not
-     * already spend -- A, C-right, L, R, Start and the d-pad are all taken -- and switching player
-     * is a per-session action for a family, so burying it in Settings would be wrong even though
-     * Settings also offers it. Silent when there is one profile: a button that does nothing is
-     * better unbound than bound to a screen with one row. */
-    if (input_pressed(in, BTN_Z) && profile_count() > 1) {
+    /* B, and only when there is somebody to switch to. This was Z, on the reasoning that Z was the
+     * one button the grid did not already spend -- but Z now pages the rail left with L, which is
+     * worth more, because paging is something you do constantly and switching player is something
+     * you do once a session. B is free here in a way it is nowhere else: every other screen spends
+     * it on Back, and the grid is the root, so there is nothing behind it to go back to.
+     *
+     * Switching player is a per-session action for a family, so burying it in Settings would be
+     * wrong even though Settings also offers it. Silent when there is one profile: a button that
+     * does nothing is better unbound than bound to a screen with one row. */
+    if (input_pressed(in, BTN_B) && profile_count() > 1) {
         sound_play_effect(SFX_ENTER);
         app_goto(app, SCREEN_PROFILES);
     }
