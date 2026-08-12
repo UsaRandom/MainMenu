@@ -105,6 +105,43 @@ static inline int16_t clip16(int32_t v) {
     return (int16_t)v;
 }
 
+/**
+ * @brief Scale, clip and store one block of accumulators as interleaved int16.
+ *
+ * @p ns is a count of samples, not frames.
+ *
+ * On the N64 this writes into a libdragon samplebuffer, and that buffer is
+ * uncached -- samplebuffer_init() asserts on anything else, because the RSP
+ * mixer reads it behind the CPU's back. Every 16-bit store there is its own
+ * RDRAM transaction competing with RDP and RSP traffic, and at 22050 Hz stereo
+ * that was 44,100 of them a second. Packing four samples into a doubleword
+ * first cuts it to a quarter of that; `sd` is a single instruction under the
+ * o64 ABI and samplebuffer_append() guarantees the 8-byte alignment it needs.
+ *
+ * The packing order is big-endian, which is not a portability hole because the
+ * fast path is inside #ifdef N64 and libdragon is big-endian by definition.
+ * Both paths write identical bytes, so a host render still matches the
+ * hardware one sample for sample.
+ */
+static void emit_block(int16_t *out, const int32_t *acc, int ns, int32_t vol) {
+    int i = 0;
+
+#ifdef N64
+    if ((((uintptr_t)out) & 7) == 0) {
+        uint64_t *q = (uint64_t *)out;
+        for (; i + 4 <= ns; i += 4) {
+            *q++ = ((uint64_t)(uint16_t)clip16((acc[i + 0] * vol) >> M64_Q15) << 48)
+                 | ((uint64_t)(uint16_t)clip16((acc[i + 1] * vol) >> M64_Q15) << 32)
+                 | ((uint64_t)(uint16_t)clip16((acc[i + 2] * vol) >> M64_Q15) << 16)
+                 | ((uint64_t)(uint16_t)clip16((acc[i + 3] * vol) >> M64_Q15));
+        }
+    }
+#endif
+
+    for (; i < ns; i++)
+        out[i] = clip16((acc[i] * vol) >> M64_Q15);
+}
+
 void midi64_player_render(midi64_player_t *p, int16_t *out, int nframes) {
     if (!p || !p->seq || !out) {
         if (out && nframes > 0) memset(out, 0, (size_t)nframes * 2 * sizeof(int16_t));
@@ -135,8 +172,12 @@ void midi64_player_render(midi64_player_t *p, int16_t *out, int nframes) {
         memset(acc, 0, (size_t)n * 2 * sizeof(int32_t));
         m64_synth_render(p->synth, acc, n);
 
-        for (int i = 0; i < n * 2; i++)
-            out[i] = clip16((acc[i] * p->master_volume) >> M64_Q15);
+        /* Master volume stays here rather than being folded into the per-voice
+         * gains. Folding it would save two multiplies per frame -- about a
+         * quarter of a percent -- at the cost of pre-attenuating every voice
+         * before the sum, which costs a bit of headroom in the accumulator and
+         * doubles the truncation noise of the mix. Not a trade worth making. */
+        emit_block(out, acc, n * 2, p->master_volume);
 
         out += 2 * n;
         nframes -= n;

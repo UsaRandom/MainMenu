@@ -132,7 +132,7 @@ static void handle_cc(m64_seq_t *seq, m64_synth_t *synth, int ch, int cc, int va
         case 6:
             if (c->rpn == 0) {   /* RPN 0/0: pitch bend sensitivity, in semitones */
                 c->bend_range = (uint8_t)(val ? val : 1);
-                m64_synth_update_channel(synth, c, ch);
+                m64_synth_update_pitch(synth, c, ch);
             }
             break;
         case 38: break;  /* data entry LSB: cents. Ignored -- see docs/LIMITS.md */
@@ -151,7 +151,8 @@ static void handle_cc(m64_seq_t *seq, m64_synth_t *synth, int ch, int cc, int va
         default: return;   /* nothing else changes voice state */
     }
 
-    if (cc == 7 || cc == 10 || cc == 11) m64_synth_update_channel(synth, c, ch);
+    /* Volume, pan and expression move gains and nothing else. */
+    if (cc == 7 || cc == 10 || cc == 11) m64_synth_update_gains(synth, c, ch);
 }
 
 /** @brief Act on one decoded event. @p meta_type is only meaningful when
@@ -184,7 +185,10 @@ static void dispatch(m64_seq_t *seq, m64_synth_t *synth, uint8_t status,
         case 0xe0:   /* pitch bend, 14-bit, centred at 8192 */
             if (len >= 2) {
                 c->bend = (int16_t)((((int)(d[1] & 0x7f) << 7) | (d[0] & 0x7f)) - 8192);
-                m64_synth_update_channel(synth, c, ch);
+                /* Pitch only. Bend cannot move a gain, and these arrive in
+                 * streams -- a sweep on a channel holding eight voices used to
+                 * recompute sixteen gains per event inside the audio callback. */
+                m64_synth_update_pitch(synth, c, ch);
             }
             break;
 

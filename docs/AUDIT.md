@@ -6103,6 +6103,52 @@ the trees were all shallow, and the comment claiming the fix was the only thing 
 took a six-level tree to make that claim answerable.
 
 ---
+## 1az. midi64 updated, and the music frame cost measured again
+
+The vendored copy was at upstream `1c79dc8` and is now at `7606a3d`, which brings two commits:
+"Play SoundFonts, and fix the pitch bend they exposed" and "Stop reading 71 KB of wavetables
+through an 8 KB cache". The public header did not change between those points, so `music.c`
+needed nothing. The SoundFont backend arrives as a new file, `bank.c`, and is **inert here**:
+`music.c` asks for `MIDI64_SYNTH_PROCEDURAL` with a NULL bank path, so the file links and never
+runs. It is compiled because upstream references its backend vtable, not because it is used.
+
+**The measurement is the point.** `tools/inputs/idle.txt`, settled from frame 540 on, twelve
+60-frame windows, same script and same emulator either side. ares runs are deterministic here --
+proved separately, two runs of one build are hash-identical -- so this is a paired comparison
+between builds, not two samples of a noisy process.
+
+| | frames making their field, of 60 | worst frame | `snd_us` |
+|---|---|---|---|
+| before (upstream 1c79dc8) | 46.2 mean, 39 worst | 27,780 µs mean, 30,496 µs max | 750 mean |
+| **after (upstream 7606a3d)** | **50.1 mean, 48 worst** | **25,259 µs mean, 28,019 µs max** | **608 mean** |
+
+Every one of the twelve settled windows improved. Across the whole run including the unsettled
+head, 13 of 16 windows landed more frames, 2 fewer, and both of those still spent less time in
+the mixer -- so the two that went backwards are art decode contention, not sound. **The row in
+the music study above reading 45 frames for the shipped 16000 Hz is superseded by 50.1**; the
+rest of that table stands, and the six-levers conclusion is unchanged, because this did not come
+from a lever.
+
+Heap, from the same runs: steady-state `used` fell **5,038,208 -> 4,991,840 bytes**, and free
+RAM rose **1,388,752 -> 1,427,760**. The gate still holds -- 0 mallocs, 0 reallocs and 0 frees
+across 1,200 settled frames, unchanged. The ROM's `.text` grew 6,560 bytes, almost all of it
+`bank.c`, which is the price of carrying a backend this build never enters.
+
+**One vendored change had to be carried across.** `M64_CTRL_BLOCK` is wrapped in `#ifndef` here
+so the music study above could sweep it from the command line, and upstream has since paired it
+with `M64_CTRL_SHIFT` under an `#error` that fires when the two disagree. Overriding the block
+alone would now divide every envelope ramp by 32 while rendering 64 frames -- silently, in a
+build that compiles -- so the shift is made overridable with it and the `#error` is kept as
+exactly the guard it should be. Both directions were checked rather than assumed: `TUNE='-DM64_
+CTRL_BLOCK=64 -DM64_CTRL_SHIFT=6'` builds, and `TUNE='-DM64_CTRL_BLOCK=64'` alone fails at
+`midi64_internal.h:128` with upstream's message. Every other vendored file is byte-identical to
+`origin/main`.
+
+**A harness note that cost time.** ares reports 257 `CACHE access to non-cacheable address`
+warnings on this run and it is tempting to read them as the new wavetable code doing something
+wrong. The count is **identical before and after**, so they are neither new nor midi64's.
+
+---
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon

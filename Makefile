@@ -217,6 +217,7 @@ SRCS = \
 	flashcart/sc64/sc64_ll.c \
 	flashcart/sc64/sc64.c \
 	libs/libspng/spng/spng.c \
+	libs/midi64/bank.c \
 	libs/midi64/midi64.c \
 	libs/midi64/mixer_glue.c \
 	libs/midi64/patches.c \
