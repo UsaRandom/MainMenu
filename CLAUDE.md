@@ -84,6 +84,26 @@ marked superseded rather than replaced.
 **Comments explain why, including what went wrong before.** A comment that restates the code is
 noise. A comment naming the bug the code now prevents is worth ten of them.
 
+**The 4 MB profile is a real target and it is testable.** `src/menu/memprofile.h` holds every
+number that differs on a console with no Expansion Pak, and nothing there may change anything when
+one is present. Run it with a settings file whose `ExpansionPak` is false:
+
+```sh
+sed 's/ExpansionPak: true/ExpansionPak: false/' \
+    ~/Library/Application\ Support/ares/settings.bml > /tmp/ares-4mb.bml
+FOURMB=1 ARES_SETTINGS=/tmp/ares-4mb.bml tools/regress.sh -o build/regress/4mb tools/inputs/boot.txt
+```
+
+Derived from your own settings rather than committed: the file is 41 KB of personal paths and
+input bindings, and it has to match the rest of your ares config (`HomebrewMode`, `Defocus`) or
+the run fails its preflight for the wrong reason.
+
+`FOURMB=1` inverts the pak check rather than switching it off, because `ARES_SETTINGS` used to be
+read only by regress.sh's own preflight while ares loaded its real settings — a 4 MB run that
+validated as 4 MB, ran as 8, and reported a pass. `SAMPLE_SCALE` builds a card of any size
+(`make SAMPLE=1 SAMPLE_SCALE=435` is about 500 titles); the memory budget is measured against that
+rather than against the 48-title fixture. See AUDIT.md 1bb.
+
 **Never run the regression suite unless asked.** `tools/regress.sh` and `tools/suite.sh` rebuild
 the ROM once per input script and run each under ares; the full matrix is many minutes of machine
 time and it interrupts whatever else is being looked at. Run individual scripts when a change

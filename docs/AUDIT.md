@@ -6271,9 +6271,14 @@ one -- which is exactly the mistake the knob exists to stop.
 
 **Nothing changes with a pak present, and that is checked rather than asserted.** Every stage
 delta on 8 MB is identical to the pre-branch baseline -- icons 249,808, music 54,576, framebuffers
-1,843,264, body font 1,284,208, pool 36 of 36 -- and ten input scripts produce identical frame
-counts on both profiles. The 16-byte offsets between the two runs are the heap base moving because
-the binary grew.
+1,843,264, body font 1,284,208, pool 36 of 36. The 16-byte offsets between the two runs are the
+heap base moving because the binary grew.
+
+**31 of the 33 input scripts were run on both profiles and every one produces the same frame
+count**, including `sample-grid` at 115 titles and `demo-shots`. The two not run are `real-art` and
+`jpeg-art`, which need `build/artcache` populated by hand and it is empty here -- a pre-existing
+limitation of this working copy, not of the branch. Frame HASHES are not compared: §5 records that
+these move with binary size alone, and the binary grew.
 
 **What a 4 MB console gives up**, all of it stated rather than discovered:
 
