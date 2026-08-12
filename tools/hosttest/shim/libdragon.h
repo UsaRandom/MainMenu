@@ -22,11 +22,12 @@
  */
 #include <dirent.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* DT_DIR and DT_REG come from <dirent.h> and are used as-is: redefining them to our own values
  * only fought the system header, and library.c cares about the comparison, not the constant. */
 
-typedef struct { char d_name[256]; int d_type; void *_it; } dir_t;
+typedef struct { char d_name[256]; int d_type; uint32_t d_size; void *_it; char _dir[512]; } dir_t;
 
 static inline int hosttest_dir_step (dir_t *out) {
     struct dirent *e;
@@ -34,6 +35,16 @@ static inline int hosttest_dir_step (dir_t *out) {
         if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) { continue; }
         snprintf(out->d_name, sizeof(out->d_name), "%s", e->d_name);
         out->d_type = e->d_type;
+        /* libindex sums d_size across a directory to notice a file whose CONTENT changed at an
+         * unchanged entry count. A shim that left this zero would make every signature agree on
+         * size and silently pass the one staleness case worth testing -- which it did, once. */
+        out->d_size = 0;
+        if (e->d_type != DT_DIR) {
+            char full[800];
+            struct stat st;
+            snprintf(full, sizeof(full), "%s/%s", out->_dir, e->d_name);
+            if (stat(full, &st) == 0) { out->d_size = (uint32_t)st.st_size; }
+        }
         return 0;
     }
     closedir((DIR *)out->_it);
@@ -42,6 +53,7 @@ static inline int hosttest_dir_step (dir_t *out) {
 }
 
 static inline int dir_findfirst (const char *path, dir_t *out) {
+    snprintf(out->_dir, sizeof(out->_dir), "%s", path);
     out->_it = opendir(path);
     if (out->_it == NULL) { return -1; }
     return hosttest_dir_step(out);

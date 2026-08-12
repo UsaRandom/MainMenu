@@ -72,6 +72,18 @@ $CC $CFLAGS tools/hosttest/test_boxart.c src/library/boxart.c src/menu/image_pro
 TESTDIR="$OUT/boxartdir" "$OUT/test_boxart" 2>/dev/null
 
 echo
+echo "== the library index: round trip, and what invalidates it"
+rm -rf "$OUT/idxdir"
+mkdir -p "$OUT/idxdir"
+# libindex.c had no coverage of any kind until this existed -- it was one of the three files AUDIT
+# lists as verified only by compile-time size assertions, and it is the file that decides whether a
+# boot costs 0.72 s or 14.4. The staleness matrix is the half worth having: which card changes force
+# a rescan was argued from the source during a hardware session and got answered wrongly twice.
+$CC $CFLAGS tools/hosttest/test_libindex.c src/library/libindex.c src/library/library.c \
+    src/library/cache.c src/menu/paths.c tools/hosttest/shim/fs_probe.c -o "$OUT/test_libindex"
+TESTDIR="$OUT/idxdir" "$OUT/test_libindex" 2>/dev/null
+
+echo
 echo "== loose art: sorted, deduplicated, found by bsearch"
 rm -rf "$OUT/artdir"
 mkdir -p "$OUT/artdir"
