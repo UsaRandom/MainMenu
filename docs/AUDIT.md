@@ -6149,6 +6149,57 @@ warnings on this run and it is tempting to read them as the new wavetable code d
 wrong. The count is **identical before and after**, so they are neither new nor midi64's.
 
 ---
+## 1ba. Why the art cache could never finish, and four faults behind it
+
+Reported from the console: the decoding is janky, does not always save, seems to save only when a
+game is launched, and blocks. All four are separate faults and the report was right about the one
+that was easiest to see.
+
+**1. The index was published on a running total.** thumbcache.c asked for a flush when
+`thumbstore_count() % 8 == 0`, and that count is the whole atlas including every tile from every
+previous boot. A card sitting at 100 tiles publishes at 104 and loses 105 through 111. A tile
+appended to the pak that the index does not name is a tile nobody can find, so that is decoded
+work discarded -- and the only other publisher was `thumbstore_close()`, which runs from
+`app_deinit()`, **on the way to launching a game**. Browse a cold card and switch off from the
+menu and none of it was kept. Exactly as reported. The index is now written with every tile: it is
+20 bytes a row, 5.8 KB at 289 titles, against the 49,152-byte slot append happening immediately
+before it and a decode measured in whole fields.
+
+**2. The test for that passed against a build with the fix removed.** `thumbstore_open()` assigned
+`rows` and `row_count` only inside the branch where the index file loaded, so a reopen with no
+index on the card kept the previous values -- and leaked the array holding them. The app opens
+once, so nothing shipped was wrong. What it did was make the atlas untestable exactly where it
+matters: a new host test that stores a tile, reopens without a clean close, and asks whether the
+tile is there was reading the in-memory index straight back. **The mutation that deletes the
+publish survived it.** Found by running that mutation rather than by trusting a green result;
+open() now clears before it loads, and the mutation is caught.
+
+**3. It could not complete, and that is structural.** The pool is 36 slots and prefetch into it
+never evicts -- deliberately, because prefetch that evicts thrashes for ever on a library larger
+than the pool (1u). So on a 289-title card the walk filled 36 slots, returned "no slot", set the
+idle flag and stopped. **The atlas only ever gained tiles the user had personally scrolled past,
+in whatever order the cursor happened to visit them.** No amount of waiting completed it, because
+nothing was running. thumbcache_build() is a second pass that owns no slot at all: it walks the
+library in index order, decodes each cover that is not in the atlas straight into it, frees the
+surface immediately, and does not care where the cursor is. The display path no longer decodes on
+a card that has an atlas -- it only fetches, which is one seek and about 27 KB.
+
+**4. A filesystem probe per candidate per pass per background() call.** `art_resolve()` ends in a
+`file_get_size()` even when the path is already known, because the size is part of the atlas key.
+background() runs about 208 times per displayed frame during a scroll (1l), so a screenful of
+records not yet in the atlas cost thousands of probes a frame to re-establish sizes that had not
+changed. Nothing on the card moves while the menu is running; the size is now taken once per
+record per boot.
+
+**What can be measured here, and what cannot.** Under ares `cache_writable()` is false, so
+`thumbstore_available()` is false, the build is a no-op and the grid takes the unchanged
+on-demand path. Confirmed rather than assumed: `idle.txt` is hash-identical across the change and
+settled frames-making-field is 50.2 against 50.1. That also means **none of items 1, 3 or 4 is
+exercised by any regression script** -- the same hole §5 already names for the atlas read path.
+Item 2 is covered by the host suite, which is where the atlas is reachable. The rest is a hardware
+claim and stays one until a card reports it.
+
+---
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon

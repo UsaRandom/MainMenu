@@ -75,6 +75,34 @@ struct thumbcache_s {
      * nowhere near the screen. */
     uint16_t wanted[THUMB_SLOTS * 2];
     int wanted_n;
+
+    /** Source size per record, memoised. -2 unknown, -1 no art, else the file's length.
+     *
+     * art_resolve() ends in a file_get_size() even when the path is already known, and its answer
+     * is the atlas key so it cannot simply be dropped. It was being asked per candidate, per pass,
+     * per background() call -- and background() runs about 208 times per displayed frame during a
+     * scroll (AUDIT 1l). A screenful of wanted records that are not in the atlas yet therefore cost
+     * thousands of filesystem probes a frame to re-establish sizes that had not changed. Nothing on
+     * the card moves while the menu is running, so one probe per record per boot is the right
+     * number. */
+    int64_t *art_bytes;
+    int      art_bytes_n;
+
+    /* ---- the ordered background build ----
+     *
+     * Deliberately independent of the slot pool above. The pool is a DISPLAY cache: 36 slots,
+     * evicted by what is on screen, and prefetch into it never evicts -- so on a 289-title card it
+     * fills up and stops, and the atlas only ever gained tiles the user happened to look at. It
+     * could not complete, which is what "it doesn't always save" really was. This walks the library
+     * in index order instead, decodes straight to the atlas, frees the surface immediately, and
+     * never touches a slot. Nothing it does depends on where the cursor is. */
+    int      build_next;        /**< next record index to consider */
+    bool     build_active;      /**< a build decode is in flight */
+    lib_record_t *build_rec;
+    char     build_src[512];
+    int64_t  build_src_bytes;
+    int      build_written;     /**< tiles this session added to the atlas */
+    bool     build_complete;
 };
 
 /* Only one decode can be in flight because image_decoder is a single global instance. That is
@@ -114,6 +142,10 @@ void thumbcache_free (thumbcache_t *tc) {
             free(tc->slots[i].art);
         }
     }
+    if (tc->build_active) {
+        image_decoder_abort();
+    }
+    free(tc->art_bytes);
     if (active == tc) {
         active = NULL;
     }
@@ -150,6 +182,19 @@ void thumbcache_reshape (thumbcache_t *tc, library_t *lib) {
     }
     tc->resident = 0;
     tc->idle = false;
+
+    /* And send the build back to the start. Every tile in the atlas is cut to the old shape, so
+     * thumbstore_has() will now miss on all of them -- which is correct, and means the build has
+     * a card's worth of work to do again. Leaving the cursor at the end would declare the atlas
+     * complete while none of it matched, and the only thing that would ever fix it is another
+     * region change. */
+    if (tc->build_active) {
+        image_decoder_abort();
+        tc->build_active = false;
+        tc->build_rec = NULL;
+    }
+    tc->build_next = 0;
+    tc->build_complete = false;
 }
 
 int thumbcache_resident (const thumbcache_t *tc) {
@@ -279,6 +324,46 @@ static void art_probe_shape (const library_t *lib, lib_record_t *rec, const char
         static const char *NAME[ART_SHAPES] = { "portrait", "square", "landscape" };
         debugf("ART %s: %dx%d -> %s\n", basename_of(path), w, h, NAME[rec->art_kind]);
     }
+}
+
+static int64_t art_resolve (thumbcache_t *tc, const library_t *lib, lib_record_t *rec,
+                            char *out, size_t cap);
+
+/**
+ * @brief art_resolve() with the answer remembered per record. See thumbcache_s::art_bytes.
+ *
+ * Only the SIZE is memoised, not the path: the path is already cached on the record itself by
+ * art_resolve(), and the size is the part that costs a filesystem probe every time.
+ */
+static int64_t art_resolve_cached (thumbcache_t *tc, const library_t *lib, int idx,
+                                   char *out, size_t cap) {
+    lib_record_t *rec = &lib->records[idx];
+
+    if (tc->art_bytes == NULL || tc->art_bytes_n < lib->count) {
+        int64_t *grown = realloc(tc->art_bytes, (size_t)lib->count * sizeof(*grown));
+        if (grown != NULL) {
+            for (int i = tc->art_bytes_n; i < lib->count; i++) {
+                grown[i] = -2;          /* unknown */
+            }
+            tc->art_bytes = grown;
+            tc->art_bytes_n = lib->count;
+        }
+    }
+
+    /* A remembered size still needs the path written out, and when art_file is set that is a
+     * string copy rather than a search. A record whose path is NOT yet resolved has never been
+     * probed, so it cannot have a remembered size either. */
+    if (tc->art_bytes != NULL && idx < tc->art_bytes_n && tc->art_bytes[idx] != -2 &&
+        rec->art_file != NULL) {
+        snprintf(out, cap, "%s", rec->art_file);
+        return tc->art_bytes[idx];
+    }
+
+    int64_t bytes = art_resolve(tc, lib, rec, out, cap);
+    if (tc->art_bytes != NULL && idx < tc->art_bytes_n) {
+        tc->art_bytes[idx] = bytes;
+    }
+    return bytes;
 }
 
 static int64_t art_resolve (thumbcache_t *tc, const library_t *lib, lib_record_t *rec,
@@ -435,13 +520,6 @@ static void decode_done (img_err_t err, surface_t *decoded, void *data) {
      * synchronous and deliberately here: we have just spent a quarter of a second on this image,
      * so an 11 ms append is 4 % on the cold path and 100 % of the saving on every warm one. */
     thumbstore_put(tc->decoding_src, tc->decoding_bytes, decoded, rec->dominant);
-    /* Publish every eight tiles. The pak is appended to as we go, but a tile the index has not
-     * recorded is a tile nobody can find -- so a user who fills a cold grid and then power-cycles
-     * without launching anything would throw away every decode. Eight bounds that loss to about
-     * two seconds of work while keeping the index rewrite off the per-tile path. */
-    if ((thumbstore_count() % 8) == 0) {
-        thumbstore_flush();
-    }
 
     /* dominant is derived from the decoded pixels and is worth carrying in the index too: it
      * drives the ambient wash, which would otherwise be flat until each tile finished decoding. */
@@ -659,7 +737,7 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
             }
 
             char path[512];
-            int64_t art_bytes = art_resolve(tc, lib, rec, path, sizeof(path));
+            int64_t art_bytes = art_resolve_cached(tc, lib, i, path, sizeof(path));
             if (art_bytes < 0) {
                 rec->art_state = ART_NONE;    /* no art for this game; settled, never retried */
                 library_touch(lib);           /* "there is none" is the expensive answer to cache */
@@ -773,11 +851,141 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
     return false;
 }
 
+/* ------------------------------------------------------- the ordered background build */
+
+/**
+ * @brief A build decode finished. Store it and let the surface go; no slot is involved.
+ *
+ * The record is deliberately NOT marked ART_READY and no slot is claimed. This tile exists on the
+ * card now, not in RAM, and the display path will fetch it from there the next time the record is
+ * on screen. Coupling the two is what the old design did, and it is why the atlas could only ever
+ * hold what had been looked at.
+ */
+static void build_done (img_err_t err, surface_t *decoded, void *data) {
+    thumbcache_t *tc = active;
+    lib_record_t *rec = data;
+
+    if (tc == NULL) {
+        if (decoded) { surface_free(decoded); free(decoded); }
+        return;
+    }
+    tc->build_active = false;
+    tc->build_rec = NULL;
+
+    if (err != IMG_OK || decoded == NULL) {
+        /* Settled: a cover that will not decode will not decode next boot either, and recording
+         * that is what stops the build retrying it for ever. */
+        rec->art_state = ART_NONE;
+        if (active_lib != NULL) {
+            library_touch(active_lib);
+        }
+        if (decoded) { surface_free(decoded); free(decoded); }
+        return;
+    }
+
+    uint16_t dom = dominant_colour(decoded);
+    rec->dominant = dom;
+    thumbstore_put(tc->build_src, tc->build_src_bytes, decoded, dom);
+    tc->build_written++;
+    if (active_lib != NULL) {
+        library_touch(active_lib);      /* dominant is worth carrying in library.idx */
+    }
+
+    surface_free(decoded);
+    free(decoded);
+}
+
+bool thumbcache_build (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
+    if (tc == NULL || lib == NULL || !thumbstore_available()) {
+        return false;               /* nowhere to write; building would be work for nothing */
+    }
+    active = tc;
+    active_lib = lib;
+
+    if (tc->build_active) {
+        uint32_t t0 = TICKS_READ();
+        image_decoder_poll_budget(budget_us);
+        uint32_t took = TIMER_MICROS(TICKS_SINCE(t0));
+        tc->decoded_us += took;
+        thumb_rows_us += took;
+        return true;
+    }
+
+    if (tc->build_complete) {
+        return false;
+    }
+
+    uint32_t scan_t0 = TICKS_READ();
+
+    while (tc->build_next < lib->count) {
+        int i = tc->build_next++;
+        lib_record_t *rec = &lib->records[i];
+
+        if (rec->art_state == ART_NONE) {
+            continue;               /* already settled as having none */
+        }
+
+        char path[512];
+        int64_t bytes = art_resolve_cached(tc, lib, i, path, sizeof(path));
+        if (bytes < 0) {
+            rec->art_state = ART_NONE;
+            library_touch(lib);
+            continue;
+        }
+
+        /* Before asking the atlas, because the shape is part of its key -- a tile cut to a
+         * different shape is a miss, not a resize. */
+        art_probe_shape(lib, rec, path);
+
+        if (thumbstore_has(path, bytes)) {
+            continue;               /* built on this boot or an earlier one */
+        }
+
+        art_shape_t sh = thumbcache_record_shape(rec);
+        img_err_t perr = image_decoder_start_scaled(path, sh.w, sh.h, build_done, rec);
+        if (perr != IMG_OK) {
+            debugf("BUILD %d: image_decoder_start_scaled(%s) = %d\n", i, path, (int)perr);
+            rec->art_state = ART_NONE;
+            library_touch(lib);
+            continue;
+        }
+
+        snprintf(tc->build_src, sizeof(tc->build_src), "%s", path);
+        tc->build_src_bytes = bytes;
+        tc->build_rec = rec;
+        tc->build_active = true;
+        tc->decoded_count++;
+        thumb_starts++;
+        thumb_scan_us += TIMER_MICROS(TICKS_SINCE(scan_t0));
+        return true;
+    }
+
+    /* Reached the end. Publish immediately rather than waiting for the next multiple of four:
+     * this is exactly the moment a user stops touching the console, and the whole point of the
+     * build is that it is still there on the next boot. */
+    tc->build_complete = true;
+    thumbstore_flush();
+    debugf("BUILD complete: %d tiles written this session, %d in the atlas\n",
+           tc->build_written, thumbstore_count());
+    thumb_scan_us += TIMER_MICROS(TICKS_SINCE(scan_t0));
+    return false;
+}
+
+/**
+ * @brief Decode on demand, into the display pool, for storage that has no atlas.
+ *
+ * This is the pre-build behaviour and it is kept for exactly one case: a card the menu cannot
+ * write to. Under ares the storage prefix is `rom:/` and the DFS is read-only, so
+ * thumbstore_available() is false, nothing can ever be built, and a grid that only ever fetched
+ * from the atlas would show no art at all -- on the one machine this project is developed against.
+ *
+ * On a real card this is not called. See grid_background().
+ */
 bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
     return run_once(tc, lib, budget_us, false);
 }
 
-bool thumbcache_run_cached (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
+bool thumbcache_fetch (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
     if (!thumbstore_available()) {
         return false;
     }

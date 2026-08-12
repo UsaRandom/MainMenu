@@ -19,11 +19,18 @@
  * CI8 and the on-disk atlas arrive together, because that is when the streaming argument bites.
  * The slot API below does not expose the pixel format, so that change stays inside this file.
  *
- * ### Why there is no cache file yet
+ * ### The pool is not the atlas
  *
- * Under ares the storage prefix is "rom:/" and the DFS is read-only, so a cache file cannot be
- * written at all on the machine this is developed against. Persistence therefore has to be
- * built and measured against real hardware, not bolted on where it cannot be exercised.
+ * There are two caches and they answer different questions. This one is 36 RAM slots and holds
+ * what is on screen. `thumbs.pak` -- library/thumbstore.h -- is the card, and holds everything
+ * decoded on any boot ever. Filling the atlas used to be a side effect of filling the pool, which
+ * meant it could only ever contain tiles the user had personally scrolled past, and could never
+ * finish. thumbcache_build() is the separate, ordered pass that finishes it.
+ *
+ * Under ares the storage prefix is "rom:/" and the DFS is read-only, so there is no atlas at all
+ * on the machine this is developed against: thumbstore_available() is false, the build is a no-op,
+ * and the grid falls back to thumbcache_run()'s on-demand decode. Everything above the fallback is
+ * therefore exercised only on hardware.
  */
 
 #ifndef THUMBCACHE_H__
@@ -80,11 +87,37 @@ surface_t *thumbcache_get (thumbcache_t *tc, library_t *lib, uint16_t rom_id);
 void thumbcache_begin_frame (thumbcache_t *tc);
 
 /**
- * @brief Spend up to @p budget_us decoding. Call from a screen's background() phase.
+ * @brief Decode on demand into the pool. Only for storage with no atlas; see thumbcache_build().
  *
  * @return true if any decoding happened, so a caller can tell "still working" from "idle".
  */
 bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us);
+
+/**
+ * @brief Advance the ordered background build of the atlas by up to @p budget_us.
+ *
+ * Walks the library **in index order**, once, decoding every cover that is not in `thumbs.pak`
+ * yet straight into it and freeing the surface immediately. It claims no slot, evicts nothing, and
+ * does not care where the cursor is.
+ *
+ * ### Why this is not the display cache doing its own prefetch
+ *
+ * It used to be, and it could not finish. The pool is 36 slots and prefetch into it never evicts
+ * -- deliberately, because prefetch that evicts thrashes for ever on a library larger than the
+ * pool (AUDIT 1u). So once 36 tiles were resident the walk returned "no slot", set the idle flag,
+ * and stopped. On a 289-title card the atlas therefore only ever gained tiles the user had
+ * personally scrolled past, and the order they arrived in was whatever the cursor had done. The
+ * build is decoupled from the pool precisely so that finishing is possible at all.
+ *
+ * ### Why in order rather than nearest the cursor
+ *
+ * Because it finishes, and because what it produces is on the card rather than on the screen.
+ * Chasing the cursor means the work depends on where the user went, which is the behaviour that
+ * made this unpredictable; a straight walk covers the card once and is done with it for good.
+ *
+ * @return true while there is still work, false once the whole library has been covered.
+ */
+bool thumbcache_build (thumbcache_t *tc, library_t *lib, uint32_t budget_us);
 
 /**
  * @brief Fill slots from the on-disk atlas only, never from a PNG. Safe while scrolling.
@@ -101,7 +134,7 @@ bool thumbcache_run (thumbcache_t *tc, library_t *lib, uint32_t budget_us);
  *
  * @return true if anything landed.
  */
-bool thumbcache_run_cached (thumbcache_t *tc, library_t *lib, uint32_t budget_us);
+bool thumbcache_fetch (thumbcache_t *tc, library_t *lib, uint32_t budget_us);
 
 /** @brief Slots currently holding decoded art, for diagnostics. */
 /**

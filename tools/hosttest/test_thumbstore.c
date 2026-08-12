@@ -315,6 +315,54 @@ int main (void) {
     free(a.buffer); free(b.buffer); free(c.buffer);
     free(wide.buffer); free(wide_got.buffer); free(tight_got.buffer); free(got.buffer);
 
+    /* -------------------------------------------------- the power cut */
+    printf("\nlosing power without a clean close\n");
+    /* Every reopen above went through thumbstore_close(), which flushes -- so the whole suite
+     * proved the index survives a CLEAN shutdown and never once asked what happens without one.
+     * The menu's only clean close runs from app_deinit(), which happens on the way to launching a
+     * game. Somebody who browses a cold card and then switches the console off from the menu takes
+     * this path, and it was silently throwing decoded tiles away: the index was published on
+     * `thumbstore_count() % 8 == 0`, a running total across all previous boots, so between zero and
+     * seven tiles of a session were in the pak with nothing naming them.
+     *
+     * Reopening WITHOUT closing is what simulates the power going. The pak handle is deliberately
+     * left dangling; the question is only ever what is on the card.
+     *
+     * Pointed back at the writable directory first: the read-only section above left cache_init()
+     * aimed at a chmod'd copy, and without this every put here is refused and every check passes
+     * for the wrong reason -- a store that never stored cannot lose anything. */
+    cache_init(prefix);
+    check(cache_writable(), "back on writable storage, so these puts actually happen");
+    thumbstore_open();
+
+    surface_t d = make_tile(5, TILE_W * 2);
+    thumbstore_put("sd:/art/delta.png", 5555, &d, 0x4444);
+    int before_cut = thumbstore_count();
+
+    thumbstore_open();                  /* no close: the console just lost power */
+    check(thumbstore_count() == before_cut,
+          "a tile survives the power going out immediately after it was stored");
+    check(thumbstore_fetch("sd:/art/delta.png", 5555, &got, &dom) && tiles_equal(&d, &got),
+          "and reads back whole, not merely counted");
+    check(dom == 0x4444, "with its dominant colour");
+
+    /* One tile at a time, three times over, each one surviving on its own. The old rule published
+     * on a multiple of eight, so a run of single tiles could not be distinguished from a run that
+     * happened to straddle one -- this fails on any threshold above one. */
+    for (int i = 0; i < 3; i++) {
+        char key[64];
+        snprintf(key, sizeof(key), "sd:/art/cut%d.png", i);
+        surface_t t = make_tile((uint16_t)(70 + i), TILE_W * 2);
+        int was = thumbstore_count();
+        thumbstore_put(key, 6000 + i, &t, (uint16_t)(0x5000 + i));
+        check(thumbstore_count() == was + 1, "the tile is indexed in memory");
+        thumbstore_open();              /* power cut again */
+        check(thumbstore_fetch(key, 6000 + i, &got, &dom),
+              "and is on the card without a clean close");
+        free(t.buffer);
+    }
+    free(d.buffer);
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

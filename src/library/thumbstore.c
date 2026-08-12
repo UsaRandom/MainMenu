@@ -205,6 +205,18 @@ void thumbstore_open (void) {
     /* The index only means anything against the pak we just accepted. If it claims slots the pak
      * does not have, it is from a pak that has since been rebuilt; drop it rather than read
      * uninitialised space. */
+    /* Cleared BEFORE the load, not assigned only on success. Both fields used to survive a failed
+     * or absent index, because they were only ever written inside the branch below -- so a second
+     * open() with no index on the card reported the rows from the first one, and leaked the array
+     * they were in. The app opens once, so nothing shipped was wrong; what it did do was make the
+     * atlas untestable in the one place it matters. A host test that stores a tile and reopens
+     * without a clean close -- the power-cut case, and the case that was losing work -- was reading
+     * the in-memory index back and passing whether or not anything had reached the card. It passed
+     * against a build with the publish removed entirely. */
+    free(rows);
+    rows = NULL;
+    row_count = row_cap = 0;
+
     void *buf = NULL;
     uint32_t bytes = 0;
     if (cache_load(IDX_FILE, THUMBSTORE_MAGIC, &buf, &bytes)) {
@@ -426,6 +438,25 @@ void thumbstore_put (const char *src_path, int64_t src_size, const surface_t *ar
         }
     }
     fflush(pak);
+
+    /* Publish on a count of tiles stored SINCE THE LAST FLUSH, not on the running total.
+     *
+     * The caller used to do this, as `thumbstore_count() % 8 == 0`, and thumbstore_count() is the
+     * whole index including every tile from every previous boot. So whether a session's work got
+     * published depended on what the total happened to be modulo 8 when the console was switched
+     * off -- a card sitting at 100 tiles publishes at 104 and loses anything from 105 to 111. A
+     * tile in the pak that the index does not name is a tile nobody can find, so that is decoded
+     * work thrown away, and the only reliable publisher left was thumbstore_close(), which runs
+     * from app_deinit() -- on the way to LAUNCHING A GAME. Browse a cold card, look at art, switch
+     * off from the menu, and the next boot decodes it all again. Reported as "it only saves when a
+     * game is launched", which is exactly what it was.
+     *
+     * Every tile, not every fourth, so the window in which decoded work can be lost is not made
+     * smaller but closed. The index is 20 bytes a row -- 5.8 KB at 289 titles -- against the
+     * 49,152-byte slot append happening immediately above and a decode measured in whole fields,
+     * so this is on the order of a tenth more bytes on a path that is not bytes-bound. Buying
+     * "never lose a tile" for that is not a trade worth thinking about twice. */
+    thumbstore_flush();
 
     debugf("THUMBSTORE stored slot %lu in %lu us\n", (unsigned long)slot,
            (unsigned long)TIMER_MICROS(TICKS_SINCE(t0)));

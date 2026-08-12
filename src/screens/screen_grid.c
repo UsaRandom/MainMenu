@@ -28,6 +28,7 @@
 #include "menu/sound.h"
 #include "library/boxart.h"
 #include "library/playstate.h"
+#include "library/thumbstore.h"
 #include "screens.h"
 #include "screens/boot_plate.h"
 #include "ui/draw.h"
@@ -1043,6 +1044,34 @@ static void grid_render (app_t *app, surface_t *fb) {
 #endif
 
 /**
+ * @brief The two halves of getting art on screen, in the order they have to happen.
+ *
+ * **Fetching** is reading a finished tile out of `thumbs.pak` -- one seek and about 27 KB -- and
+ * is what actually fills the grid. It is cheap enough to do while the cursor is moving and always
+ * runs first, because a tile the atlas already has should never wait behind anything.
+ *
+ * **Building** is decoding a cover that is not in the atlas yet, and it is the expensive half:
+ * one row of a real card costs 5,000-19,000 us, a whole 60 Hz field for a single row. It runs on
+ * @p decode_us, which callers set to zero whenever a dropped frame would read as judder.
+ *
+ * On storage with no atlas -- ares, whose DFS is read-only -- neither of those can work, so the
+ * old on-demand decoder runs instead and behaviour there is unchanged. That is also the reason no
+ * regression script exercises the path above: see AUDIT §5, which already names this hole.
+ */
+static void art_background (app_t *app, uint32_t decode_us, uint32_t fetch_us) {
+    if (!thumbstore_available()) {
+        if (decode_us > 0) {
+            thumbcache_run(app->thumbs, app->lib, decode_us);
+        }
+        return;
+    }
+    thumbcache_fetch(app->thumbs, app->lib, fetch_us);
+    if (decode_us > 0) {
+        thumbcache_build(app->thumbs, app->lib, decode_us);
+    }
+}
+
+/**
  * @brief Decode art in the window where the CPU would otherwise wait on the RDP.
  */
 static void grid_background (app_t *app, uint32_t budget_ticks) {
@@ -1061,10 +1090,7 @@ static void grid_background (app_t *app, uint32_t budget_ticks) {
      * boot_plate_working() excludes the rise and the curtain, so the two animated stretches keep
      * the whole field and only the static hold is spent working. */
     if (boot_plate_working()) {
-        /* The full run, which already prefers the atlas within its own walk. On a warm card the
-         * first row therefore comes out of thumbs.pak and the plate lifts almost at once; on a
-         * cold one it decodes, which is what the plate's hold is for. */
-        thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
+        art_background(app, DECODE_BUDGET_BOOT_US, DECODE_BUDGET_BOOT_US);
         return;
     }
     if (!boot_plate_done()) {
@@ -1090,14 +1116,10 @@ static void grid_background (app_t *app, uint32_t budget_ticks) {
      * like a cold one -- the reported symptom was tiles refusing to appear until the scrolling
      * stopped, on a library whose art was entirely in thumbs.pak. */
     if (frames_since_move < DECODE_SETTLE_FRAMES) {
-        thumbcache_run_cached(app->thumbs, app->lib, FETCH_BUDGET_MOVING_US);
+        art_background(app, 0, FETCH_BUDGET_MOVING_US);
         return;
     }
-    /* Not preceded by a cached pass, which is what the first version did. thumbcache_run's own
-     * walk already checks the atlas before the cost gate, so calling the cached variant first
-     * repeated the entire four-pass walk -- including a filesystem probe per candidate -- to
-     * reach the same answer twice per background() call. */
-    thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_IDLE_US);
+    art_background(app, DECODE_BUDGET_IDLE_US, FETCH_BUDGET_IDLE_US);
 }
 
 const screen_t SCREEN_GRID_DEF = {

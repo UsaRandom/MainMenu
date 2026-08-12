@@ -62,6 +62,7 @@
 #include "ui/draw.h"
 #include "ui/icon.h"
 #include "ui/theme.h"
+#include "library/thumbstore.h"
 
 /* Handoff section 5. Five columns of 112 with 12 between them is 608, which is SAFE_W to the
  * pixel -- the board was drawn to the same safe area this program already used. */
@@ -427,7 +428,15 @@ static void profiles_background (app_t *app, uint32_t budget) {
      * decode under the picker instead, and by the time somebody has answered "who's playing" the
      * first rows are painted. */
     if (boot_plate_working() && app->thumbs != NULL && app->lib != NULL) {
-        thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
+        /* Same split the grid uses: read what the atlas already holds, then spend what is left
+         * building what it does not. Without an atlas -- ares -- neither works and the on-demand
+         * decoder is the only thing that can put art on screen. See screen_grid's art_background. */
+        if (thumbstore_available()) {
+            thumbcache_fetch(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
+            thumbcache_build(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
+        } else {
+            thumbcache_run(app->thumbs, app->lib, DECODE_BUDGET_BOOT_US);
+        }
     }
     for (int i = 0; i < PROFILE_MAX; i++) {
         if (!profile_slot_used(i)) {
