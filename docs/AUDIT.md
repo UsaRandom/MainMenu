@@ -6010,6 +6010,43 @@ duplicate cover wins. See the note on art_push() in library.c.
 
 ---
 
+## 1ax. The scan measured on hardware at last, and what it cost
+
+1aw reasoned about the flat directory from sector arithmetic and a user's stopwatch. launch.log
+now carries a boot record, so these are read numbers. 289 titles, same card, index deleted between
+runs to force the cold path:
+
+| build | cold scan | per rom |
+| ----- | --------- | ------- |
+| flat directory, 5 probes | not measured | ~700,000 us (reported, not instrumented) |
+| split 26 ways, 4 probes | 32,093,418 us | **111,049 us** |
+| split, 1 probe | 14,404,611 us | **49,842 us** |
+
+**ares is 9.7x optimistic.** The 11,499 us/rom in the atlas study came through the DFS, which has
+no directory to walk, and directory walking turns out to be nearly the whole cost. No measurement
+taken under ares can predict this one, and 1aw's own 28x projection for the split was wrong too --
+the real figure against the flat card is about 6.3x.
+
+**Warm boot is 0.72 s and does not move**: 715,656 / 718,697 / 722,802 us across four boots
+spanning both builds. The index works, it has always worked on this console, and the claim in
+AUDIT 840-848 that the cache family had never successfully written was true when written and is
+not true now -- library.idx, thumbs.pak, playstate and cheatstate are all on the card with current
+timestamps, and every boot record says `cache writable`.
+
+**Two hypotheses died on contact.** The signature was suspected of having silently degraded to
+entry-count-only, because a deploy that grew the ROM by 3.4 MB did not invalidate it -- in fact
+libdragon pads the ROM and both builds were 11,763,712 bytes exactly, so nothing changed and the
+signature was right. And a `saves/` folder appearing beside a ROM was suspected of invalidating
+the index once per letter directory; libindex.c:128 excludes skipped directories from both the
+entry count and the recursion, so it does not.
+
+**What remains, and it is not the scan.** One added or deleted file anywhere on the card sets
+`fresh = false` and rescans all 289 titles. The signature is already per-directory and knows
+exactly which one moved -- it just discards that and rebuilds everything. Adding one game to a
+letter folder should cost that folder, about 57 entries, not 14.4 seconds. That is the next
+change worth making and it is worth more than anything left in the scan itself.
+
+---
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
