@@ -74,12 +74,21 @@ int mem_fb_count (void);
  * few bytes until something lands in it. This bounds the surfaces, which are 27,440 to 45,360
  * bytes each and are the whole cost.
  *
- * At 36 the pool is a screenful plus two rows of prefetch either side. The small profile cannot
- * afford a screenful: sixteen landscape tiles is 439,040 bytes against a 282,793-byte budget that
- * also has to hold the icons and the library. See memprofile.c for what it settles on and why
- * that is not simply "as many as fit".
+ * Derived from the heap that is actually free when thumbcache_init() runs, rather than fixed per
+ * profile: the library costs 373 bytes of peak per title on 4 MB, so a 289-title card has about
+ * 78,000 bytes a 499-title card does not, and a constant would hand both of them the worst case.
+ * Clamps to 36 on 8 MB, where roughly 2.5 MB is free at that point. See memprofile.c.
  */
 int mem_thumb_slots (void);
+
+/**
+ * @brief Divide the decoded tile size by this. 1 with an Expansion Pak, 2 without.
+ *
+ * The pool is the biggest thing left to cut on 4 MB once the fonts and framebuffers are dealt
+ * with, and cutting the COUNT is what makes a grid of plates. Cutting the SIZE is a quarter of the
+ * bytes per tile for the same count. See thumbcache_store_shape().
+ */
+int mem_art_divisor (void);
 
 /** @brief May the icon cache hold its full complement? The small profile keeps a smaller one. */
 int mem_icon_cache_cells (void);

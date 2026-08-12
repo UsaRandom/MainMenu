@@ -50,6 +50,22 @@ bool dbg_emux_present (void) {
      * a detector that fails closed on a working system is worse than no detector. */
     uint32_t feat = emux_detect(1);
     bool ok = (feat & EMUX_FEAT1_HEXDUMP) && (feat & EMUX_FEAT1_IOCTL);
+
+    /* Take the dump scratch NOW, while the heap is still whole.
+     *
+     * It used to be allocated at the first dump, which on idle.txt is frame 1200 -- by which time
+     * the art pool holds tens of surfaces and the heap is in pieces. On 4 MB that failed with
+     * 210,464 bytes free and 153,600 wanted: not out of memory, out of CONTIGUOUS memory, and the
+     * only symptom was "FBDUMP skipped" on a run that had otherwise gone perfectly. Reserving it up
+     * front costs the same bytes for longer and makes the failure impossible rather than
+     * intermittent. Harness only; none of this compiles into a release build. */
+    if (ok && scratch == NULL) {
+        scratch = malloc(scratch_pixels() * sizeof(uint16_t));
+        if (scratch == NULL) {
+            debugf("FBDUMP scratch (%u bytes) refused at boot -- dumps will be skipped\n",
+                   (unsigned)(scratch_pixels() * sizeof(uint16_t)));
+        }
+    }
     debugf("EMUX %s (FEAT1 0x%08lX)\n",
            ok ? "present" : "ABSENT -- is Homebrew Mode on?", (unsigned long)feat);
     return ok;

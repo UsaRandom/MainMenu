@@ -546,6 +546,16 @@ static void decode_done (img_err_t err, surface_t *decoded, void *data) {
     }
 }
 
+art_shape_t thumbcache_store_shape (const lib_record_t *rec) {
+    art_shape_t sh = thumbcache_record_shape(rec);
+    int d = mem_art_divisor();
+    if (d > 1) {
+        sh.w = (int16_t)(sh.w / d);
+        sh.h = (int16_t)(sh.h / d);
+    }
+    return sh;
+}
+
 /**
  * @brief Pick a slot for @p rom_id: a free one, else the least-recently-wanted.
  *
@@ -785,7 +795,7 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
                 }
                 surface_t *cached = malloc(sizeof(surface_t));
                 if (cached != NULL) {
-                    art_shape_t sh = thumbcache_record_shape(rec);
+                    art_shape_t sh = thumbcache_store_shape(rec);
                     *cached = surface_alloc(FMT_RGBA16, sh.w, sh.h);
                     uint16_t dom = 0;
                     if (cached->buffer != NULL &&
@@ -835,7 +845,7 @@ static bool run_once (thumbcache_t *tc, library_t *lib, uint32_t budget_us, bool
              * the old 1.4286 tile lost 51 % of its own height, and a landscape title card cut
              * into a portrait tile loses more; the crop happens in here, where nothing downstream
              * can tell it did. See library/boxart.h. */
-            art_shape_t sh = thumbcache_record_shape(rec);
+            art_shape_t sh = thumbcache_store_shape(rec);
             img_err_t perr = image_decoder_start_scaled(path, sh.w, sh.h, decode_done, rec);
             if (perr != IMG_OK) {
                 debugf("THUMB %d: image_decoder_start_scaled(%s) = %d\n", i, path, (int)perr);
@@ -955,7 +965,7 @@ bool thumbcache_build (thumbcache_t *tc, library_t *lib, uint32_t budget_us) {
             continue;               /* built on this boot or an earlier one */
         }
 
-        art_shape_t sh = thumbcache_record_shape(rec);
+        art_shape_t sh = thumbcache_store_shape(rec);
         img_err_t perr = image_decoder_start_scaled(path, sh.w, sh.h, build_done, rec);
         if (perr != IMG_OK) {
             debugf("BUILD %d: image_decoder_start_scaled(%s) = %d\n", i, path, (int)perr);

@@ -45,24 +45,62 @@ int mem_fb_count (void) {
     return mem_small() ? 2 : 3;
 }
 
+/** The largest tile a slot can be asked to hold: a wide cover at 140 x 162, RGBA16 -- divided by
+ *  the profile's art divisor in both axes, because that is the size tiles are actually STORED at.
+ *  Sizing the pool against the full figure while storing quarter-size tiles is how the first
+ *  version of this handed a 4 MB console three slots and left 232,072 bytes unused. */
+static int worst_tile_bytes (void) {
+    int d = mem_art_divisor();
+    return (140 / d) * (162 / d) * 2;
+}
+
+/** Held back from the tile pool for everything that allocates after it. See mem_thumb_slots(). */
+#define POOL_RESERVE      131072
+
 int mem_thumb_slots (void) {
-    /* Four, and the number is a measurement rather than a preference.
+    /* Taken from what is actually free, not from a constant per profile.
      *
-     * Eight was tried first and fitted the 48-title fixture with about 70,000 bytes to spare,
-     * which was the wrong thing to measure: the library costs 373 bytes of peak per title, so the
-     * same build on the 499-title card DESIGN.md sizes for would have wanted roughly 160,000 more
-     * than it had. At four, that card measures a peak of 2,126,472 against a 2,220,448 heap --
-     * 93,976 spare, and measured on the real fixture rather than extrapolated to it.
+     * A constant has to be chosen for the worst library anybody might have, and then every smaller
+     * library gets that worst case too. Measured on 4 MB: a 499-title card leaves 334,576 bytes
+     * free at this point and a 289-title one leaves about 78,000 more, because the library costs
+     * 373 bytes of peak per title. Fixing the pool at four -- which is what 499 titles affords --
+     * meant a 289-title card showed four tiles of art on a twelve-tile screen while 78,000 bytes
+     * of RAM sat unused. The number that matters is the room left over, so ask.
      *
-     * A screenful is twelve to sixteen tiles, so the pool cannot hold one and tiles WILL be
-     * evicted while scrolling. That is affordable in a way it was not before: on a card with an
-     * atlas the display path no longer decodes, it fetches, and a re-fetch is one seek and about
-     * 27 KB. The thrash AUDIT 1u warns about is DECODE thrash, which this profile never does.
+     * Called once, from thumbcache_init(), which app.c runs after the library, playstate, locks and
+     * the cheat database are all allocated -- so "free" here is the real remainder and not a
+     * snapshot taken before the expensive things happened.
      *
-     * Zero was considered and rejected. It does not merely turn art off, it turns the grid into a
-     * wall of plates on a console whose owner can see perfectly well that other people get box
-     * art. Four of a twelve-tile screen is a grid that fills in as you look at it. */
-    return mem_small() ? 4 : 36;
+     * POOL_RESERVE is for what allocates AFTER this: the decoder's destination surface, which is a
+     * whole tile again, plus the thumbstore index growing as tiles are added and the scaler's
+     * accumulator row. Not for libindex_save()'s payload at exit -- that one is a soft write which
+     * returns false and skips the save if it cannot allocate, so it degrades rather than crashes.
+     *
+     * On 8 MB this arithmetic clamps to THUMB_SLOTS every time (about 2.5 MB is free here, which
+     * is 55 slots' worth), so the full profile is the 36 it has always been.
+     */
+    heap_stats_t hs;
+    sys_get_heap_stats(&hs);
+    int free_now = hs.total - hs.used;
+
+    int affordable = (free_now - POOL_RESERVE) / worst_tile_bytes();
+    if (affordable > 36) {
+        affordable = 36;
+    }
+    /* Three even if the arithmetic says fewer. Below three the grid stops being a grid with art in
+     * it and becomes a grid with an accident in it, and a console that is this short of memory has
+     * already failed at something more important than box art. */
+    if (affordable < 3) {
+        affordable = 3;
+    }
+
+    debugf("MEMPROFILE pool: %d slots from %d free (reserve %d, tile %d)\n",
+           affordable, free_now, POOL_RESERVE, worst_tile_bytes());
+    return affordable;
+}
+
+int mem_art_divisor (void) {
+    return mem_small() ? 2 : 1;
 }
 
 int mem_icon_cache_cells (void) {

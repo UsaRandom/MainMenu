@@ -154,6 +154,27 @@ void thumbcache_reshape (thumbcache_t *tc, library_t *lib);
  */
 art_shape_t thumbcache_record_shape (const lib_record_t *rec);
 
+/**
+ * @brief The shape a tile is DECODED AND STORED at, which is not always the shape it is drawn at.
+ *
+ * The same as thumbcache_record_shape() with an Expansion Pak, and half of it without. A tile is
+ * RGBA16 and the pool is the only thing on a 4 MB console big enough to matter: at full size a
+ * 499-title card affords three resident tiles against a twelve-tile screen, because the library
+ * has taken everything else. Half the width and half the height is a quarter of the bytes, so the
+ * same memory holds twelve.
+ *
+ * The grid keeps using thumbcache_record_shape() for its LAYOUT -- row heights and column widths
+ * must not change with the amount of RAM in the console -- and draw_tile() already scales against
+ * the surface's own size, so a half-size tile lands in a full-size cell without arithmetic. What
+ * it costs is sharpness, and rdpq copy mode: copy cannot scale, so a scaled tile draws through the
+ * standard pipeline. See screen_grid's draw_tile.
+ *
+ * thumbstore keys its slots on the tile's own dimensions and refuses a mismatch as a miss, so the
+ * two sizes coexist in one thumbs.pak without either being read at the wrong stride -- a card moved
+ * between a 4 MB and an 8 MB console builds both and neither is wrong.
+ */
+art_shape_t thumbcache_store_shape (const lib_record_t *rec);
+
 int thumbcache_resident (const thumbcache_t *tc);
 
 /** Split of thumbcache_run's cost: rows actually decoded vs the walk that finds the next image,

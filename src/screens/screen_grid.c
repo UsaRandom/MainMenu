@@ -219,8 +219,16 @@ static void draw_tile (app_t *app, const lib_record_t *rec, uint16_t rom_id,
         int ay = y + (h - ah) / 2;
 
         /* Copy mode cannot scale, so an arriving tile goes through the standard pipeline for the
-         * few frames it is animating and drops back to copy once it settles. */
-        if (arrive < 1.0f) {
+         * few frames it is animating and drops back to copy once it settles.
+         *
+         * And a tile that is not the size it is drawn at is permanently in that position. On a
+         * console with no Expansion Pak the pool holds tiles at half their drawn size -- a quarter
+         * of the bytes, so twelve fit where three did (see thumbcache_store_shape) -- and copy mode
+         * would ignore the scale and draw a quarter of the picture into the corner of the cell at
+         * 1:1. Tested by size rather than by profile: it is the surface that decides, so a full
+         * size tile on either console still takes the fast path. */
+        bool scaled = (art->width != aw) || (art->height != ah);
+        if (arrive < 1.0f || scaled) {
             rdpq_set_mode_standard();
             rdpq_mode_combiner(RDPQ_COMBINER_TEX);
         } else {

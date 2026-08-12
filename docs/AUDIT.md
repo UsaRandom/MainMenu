@@ -6280,6 +6280,36 @@ count**, including `sample-grid` at 115 titles and `demo-shots`. The two not run
 limitation of this working copy, not of the branch. Frame HASHES are not compared: §5 records that
 these move with binary size alone, and the binary grew.
 
+**The art pool went from a constant to arithmetic, twice, and the first answer was wrong.** Four
+slots was chosen for the 499-title card and then given to every card, so a 289-title one showed
+four tiles of a twelve-tile screen while 78,000 bytes sat unused. Sizing it from the heap that is
+actually free when `thumbcache_init()` runs -- after the library, playstate and cheat database are
+allocated, so the number is real -- gave 6 slots at 48 titles and 3 at 499. Better, and still
+wrong: **a tile is RGBA16 at its full drawn size, and that is the thing that does not fit.**
+
+Tiles are now stored at half their drawn size on the small profile, which is a quarter of the
+bytes, and `draw_tile()` already scales against the surface's own dimensions so a half-size tile
+lands in a full-size cell with no arithmetic. The pool goes **3 -> 15 slots at 499 titles and 26 at
+48**, and the grid fills.
+
+| library | pool, full-size | pool, half-size |
+| --- | --- | --- |
+| 48 titles | 6 | 26 |
+| 499 titles | 3 | 15 |
+
+The catch is that rdpq copy mode cannot scale, so a scaled tile draws through the standard
+pipeline. That was expected to cost frames and **does not**: settled on idle.txt, 49.8 -> 49.9
+frames making their field, and render time *fell* from 2,827 to 2,590 us because the textures are
+smaller. The cost shows up cold instead -- scroll-stress drops 43.2 -> 34.0 -- and that is the
+extra decode work of filling fifteen slots rather than three, not the draw. The condition is
+written against the surface size rather than the profile, so a full-size tile still takes the fast
+path on either console.
+
+**What is not verified: whether the softness matters.** A half-size tile is a 2x upscale, and at
+320x240 the 4 MB and 8 MB captures are indistinguishable -- but the fixture's covers are procedural
+gradients. `build/artcache` is empty in this working copy so `real-art.txt` cannot run, which is
+where a real 1000 px scan would be judged. That is the open question on this branch.
+
 **What a 4 MB console gives up**, all of it stated rather than discovered:
 
 - **Cheats.** The Datel engine is emitted to 0x807C5C00, 7.77 MB, and the patcher stages at
@@ -6288,9 +6318,8 @@ these move with binary size alone, and the binary grew.
   refused without a pak and still does. Cheats remain browsable and are silently never installed,
   which is a UX gap this branch does not close.
 - **Japanese titles** draw their Latin part and holes where the rest was.
-- **Art fills in more slowly**: four resident tiles against a twelve-tile screen, so tiles evict
-  while scrolling. Affordable only because the display path no longer decodes on a card with an
-  atlas -- it fetches, at one seek and about 27 KB. The thrash 1u warns about is decode thrash.
+- **Art is softer**: tiles are decoded at half size and scaled up. The pool holds a screenful, so
+  tiles no longer evict as you scroll on any plausible library.
 - **The icon picker re-rasterises** as it is paged.
 
 `hooktest_run()` also had to opt out: it emits the engine to an address 4 MB does not have, and
