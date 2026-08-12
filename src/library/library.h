@@ -21,6 +21,20 @@
 
 #include "menu/rom_info.h"
 
+/**
+ * @brief How far below the scan root a directory can be and still be indexed.
+ *
+ * Five, not four. The scan root moved from `/roms` to `/`, so everything on the card is one level
+ * further down than it was; four here would have quietly shortened the reach of a card organised
+ * exactly as before.
+ *
+ * In the header rather than in library.c because libindex.c's signature walk has to stop in the
+ * same place. It stopped one level deeper for as long as both existed, which cost only a pointless
+ * rescan -- until incremental revalidation, where it would have indexed games out of a directory
+ * a full scan never reaches. See SIG_MAX_DEPTH.
+ */
+#define LIBRARY_SCAN_MAX_DEPTH  5
+
 /** @brief Which console a title runs on. Tabs filter on this. */
 typedef enum {
     SYS_N64 = 0,
@@ -235,6 +249,40 @@ typedef void (*library_scan_progress_t)(int found);
 /** @brief Free the library and every string it owns. */
 void library_free (library_t *lib);
 
+/**
+ * @brief Drop every record and every noticed image, leaving an empty library the caller can fill.
+ *
+ * For abandoning a half-built library. libindex.c's incremental repair pushes records before it
+ * can be certain of finishing, and if it gives up part way the caller runs a full scan into the
+ * same library -- which without this would append to what was already there and produce a grid
+ * showing some games twice.
+ */
+void library_clear (library_t *lib);
+
+/**
+ * @brief Does @p name look like art? `.png`, `.jpg` or `.jpeg`, case-insensitively.
+ *
+ * One function rather than one per walker, and that is the point of exporting it. libindex.c's
+ * signature walk now fills the same loose-art table the scan does, and if the two disagreed about
+ * what counts as an image the table would depend on which walk produced it -- a cover found on a
+ * cold boot and missing on a warm one, with nothing to say why.
+ */
+bool library_is_art_name (const char *name);
+
+/**
+ * @brief Remember a loose image under its own bare name. First one seen for a key wins.
+ *
+ * Exported for libindex.c. On an incremental revalidation most of the card is never scanned, so
+ * the scan is no longer the only thing that can fill this table -- and it has to be filled for
+ * ALL directories, not just the rescanned ones, or a game added to one folder could not find a
+ * cover that lives in another. The signature walk is already reading every filename on the card
+ * for the staleness check, so noticing the images among them costs one string compare each.
+ */
+void library_art_note (library_t *lib, const char *name, const char *full_path);
+
+/** @brief Sort records into display order. Both the scan and the index merge end with this. */
+void library_sort (library_t *lib);
+
 /** @brief Note that a record changed and the on-disk index is now behind. */
 void library_touch (library_t *lib);
 
@@ -251,6 +299,22 @@ void library_touch (library_t *lib);
  */
 int library_scan (library_t *lib, const char *storage_prefix, const char *root,
                   library_scan_progress_t on_progress);
+
+/**
+ * @brief Index one directory and stop. No recursion, no sort.
+ *
+ * @param dir  A full path as the scan builds them -- storage prefix included, joined the same
+ *             way, because libindex.c matches these against the directory signatures it stored
+ *             and a differently-spelled path is a different directory to a hash.
+ *
+ * For incremental revalidation. The signature walk has already worked out which directories moved;
+ * this indexes one of them without touching the children, whose records the index still holds and
+ * whose signatures still match. Records land unsorted at the end of the library, so the caller
+ * calls library_sort() once after merging rather than once per directory.
+ *
+ * @return number of records added.
+ */
+int library_scan_dir (library_t *lib, const char *dir, library_scan_progress_t on_progress);
 
 /**
  * @brief Point every record at its loose art file, using the table the scan just built.

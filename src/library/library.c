@@ -16,10 +16,7 @@
 
 #define LIB_INITIAL_CAP 64
 
-/** Five, not four. The scan root moved from `/roms` to `/`, so everything on the card is one
- *  level further down than it was; four here would have quietly shortened the reach of a card
- *  organised exactly as before. */
-#define SCAN_MAX_DEPTH  5
+#define SCAN_MAX_DEPTH  LIBRARY_SCAN_MAX_DEPTH
 
 /**
  * @brief Directory names the scan will not walk into, at any depth.
@@ -85,7 +82,7 @@ library_t *library_init (void) {
     return lib;
 }
 
-void library_free (library_t *lib) {
+void library_clear (library_t *lib) {
     if (lib == NULL) {
         return;
     }
@@ -94,11 +91,25 @@ void library_free (library_t *lib) {
         free(lib->records[i].title);
         free(lib->records[i].art_file);
     }
+    memset(lib->records, 0, (size_t)lib->capacity * sizeof(lib_record_t));
+    lib->count = 0;
+
     for (int i = 0; i < lib->art_count; i++) {
         free(lib->art[i].key);
         free(lib->art[i].path);
     }
     free(lib->art);
+    lib->art = NULL;
+    lib->art_count = 0;
+    lib->art_capacity = 0;
+    lib->art_sorted = false;
+}
+
+void library_free (library_t *lib) {
+    if (lib == NULL) {
+        return;
+    }
+    library_clear(lib);
     free(lib->records);
     free(lib);
 }
@@ -165,8 +176,11 @@ static char *art_key_from_name (const char *name) {
  * ::art_entry_t::seq and the sort breaks ties on it. Without that, qsort being unstable would
  * make which duplicate survives depend on the input order -- the kind of bug that reproduces on
  * one card and not another.
+ *
+ * Public since incremental revalidation, which fills this table from the signature walk rather
+ * than from a scan. See library.h.
  */
-static void art_push (library_t *lib, const char *name, const char *full_path) {
+void library_art_note (library_t *lib, const char *name, const char *full_path) {
     char *key = art_key_from_name(name);
     if (key == NULL) {
         return;
@@ -267,6 +281,16 @@ int library_resolve_loose_art (library_t *lib) {
 
         r->art_file = strdup(hit);
         if (r->art_file != NULL) {
+            /* Both of these have to move with the path, and neither did before incremental
+             * revalidation could run this against records loaded from the index. Such a record
+             * arrives carrying LIBF_ART_MISSING -- the persisted "we looked and there was
+             * nothing" -- and if a cover for it turns up in some other directory, giving it the
+             * path while leaving the flag set writes an index whose record says both. Next boot
+             * that record loads with art_state ART_NONE and a perfectly good art_file nothing
+             * will ever decode. Straight after a scan the flag is always clear, which is why
+             * this never mattered until now. */
+            r->flags &= (uint16_t)~LIBF_ART_MISSING;
+            r->art_state = ART_PENDING;
             n++;
         }
     }
@@ -307,8 +331,7 @@ const char *library_find_art (const library_t *lib, const char *name) {
     return NULL;
 }
 
-/** @brief True when @p name looks like art: .png, .jpg or .jpeg, case-insensitively. */
-static bool is_image (const char *name) {
+bool library_is_art_name (const char *name) {
     size_t n = strlen(name);
     return (n > 4 && strcasecmp(name + n - 4, ".png") == 0) ||
            (n > 4 && strcasecmp(name + n - 4, ".jpg") == 0) ||
@@ -494,11 +517,16 @@ static bool skipped_file (const char *name) {
  * Recursion moves to the end, after every file here is done. That changes DFS order, and it
  * changes it toward what art_push() always claimed: with subdirectories visited last, the
  * SHALLOWEST duplicate cover really does win now, where before it was whichever the directory
- * listing happened to put first. The claim in art_push() is finally true; see the note there and
- * the duplicate checks in tools/hosttest/test_library_art.c.
+ * listing happened to put first. The claim in library_art_note() is finally true; see the note
+ * there and the duplicate checks in tools/hosttest/test_library_art.c.
+ *
+ * @param recurse  False indexes this directory and stops, which is what incremental revalidation
+ *                 asks for: it has already been told, by the signature walk, exactly which
+ *                 directories moved, and walking their children again would re-index directories
+ *                 whose records the index still holds.
  */
 static int scan_dir (library_t *lib, const char *dir, int depth,
-                     library_scan_progress_t on_progress) {
+                     library_scan_progress_t on_progress, bool recurse) {
     if (depth > SCAN_MAX_DEPTH) {
         return 0;
     }
@@ -557,11 +585,11 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
 
         if (skipped_file(names[i])) {
             /* Nothing at all: not a game, and not art either. */
-        } else if (is_image(names[i])) {
+        } else if (library_is_art_name(names[i])) {
             /* Art sitting loose in the tree, whatever it is named or formatted as. Recorded here
              * rather than searched for later: this loop is already visiting every file, so the
              * whole feature costs one extension compare per entry. */
-            art_push(lib, names[i], child);
+            library_art_note(lib, names[i], child);
         } else {
             uint8_t system;
             if (classify(names[i], &system)) {
@@ -592,13 +620,13 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
      * a child answer "is there a sidecar" from the wrong directory's names. */
     rom_info_set_dir_listing(NULL, 0);
 
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n && recurse; i++) {
         if (!isdir[i] || library_scan_skipped(names[i])) {
             continue;
         }
         char child[512];
         snprintf(child, sizeof(child), "%s/%s", dir, names[i]);
-        added += scan_dir(lib, child, depth + 1, on_progress);
+        added += scan_dir(lib, child, depth + 1, on_progress, true);
     }
 
     for (int i = 0; i < n; i++) {
@@ -610,12 +638,24 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
     return added;
 }
 
+int library_scan_dir (library_t *lib, const char *dir, library_scan_progress_t on_progress) {
+    /* Depth 0 rather than the directory's real depth in the tree, and it makes no difference:
+     * depth only bounds recursion and there is none here. The caller is responsible for not
+     * asking about a directory deeper than the scan would have reached -- see libindex.c, which
+     * fingerprints one level further down than the scan indexes. */
+    return scan_dir(lib, dir, 0, on_progress, false);
+}
+
 static int compare_title (const void *a, const void *b) {
     const lib_record_t *x = a, *y = b;
     const char *xt = x->title ? x->title : "";
     const char *yt = y->title ? y->title : "";
     int c = strcasecmp(xt, yt);
     return c != 0 ? c : strcasecmp(x->path ? x->path : "", y->path ? y->path : "");
+}
+
+void library_sort (library_t *lib) {
+    qsort(lib->records, lib->count, sizeof(lib_record_t), compare_title);
 }
 
 void library_join (char *out, size_t cap, const char *storage_prefix, const char *root) {
@@ -639,10 +679,10 @@ int library_scan (library_t *lib, const char *storage_prefix, const char *root,
     library_join(base, sizeof(base), storage_prefix, root);
 
     uint32_t t0 = TICKS_READ();
-    int added = scan_dir(lib, base, 0, on_progress);
+    int added = scan_dir(lib, base, 0, on_progress, true);
     uint32_t us = TIMER_MICROS(TICKS_SINCE(t0));
 
-    qsort(lib->records, lib->count, sizeof(lib_record_t), compare_title);
+    library_sort(lib);
 
     /* Reported per ROM as well as in total: the total is what a user waits, but the per-ROM
      * figure is the one that extrapolates to a 500-title card. */

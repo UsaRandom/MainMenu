@@ -6040,11 +6040,67 @@ signature was right. And a `saves/` folder appearing beside a ROM was suspected 
 the index once per letter directory; libindex.c:128 excludes skipped directories from both the
 entry count and the recursion, so it does not.
 
-**What remains, and it is not the scan.** One added or deleted file anywhere on the card sets
+~~**What remains, and it is not the scan.** One added or deleted file anywhere on the card sets
 `fresh = false` and rescans all 289 titles. The signature is already per-directory and knows
 exactly which one moved -- it just discards that and rebuilds everything. Adding one game to a
 letter folder should cost that folder, about 57 entries, not 14.4 seconds. That is the next
-change worth making and it is worth more than anything left in the scan itself.
+change worth making and it is worth more than anything left in the scan itself.~~ -- done, 1ay.
+
+---
+## 1ay. Repairing the index instead of rebuilding it
+
+The change 1ax asked for. `libindex_load()` had two outcomes; it now has three. Every signature
+matching is believed, as before. Some matching means the titles in those directories come out of
+the file, every directory that is new or changed is indexed **without recursion** -- its children
+carry their own signatures and get their own verdict -- and the repaired index is written back, so
+the boot after a repair is a plain revalidation. Nothing matching still costs a full scan.
+
+**Predicted, not yet measured.** Against the numbers in 1ax, adding one game to one letter folder
+goes from 0.72 s (walk, rejected) + 14.4 s (rescan) to 0.72 s + about 0.55 s -- one folder of
+roughly 11 games at the measured 49,842 us/rom -- so **about 15.1 s to about 1.3 s, 11x**. That
+arithmetic is the prediction; the boot record now prints `index REPAIRED` with the dirs rescanned
+and the titles kept, so the next card round trip replaces it with a reading. Nothing here is a
+measurement yet and none of it came from ares, which cannot write the index at all.
+
+**Two things had to change underneath it, and both were latent bugs rather than new work.**
+
+The signature walk stopped at depth 6 while the scan stops at depth 5, under a comment claiming
+the two matched. While the answer was yes-or-no this cost only a pointless rescan: a change below
+the scan's reach invalidated an index that could not have held anything from down there, and the
+rebuild found nothing new. Under a repair it becomes a library that disagrees with the card -- the
+deep directory is handed to `library_scan_dir()`, its games are indexed, and the result is written
+back holding titles that a full rescan of the same card does not have. Both walks now share
+`LIBRARY_SCAN_MAX_DEPTH`.
+
+And the scan was the only thing that ever filled the loose-art table. A repair reads only the
+directories that moved, so a game added to `/M` with its cover kept in `/art` would resolve to
+nothing, record that as `LIBF_ART_MISSING`, and stay wrong on every later boot -- because by then
+every directory matches again. The signature walk is already reading every filename on the card,
+so it now notes the images among them: **278 covers and 27 directories on the test card, about 310
+extra strdup/free pairs on a path that was already reading those names**, freed immediately on a
+plain hit. That is a count, not a time; the walk's own microseconds are in the boot record and the
+next round trip will say whether it moved. In the same breath, `library_resolve_loose_art()` now
+clears `LIBF_ART_MISSING` when it assigns a path -- the flag and the path can only be set together
+on a record read back from the file, and an index carrying both loads as `ART_NONE` holding a
+perfectly good cover nothing will ever decode.
+
+**Records are attributed to directories by their own stored path**, not by a directory number in
+the record. There is a spare 16-bit field that would have held one and it was deliberately left
+alone: a stored index is a second copy of a fact, and the failure it invites is an index written
+by one build and read by another whose numbering shifted, showing up as records silently assigned
+to the wrong directory. The path is already exact -- `scan_dir()` and `sig_dir()` build directory
+paths with the same join off the same root -- and cannot go stale against itself. **The file
+format is unchanged and the magic is not bumped**: a card written by 1.1.0 is repaired in place.
+
+**Test, then change, in that order.** `test_libindex.c` went from 42 checks to 446. The staleness
+matrix survives with its assertion moved rather than weakened: those cases asserted that a load
+*refused*, which noticing and discarding made the same act, and they now assert that the signature
+noticed and that the repaired library is **identical to a full scan of the same tree** -- every
+record, field by field, in order, which the refusal-based test could not ask at all. 13 mutations,
+all caught, including the two that only a repair makes fatal: the walk reaching one level deeper
+than the scan, and the walk contributing no art. The depth mutation **survived the first pass** --
+the trees were all shallow, and the comment claiming the fix was the only thing asserting it. It
+took a six-level tree to make that claim answerable.
 
 ---
 ## 2. Findings
@@ -6255,3 +6311,14 @@ already have. See 2a. What remains open is throughput, not capability.
   instrumentation and it should be named as one.
 - **ares is not cycle-accurate for RDP/RDRAM contention**, so `rdp_us` from the frame-time
   instrumentation is indicative, not predictive.
+- **`tools/inputs/boot.txt`'s later frames move when the binary's SIZE moves, whatever is in it.**
+  Found while checking 1ay for regressions: frames 03-05 differed before and after a change that
+  ares cannot execute at all -- the incremental path needs a writable index and the DFS is
+  read-only. Removing the one behavioural line on ares's own path changed nothing, and then
+  **adding a 256-byte unreferenced array to app.c moved frames 03 and 05 by itself**. The run is
+  perfectly deterministic per build -- the same build twice is hash-identical -- so this reads
+  exactly like a real regression. The differences are one-quantisation-step colour shifts in the
+  tile arrival tween (247 against 255 in 8 bits is one level of the 32 that RGBA5551 has), which
+  is a time-based animation sampled a hair earlier or later because the DFS moved. Anything that
+  changes text or rodata size shifts these frames. **A diff in boot.txt frames 03-05 is not
+  evidence of anything until a same-size build reproduces it.**

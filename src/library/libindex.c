@@ -15,9 +15,16 @@
 
 #define LIBINDEX_FILE   "library.idx"
 
-/** Depth limit, matching library.c's scan. A signature walk that went deeper than the scan would
- *  invalidate on directories the index never contained. */
-#define SIG_MAX_DEPTH   6
+/** Depth limit, and it is library.c's, not a copy of it.
+ *
+ *  This said 6 while the scan stopped at 5, under a comment claiming the two matched. The cost was
+ *  small and entirely one-directional -- a change at the bottom level invalidated an index that
+ *  could not have contained anything from there, so the card was rescanned in full and the rescan
+ *  found nothing new. Incremental revalidation is what made it matter: a directory one level below
+ *  the scan's reach would have been handed to library_scan_dir() and its games indexed, giving the
+ *  incremental library titles that a full rescan of the same card does not have. The two walks
+ *  agreeing is now load-bearing, so they share the number instead of each declaring one. */
+#define SIG_MAX_DEPTH   LIBRARY_SCAN_MAX_DEPTH
 
 /** Refuse to walk a card with an absurd number of directories rather than growing without bound.
  *  500 titles in a tidy tree is tens of directories; 1024 is far past anything real. */
@@ -81,11 +88,66 @@ _Static_assert(sizeof(idx_payload_t) == 24, "index payload header must stay 24 b
 
 /* ------------------------------------------------------------------ the signature walk */
 
+/**
+ * @brief The result of one signature walk.
+ *
+ * `sigs` alone is what staleness needs. `paths` and `art` are the extra the incremental path
+ * needs and the save path does not: the full path of each directory, so a changed one can be
+ * handed to library_scan_dir(), and the full path of every loose image on the card, so a game
+ * added to one folder can still resolve a cover kept in another.
+ *
+ * Both are collected on every load, before it is known whether the incremental path will be taken
+ * at all, because the walk is single-pass and asking again costs the whole walk over. On the
+ * 278-cover card that is about 310 extra strdup/free pairs on a path that was already doing the
+ * work of reading every one of those names -- and on the fully-fresh boot they are freed
+ * immediately and nothing else changes.
+ */
 typedef struct {
     dirsig_t *sigs;
+    char **paths;               /**< one per sig; NULL when not collected */
     int count;
+
+    char **art;                 /**< full paths of loose images, in walk order; NULL when not */
+    int art_count;
+    int art_cap;
+
+    bool detail;                /**< collect paths and art */
     bool overflow;
 } sigwalk_t;
+
+static void sig_free (sigwalk_t *w) {
+    if (w->paths != NULL) {
+        for (int i = 0; i < w->count; i++) {
+            free(w->paths[i]);
+        }
+        free(w->paths);
+    }
+    for (int i = 0; i < w->art_count; i++) {
+        free(w->art[i]);
+    }
+    free(w->art);
+    free(w->sigs);
+    memset(w, 0, sizeof(*w));
+}
+
+/** @brief Remember a loose image's full path. Silent on allocation failure; see sig_note_art(). */
+static void sig_note_art (sigwalk_t *w, const char *full_path) {
+    if (w->art_count == w->art_cap) {
+        int want = w->art_cap ? w->art_cap * 2 : 64;
+        char **bigger = realloc(w->art, (size_t)want * sizeof(*bigger));
+        if (bigger == NULL) {
+            /* Losing one art path costs a cover, not a game. Refusing the whole incremental
+             * revalidation over it would cost a 14-second rescan instead, which is worse. */
+            return;
+        }
+        w->art = bigger;
+        w->art_cap = want;
+    }
+    char *copy = strdup(full_path);
+    if (copy != NULL) {
+        w->art[w->art_count++] = copy;
+    }
+}
 
 /**
  * @brief Fingerprint @p dir and recurse. Enumeration only -- nothing is opened.
@@ -110,11 +172,15 @@ static void sig_dir (sigwalk_t *w, const char *dir, int depth) {
         return;
     }
 
-    dirsig_t *sig = &w->sigs[w->count++];
+    int self = w->count++;
+    dirsig_t *sig = &w->sigs[self];
     sig->path_hash = cache_hash64(dir);
     sig->size_sum  = 0;
     sig->entries   = 0;
     sig->reserved  = 0;
+    if (w->detail) {
+        w->paths[self] = strdup(dir);
+    }
 
     /* Children are collected first and recursed afterwards, because dir_findnext() keeps its
      * position in the directory being enumerated and recursing mid-walk would resume the parent
@@ -142,6 +208,11 @@ static void sig_dir (sigwalk_t *w, const char *dir, int depth) {
                 snprintf(kids[kid_count++], 256, "%s", info.d_name);
             } else {
                 sig->size_sum += (uint64_t)(info.d_size > 0 ? info.d_size : 0);
+                if (w->detail && library_is_art_name(info.d_name)) {
+                    char full[512];
+                    snprintf(full, sizeof(full), "%s/%s", dir, info.d_name);
+                    sig_note_art(w, full);
+                }
             }
         }
         result = dir_findnext(dir, &info);
@@ -156,28 +227,41 @@ static void sig_dir (sigwalk_t *w, const char *dir, int depth) {
 }
 
 /**
- * @brief Fingerprint the whole tree under @p root.
- * @return the signature array, or NULL. Caller frees. @p out_count receives the length.
+ * @brief Fingerprint the whole tree under @p root into @p out.
+ *
+ * @param detail  Also collect each directory's path and every loose image's path. See sigwalk_t.
+ * @return false if the walk could not be trusted, in which case @p out is empty.
+ *
+ * Images come out in exactly the order a scan would have pushed them: sig_dir() and scan_dir()
+ * both take a directory's files before descending into its subdirectories, so "the shallowest
+ * duplicate wins" means the same thing whichever walk built the table.
  */
-static dirsig_t *sig_collect (const char *storage_prefix, const char *root, int *out_count) {
+static bool sig_collect (const char *storage_prefix, const char *root, bool detail,
+                         sigwalk_t *out) {
     char base[512];
     library_join(base, sizeof(base), storage_prefix, root);
 
-    sigwalk_t w = { .sigs = calloc(SIG_MAX_DIRS, sizeof(dirsig_t)) };
-    if (w.sigs == NULL) {
-        *out_count = 0;
-        return NULL;
+    memset(out, 0, sizeof(*out));
+    out->detail = detail;
+    out->sigs = calloc(SIG_MAX_DIRS, sizeof(dirsig_t));
+    if (out->sigs == NULL) {
+        return false;
+    }
+    if (detail) {
+        out->paths = calloc(SIG_MAX_DIRS, sizeof(char *));
+        if (out->paths == NULL) {
+            sig_free(out);
+            return false;
+        }
     }
 
-    sig_dir(&w, base, 0);
+    sig_dir(out, base, 0);
 
-    if (w.overflow || w.count == 0) {
-        free(w.sigs);
-        *out_count = 0;
-        return NULL;
+    if (out->overflow || out->count == 0) {
+        sig_free(out);
+        return false;
     }
-    *out_count = w.count;
-    return w.sigs;
+    return true;
 }
 
 /* ------------------------------------------------------------------ load */
@@ -190,7 +274,216 @@ static const char *str_at (const char *strtab, uint32_t bytes, uint32_t off) {
     return strtab + off;
 }
 
-bool libindex_load (library_t *lib, const char *storage_prefix, const char *root) {
+/**
+ * @brief Push one stored record onto @p lib, resolving its strings out of @p strtab.
+ * @return false if the library could not grow, which the caller treats as the end of the load.
+ */
+static bool record_load (library_t *lib, const idx_record_t *rec,
+                         const char *strtab, uint32_t strbytes) {
+    lib_record_t *r = library_push(lib);
+    if (r == NULL) {
+        return false;
+    }
+    memset(r, 0, sizeof(*r));
+
+    r->check_code = rec->check_code;
+    memcpy(r->game_code, rec->game_code, 4);
+    r->game_code[4] = '\0';
+    r->version   = rec->version;
+    r->system    = rec->system;
+    r->save_type = rec->save_type;
+    r->feat      = rec->feat;
+    r->flags     = rec->flags;
+    r->dominant  = rec->dominant;
+    r->art_kind  = rec->art_kind;
+
+    const char *s;
+    if ((s = str_at(strtab, strbytes, rec->path_off))  != NULL) r->path     = strdup(s);
+    if ((s = str_at(strtab, strbytes, rec->title_off)) != NULL) r->title    = strdup(s);
+    if ((s = str_at(strtab, strbytes, rec->art_off))   != NULL) r->art_file = strdup(s);
+
+    /* Art state is rebuilt, never restored. ART_READY refers to a slot in a RAM pool that does
+     * not exist yet at this point in the boot, and restoring it would hand the grid a record
+     * claiming to have art with nothing behind it. The one thing worth carrying over is the
+     * negative: LIBF_ART_MISSING means the search already ran and found nothing. */
+    r->art_state = (r->flags & LIBF_ART_MISSING) ? ART_NONE : ART_PENDING;
+    r->art_age   = 1.0e9f;      /* already settled; no arrival pop for a cached record */
+    return true;
+}
+
+/**
+ * @brief Hash of the directory @p path sits in, as the walk would have hashed it.
+ *
+ * The record's own path is what attributes it to a directory, rather than a directory number
+ * stored in the record. There is a spare 16-bit field that could have carried one, and not using
+ * it is the point: a stored number is a second copy of a fact, and the failure it invites is an
+ * index written by one build and read by another where the numbering shifted, which would show up
+ * as records quietly assigned to the wrong directory and dropped or kept for the wrong reason.
+ * The path is already there, it is already exact -- scan_dir() and sig_dir() build directory paths
+ * with the same "%s/%s" join off the same root -- and it cannot go stale relative to itself.
+ */
+static uint64_t path_dir_hash (const char *path) {
+    if (path == NULL) {
+        return 0;
+    }
+    const char *slash = strrchr(path, '/');
+    if (slash == NULL) {
+        return 0;
+    }
+    size_t n = (size_t)(slash - path);
+    if (n == 0) {
+        n = 1;                  /* "/game.z64" sits in "/" */
+    }
+    char dir[512];
+    if (n >= sizeof(dir)) {
+        return 0;
+    }
+    memcpy(dir, path, n);
+    dir[n] = '\0';
+    return cache_hash64(dir);
+}
+
+/**
+ * @brief Find @p hash in @p arr, starting the search at @p hint and wrapping.
+ *
+ * Both walks are deterministic depth-first over mostly the same tree, so the directory that was
+ * i-th last time is almost always i-th this time and the hint makes this a single comparison. The
+ * wrap is what makes it correct anyway when a directory has been added or removed in the middle.
+ */
+static int sig_find (const dirsig_t *arr, int n, uint64_t hash, int hint) {
+    for (int k = 0; k < n; k++) {
+        int j = (hint + k) % n;
+        if (arr[j].path_hash == hash) {
+            return j;
+        }
+    }
+    return -1;
+}
+
+static bool save_with_sigs (const library_t *lib, const dirsig_t *sigs, int sig_count);
+
+/**
+ * @brief Rebuild @p lib from the stored records plus a rescan of only the directories that moved.
+ *
+ * The whole reason this exists: adding one game to one folder used to cost a full rescan of the
+ * card. Measured on the M64 at 289 titles that is 14.4 seconds, and the change it is reacting to
+ * is confined to a single directory whose signature is the only one that moved -- the file already
+ * knows which one, and threw that away to answer a yes/no question.
+ *
+ * Records are attributed to directories by their own path, kept when their directory's signature
+ * matches, and dropped when it does not; every directory that is new or changed is then indexed
+ * with no recursion, because its children are separately signed and separately decided. Union of
+ * the two covers the tree exactly once.
+ *
+ * The result is merged, re-sorted with the same comparator a scan ends on, and written back with
+ * the signatures this walk already produced -- so the next boot is a plain revalidation again.
+ *
+ * @return false if nothing could be salvaged, which leaves @p lib untouched for a full scan.
+ */
+static bool merge_incremental (library_t *lib, const idx_payload_t *h, const void *buf,
+                               const char *strtab, const sigwalk_t *now,
+                               library_scan_progress_t on_progress, libindex_result_t *res) {
+    const dirsig_t *was = (const dirsig_t *)((const char *)buf + h->dirsigs_off);
+    const idx_record_t *recs = (const idx_record_t *)((const char *)buf + h->records_off);
+
+    bool *unchanged = calloc((size_t)now->count, sizeof(bool));
+    if (unchanged == NULL) {
+        return false;
+    }
+
+    int unchanged_n = 0;
+    bool complete = true;
+    for (int i = 0; i < now->count; i++) {
+        int j = sig_find(was, (int)h->dirsig_count, now->sigs[i].path_hash, i);
+        if (j >= 0 && was[j].entries == now->sigs[i].entries &&
+                      was[j].size_sum == now->sigs[i].size_sum) {
+            unchanged[i] = true;
+            unchanged_n++;
+        } else if (now->paths[i] == NULL) {
+            /* A changed directory whose path could not be copied during the walk. There is no way
+             * to read it again, so the repair would come out short by whatever is in it -- and
+             * then write that shortfall back over a good index, where it would look settled on
+             * every boot afterwards. A missing cover is worth accepting quietly; a missing game
+             * is not. Checked here, before a single record is pushed, so falling back is free. */
+            complete = false;
+        }
+    }
+
+    /* Nothing survives, so there is nothing to be incremental about: fall back and let the caller
+     * run the scan it would have run anyway, rather than reimplementing it one directory at a
+     * time with the extra risk and none of the saving. */
+    if (unchanged_n == 0 || !complete) {
+        free(unchanged);
+        return false;
+    }
+
+    /* Every image on the card, not just the ones in the directories about to be rescanned. A game
+     * added to /M can perfectly well have its cover kept in /art, and resolving against a table
+     * holding only /M would find nothing, mark the record LIBF_ART_MISSING, and write that answer
+     * into the index where it would survive every later boot. */
+    for (int i = 0; i < now->art_count; i++) {
+        const char *slash = strrchr(now->art[i], '/');
+        library_art_note(lib, slash ? slash + 1 : now->art[i], now->art[i]);
+    }
+
+    /* One pass per record over the directory list -- 289 records against 27 directories on the
+     * card that prompted this, so about 7,800 64-bit comparisons. Sorting them to bisect would
+     * save microseconds off a path whose other half opens ROM headers. */
+    for (uint32_t i = 0; i < h->record_count; i++) {
+        const char *path = str_at(strtab, h->strtab_bytes, recs[i].path_off);
+        uint64_t dir = path_dir_hash(path);
+        if (dir == 0) {
+            /* No path, or one nothing could have written: the strtab offset did not resolve. Such
+             * a record cannot be launched either -- grid_open() refuses a record with no path --
+             * so it is dropped rather than carried forward. */
+            continue;
+        }
+        int j = sig_find(now->sigs, now->count, dir, 0);
+        if (j >= 0 && unchanged[j]) {
+            if (!record_load(lib, &recs[i], strtab, h->strtab_bytes)) {
+                /* Out of memory part way through. Same reasoning as the missing path above, and
+                 * the same answer, except that records have been pushed by now -- so the library
+                 * is emptied rather than merely abandoned, or the caller's full scan would append
+                 * to it and every game kept so far would appear twice. */
+                library_clear(lib);
+                res->records_kept = 0;
+                free(unchanged);
+                return false;
+            }
+            res->records_kept++;
+        }
+    }
+
+    for (int i = 0; i < now->count; i++) {
+        if (unchanged[i]) {
+            continue;
+        }
+        res->records_scanned += library_scan_dir(lib, now->paths[i], on_progress);
+        res->dirs_rescanned++;
+    }
+    free(unchanged);
+
+    /* Records loaded from the index already carry their art path; this is for the ones the rescan
+     * just produced, and for any kept record whose cover has only now appeared somewhere else. */
+    library_resolve_loose_art(lib);
+    library_sort(lib);
+
+    res->incremental = true;
+    debugf("LIBINDEX incremental: kept %d, rescanned %d dirs for %d titles\n",
+           res->records_kept, res->dirs_rescanned, res->records_scanned);
+
+    /* Written back now, with the signatures already in hand, so the next boot is a plain
+     * revalidation. Passing them in rather than letting libindex_save() take its own walk matters:
+     * that walk is the expensive half of this path and doing it twice would halve the saving. */
+    save_with_sigs(lib, now->sigs, now->count);
+    return lib->count > 0;
+}
+
+bool libindex_load (library_t *lib, const char *storage_prefix, const char *root,
+                    library_scan_progress_t on_progress, libindex_result_t *out) {
+    libindex_result_t res;
+    memset(&res, 0, sizeof(res));
+
     void *buf = NULL;
     uint32_t bytes = 0;
 
@@ -230,70 +523,64 @@ bool libindex_load (library_t *lib, const char *storage_prefix, const char *root
     /* Revalidate BEFORE populating: the walk is the expensive half of this path and there is no
      * point paying for hundreds of strdups first. */
     uint32_t t0 = TICKS_READ();
-    int now_count = 0;
-    dirsig_t *now = sig_collect(storage_prefix, root, &now_count);
+    sigwalk_t now;
+    bool walked = sig_collect(storage_prefix, root, true, &now);
     uint32_t walk_us = TIMER_MICROS(TICKS_SINCE(t0));
+    res.dirs_total = walked ? now.count : 0;
 
-    bool fresh = (now != NULL && now_count == (int)h->dirsig_count);
+    bool fresh = (walked && now.count == (int)h->dirsig_count);
     if (fresh) {
         const dirsig_t *was = (const dirsig_t *)((const char *)buf + h->dirsigs_off);
-        for (int i = 0; i < now_count; i++) {
-            /* Position-independent comparison would be more robust to a directory being renamed,
-             * but the walk is deterministic and depth-first over the same tree, so an ordering
-             * change IS a change and rescanning is the right answer. */
-            if (now[i].path_hash != was[i].path_hash ||
-                now[i].entries   != was[i].entries   ||
-                now[i].size_sum  != was[i].size_sum) {
+        for (int i = 0; i < now.count; i++) {
+            /* Position-dependent, and it stays that way for the yes/no answer: the walk is
+             * deterministic and depth-first over the same tree, so if every directory is where it
+             * was with the contents it had, this is the fastest way to say so. The incremental
+             * path below is the one that has to match directories by hash, because by then the
+             * tree really has moved. */
+            if (now.sigs[i].path_hash != was[i].path_hash ||
+                now.sigs[i].entries   != was[i].entries   ||
+                now.sigs[i].size_sum  != was[i].size_sum) {
                 fresh = false;
                 break;
             }
         }
     }
-    free(now);
 
     if (!fresh) {
-        debugf("LIBINDEX: card changed (%lu us to check) -- rescanning\n", (unsigned long)walk_us);
+        /* Not "rescan the card" any more. Something moved, and the signatures say which
+         * directories -- so the ones that did not move keep their records and only the rest are
+         * read off the card again. A full scan is what happens when even that cannot be salvaged:
+         * the walk itself failed, or nothing at all matched. */
+        bool merged = walked && merge_incremental(lib, h, buf, strtab, &now, on_progress, &res);
+        if (!merged) {
+            debugf("LIBINDEX: card changed (%lu us to check) -- rescanning in full\n",
+                   (unsigned long)walk_us);
+        }
+        sig_free(&now);
         free(buf);
-        return false;
+        if (out != NULL) {
+            *out = res;
+        }
+        return merged;
     }
+    sig_free(&now);
 
     const idx_record_t *recs = (const idx_record_t *)((const char *)buf + h->records_off);
     for (uint32_t i = 0; i < h->record_count; i++) {
-        lib_record_t *r = library_push(lib);
-        if (r == NULL) {
+        if (!record_load(lib, &recs[i], strtab, h->strtab_bytes)) {
             break;
         }
-        memset(r, 0, sizeof(*r));
-
-        r->check_code = recs[i].check_code;
-        memcpy(r->game_code, recs[i].game_code, 4);
-        r->game_code[4] = '\0';
-        r->version   = recs[i].version;
-        r->system    = recs[i].system;
-        r->save_type = recs[i].save_type;
-        r->feat      = recs[i].feat;
-        r->flags     = recs[i].flags;
-        r->dominant  = recs[i].dominant;
-        r->art_kind  = recs[i].art_kind;
-
-        const char *s;
-        if ((s = str_at(strtab, h->strtab_bytes, recs[i].path_off))  != NULL) r->path     = strdup(s);
-        if ((s = str_at(strtab, h->strtab_bytes, recs[i].title_off)) != NULL) r->title    = strdup(s);
-        if ((s = str_at(strtab, h->strtab_bytes, recs[i].art_off))   != NULL) r->art_file = strdup(s);
-
-        /* Art state is rebuilt, never restored. ART_READY refers to a slot in a RAM pool that
-         * does not exist yet at this point in the boot, and restoring it would hand the grid a
-         * record claiming to have art with nothing behind it. The one thing worth carrying over
-         * is the negative: LIBF_ART_MISSING means the search already ran and found nothing. */
-        r->art_state = (r->flags & LIBF_ART_MISSING) ? ART_NONE : ART_PENDING;
-        r->art_age   = 1.0e9f;      /* already settled; no arrival pop for a cached record */
     }
+    res.records_kept = lib->count;
 
     uint32_t total_us = TIMER_MICROS(TICKS_SINCE(t0));
     debugf("LIBINDEX loaded %d titles in %lu us (%lu us of that revalidating %d dirs)\n",
            lib->count, (unsigned long)total_us, (unsigned long)walk_us, (int)h->dirsig_count);
 
     free(buf);
+    if (out != NULL) {
+        *out = res;
+    }
     return lib->count > 0;
 }
 
@@ -340,10 +627,26 @@ bool libindex_save (const library_t *lib, const char *storage_prefix, const char
         return false;
     }
 
-    int sig_count = 0;
-    dirsig_t *sigs = sig_collect(storage_prefix, root, &sig_count);
-    if (sigs == NULL) {
+    sigwalk_t w;
+    if (!sig_collect(storage_prefix, root, false, &w)) {
         debugf("LIBINDEX: could not fingerprint the tree, not caching\n");
+        return false;
+    }
+    bool ok = save_with_sigs(lib, w.sigs, w.count);
+    sig_free(&w);
+    return ok;
+}
+
+/**
+ * @brief Write @p lib against signatures the caller already has.
+ *
+ * Split out for the incremental path, which has just taken the walk and would otherwise pay for a
+ * second identical one -- the walk being the whole cost it exists to avoid. Safe to reuse them:
+ * nothing between the two writes to any directory the walk looks at. The index itself lands in
+ * `mainmenu/cache`, which library_scan_skipped() keeps out of the walk for exactly this reason.
+ */
+static bool save_with_sigs (const library_t *lib, const dirsig_t *sigs, int sig_count) {
+    if (!cache_writable() || lib->count == 0) {
         return false;
     }
 
@@ -352,7 +655,6 @@ bool libindex_save (const library_t *lib, const char *storage_prefix, const char
     uint32_t str_len = 0, str_cap = 0;
 
     if (recs == NULL) {
-        free(sigs);
         return false;
     }
 
@@ -402,7 +704,6 @@ bool libindex_save (const library_t *lib, const char *storage_prefix, const char
         debugf("LIBINDEX: could not build the string table, not caching\n");
         free(strtab);
         free(recs);
-        free(sigs);
         return false;
     }
 
@@ -414,7 +715,6 @@ bool libindex_save (const library_t *lib, const char *storage_prefix, const char
     if (payload == NULL) {
         free(strtab);
         free(recs);
-        free(sigs);
         return false;
     }
 
@@ -440,6 +740,5 @@ bool libindex_save (const library_t *lib, const char *storage_prefix, const char
     free(payload);
     free(strtab);
     free(recs);
-    free(sigs);
     return ok;
 }

@@ -15,10 +15,34 @@
  * cost far less than the scan or there is no point. So the file also stores a **signature per
  * directory**: `{path hash, entry count, sum of file sizes}`. Revalidation walks the tree with
  * `dir_findfirst`/`dir_findnext` and nothing else -- no file is opened, no header is read, no
- * database is consulted -- and compares. One mismatch anywhere means a full rescan.
+ * database is consulted -- and compares.
  *
  * Signatures count **every** entry the scan would look at, art files included, so dropping a new
  * `.jpeg` next to a ROM invalidates the index and the art is picked up.
+ *
+ * ## Repairing it rather than throwing it away
+ *
+ * One mismatch anywhere used to mean a full rescan, and that was the wrong shape of answer. The
+ * signature is already **per directory**: it knows not merely that the card moved but exactly
+ * where. Measured on the M64 at 289 titles, believing the index costs 0.72 s and rebuilding it
+ * costs 14.4 s -- so adding one game to one folder paid the second price for a change confined to
+ * a twenty-sixth of the card.
+ *
+ * A load now has three outcomes rather than two. Everything matching is believed as before. Some
+ * directories matching means the titles in those come out of the file, every directory that is
+ * new or changed is indexed with **no recursion** -- its children carry their own signatures and
+ * get their own verdict -- and the repaired index is written back so the next boot is a plain
+ * revalidation again. Nothing matching, or a walk that failed, still returns false and still
+ * costs a full scan.
+ *
+ * Records are attributed to directories by their own stored path, not by a directory number in
+ * the record. See path_dir_hash() for why the redundant copy is the more dangerous option.
+ *
+ * The signature walk fills the loose-art table on the way past, which the scan used to be the only
+ * thing that did. Without it, a repair could only see the covers in the directories it happened to
+ * rescan -- so a game added to one folder with its cover kept in another would resolve to nothing,
+ * record that as LIBF_ART_MISSING, and be wrong on every boot afterwards, because by then the
+ * directories all match again.
  *
  * What this deliberately does not catch: a file edited in place to exactly the same size. There
  * is no mtime available -- libdragon's `dir_t` carries `d_name`, `d_type` and `d_size` and
@@ -63,12 +87,39 @@
  * rebuild. */
 #define LIBINDEX_MAGIC 0x4D36344E
 
+/** @brief What a load did, for the boot record. See app.c. */
+typedef struct {
+    /** True when the card had moved and the index was repaired rather than believed or thrown
+     *  away. `records_kept` then counts the titles that came out of the file and
+     *  `records_scanned` the ones read off the card again. */
+    bool incremental;
+    int  dirs_total;            /**< directories the signature walk visited */
+    int  dirs_rescanned;        /**< of those, the ones whose signature had moved */
+    int  records_kept;          /**< titles taken from the file; the whole library on a plain hit */
+    int  records_scanned;       /**< titles indexed from the card during a repair */
+} libindex_result_t;
+
 /**
- * @brief Fill @p lib from the cache, if the cache is present and still matches the card.
+ * @brief Fill @p lib from the cache, repairing it if the card has moved underneath it.
+ *
+ * Three outcomes, and only the third costs a full scan:
+ *
+ * - **Unchanged.** Every directory signature matches; the file is believed as it stands.
+ * - **Moved.** Some directories match and some do not. Titles in the ones that match are taken
+ *   from the file, the rest of the card is read again one directory at a time, and the repaired
+ *   index is written back. Adding a game to a 289-title card costs the directory it went in
+ *   rather than all 26 of them.
+ * - **Unusable.** No file, a header that does not survive its bounds checks, a walk that failed,
+ *   or nothing at all left to keep. Returns false and the caller scans.
+ *
+ * @param on_progress  Optional; passed to any rescan so the boot plate keeps moving. NULL is
+ *                     silent, which is what the host tests use.
+ * @param out          Optional; filled in on every non-trivial return.
  *
  * @return true if @p lib is now populated and no scan is needed.
  */
-bool libindex_load (library_t *lib, const char *storage_prefix, const char *root);
+bool libindex_load (library_t *lib, const char *storage_prefix, const char *root,
+                    library_scan_progress_t on_progress, libindex_result_t *out);
 
 /** @brief Write @p lib and a fresh set of directory signatures. False if storage is read-only. */
 bool libindex_save (const library_t *lib, const char *storage_prefix, const char *root);

@@ -285,7 +285,8 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * a plate, then a grid. Both are timed and both are reported, so "the list is slow" becomes a
      * number with a cause attached instead of a hypothesis. */
     uint32_t t_idx = TICKS_READ();
-    bool idx_hit = libindex_load(app->lib, app->storage, SCAN_ROOT);
+    libindex_result_t idx = { 0 };
+    bool idx_hit = libindex_load(app->lib, app->storage, SCAN_ROOT, scan_progress, &idx);
     uint32_t idx_us = TIMER_MICROS(TICKS_SINCE(t_idx));
     uint32_t scan_us = 0;
 
@@ -308,11 +309,21 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * two open handles on one file is not something to find out about on a card. */
     launchlog_begin_boot();
     if (launchlog_open()) {
-        launchlog_line("%s %s  storage [%s]  cache %s", MENU_VERSION,
-                       idx_hit ? "index HIT" : "index MISS -> full scan",
+        const char *verdict = "index MISS -> full scan";
+        if (idx_hit) {
+            verdict = idx.incremental ? "index REPAIRED" : "index HIT";
+        }
+        launchlog_line("%s %s  storage [%s]  cache %s", MENU_VERSION, verdict,
                        app->storage, cache_status());
         launchlog_line("titles %d", app->lib->count);
-        if (idx_hit) {
+        if (idx.incremental) {
+            /* The two halves separately, because they answer different questions: how much of the
+             * card the repair had to read, and whether the directory signatures are actually
+             * localising the change or firing across the whole tree. */
+            launchlog_line("repair %lu us: %d of %d dirs rescanned, %d titles kept, %d rescanned",
+                           (unsigned long)idx_us, idx.dirs_rescanned, idx.dirs_total,
+                           idx.records_kept, idx.records_scanned);
+        } else if (idx_hit) {
             launchlog_line("revalidate %lu us", (unsigned long)idx_us);
         } else {
             launchlog_line("revalidate %lu us (rejected), scan %lu us = %lu us/rom",

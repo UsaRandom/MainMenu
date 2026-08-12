@@ -145,9 +145,11 @@ tools/            fixture, demo tree, input scripts, regression, video, cheat co
 - **The write half is unexecuted on real storage.** ares cannot reach it. `tools/hosttest/run.sh`
   compiles the real `cache.c` and `thumbstore.c` natively and round-trips them against actual
   files, and `--mutate` proves both suites can go red — breaking the CRC seed, and dropping the
-  `+ 1` from `slot_offset()`, which 10 of the atlas suite's 31 checks catch. `libindex.c`,
-  `playstate.c` and `cheatstate.c` are still verified only by compile-time size assertions. See
-  AUDIT.md 1r for the hardware bring-up order and 1s for the pre-hardware bug scan.
+  `+ 1` from `slot_offset()`, which 10 of the atlas suite's 31 checks catch. `libindex.c` joined
+  them at 446 checks — round trip, the staleness matrix, and a repaired index compared record by
+  record against a full scan of the same tree. `playstate.c` and `cheatstate.c` are still verified
+  only by compile-time size assertions. See AUDIT.md 1r for the hardware bring-up order, 1s for
+  the pre-hardware bug scan and 1ay for what the index test had to exist before.
 - **Cheats are toggled as named groups, never per line.** A `D0` conditional and the write it
   guards are one indivisible thing; see AUDIT.md 2.2 for what per-line toggling did.
 - **Three of the five fonts carry an 84-glyph charset.** A character outside it draws as nothing,
