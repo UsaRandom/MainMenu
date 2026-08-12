@@ -72,6 +72,18 @@ $CC $CFLAGS tools/hosttest/test_boxart.c src/library/boxart.c src/menu/image_pro
 TESTDIR="$OUT/boxartdir" "$OUT/test_boxart" 2>/dev/null
 
 echo
+echo "== loose art: sorted, deduplicated, found by bsearch"
+rm -rf "$OUT/artdir"
+mkdir -p "$OUT/artdir"
+# The whole of library.c compiles here, which is new -- the shim grew dir_findfirst/dir_findnext
+# over POSIX readdir so the real scan can walk a real directory tree. That matters because which
+# duplicate survives is decided by traversal order, so a test that faked the traversal would be
+# asserting against its own fake. The five ROM-side symbols are stubbed inside the test; a tree
+# of .png files never reaches them, and the test fails if it ever does.
+$CC $CFLAGS tools/hosttest/test_library_art.c src/library/library.c -o "$OUT/test_library_art"
+TESTDIR="$OUT/artdir" "$OUT/test_library_art" 2>/dev/null
+
+echo
 echo "== fonts: every literal drawn in a restricted charset"
 # Three of the five faces carry an 84-glyph charset rather than the body font's 7,931, because a
 # full-charset bake at 40 px is about 2.7 MB. A character outside it draws as nothing, silently,

@@ -1,18 +1,30 @@
-# The boot plate, sampled across its 1.64 s timeline.
+# The boot plate, sampled from the first frame the main loop draws.
 #
-# Frame counts assume 60 Hz. The library scan runs before the first frame, so t=0 here is the
-# first drawn frame and not power-on -- which is the honest thing to measure, because the scan is
-# not part of the animation and its duration depends on how many ROMs are on the card.
+# Frame counts assume 60 Hz. This used to say the scan runs before the first frame, so t=0 was
+# power-on -- that is no longer true. app.c arms the plate BEFORE library_scan() and paints it
+# from the scan's progress callback, so the mark's 0.55 s rise is spent while the card is being
+# walked and the plate is already at full hold by the time the main loop draws frame 1.
+#
+# Measured against a build with the callback passed as NULL, same fixture:
+#
+#     before  90c6bc6e  e40caf17  ac5ff162  ac5ff162  ac5ff162  ac5ff162
+#     after   ac5ff162  ac5ff162  ac5ff162  c3345dd0  b411b5ce  b64f257d
+#
+# ac5ff162 is the plate holding still. Before, four of the six sampled frames were that one
+# static image; after, the curtain is moving by frame 4. The frames did not get faster -- the
+# rise moved off the front, so what this script now samples is the back half of the timeline.
+# What the scan itself looks like is NOT sampled here: it happens before the main loop, and
+# fbdump is driven by the input script, which the main loop runs.
 
-fbdump              # 1: t=0, mark at 88 % and 22 %
+fbdump              # 1: plate at full hold; the rise happened during the scan
 wait 18
-fbdump              # 2: t~0.30, mid-rise
+fbdump              # 2: still holding
 wait 16
-fbdump              # 3: t~0.57, full, hold begins
+fbdump              # 3: still holding
 wait 42
-fbdump              # 4: t~1.27, still holding
+fbdump              # 4: curtain released
 wait 10
-fbdump              # 5: t~1.44, curtain part way up, grid showing underneath
+fbdump              # 5: curtain part way up, grid showing underneath
 wait 12
 fbdump              # 6: t~1.64, plate gone
 exit

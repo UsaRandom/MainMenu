@@ -33,6 +33,7 @@
 #include "menu/parental.h"
 #include "menu/paths.h"
 #include "menu/sound.h"
+#include "screens/boot_plate.h"
 #include "screens/screens.h"
 #include "ui/tween.h"
 
@@ -92,6 +93,52 @@ static void pump_audio (app_t *app) {
 void app_fault (app_t *app, const char *message) {
     app->fault_message = message;
     app->next_screen = SCREEN_FAULT;
+}
+
+/** @brief How often the scan is allowed to stop and paint. ~30 Hz. */
+#define SCAN_TICK_US    33000
+
+/**
+ * @brief Paint the boot plate from inside the library scan. See library_scan_progress_t.
+ *
+ * The second place in this codebase where drawing happens outside render(), and for the same
+ * reason as the first (screen_launch.c's on_progress): the work is one blocking call and the main
+ * loop is suspended above it, so either this draws or nothing does.
+ *
+ * Three things it must do, and the middle one is not obvious:
+ *
+ *  - Throttle. The scan calls back once per directory entry, which on this card is over a
+ *    thousand times. Painting each one would cost more than the scan.
+ *  - Feed the mixer. Nothing else is touching the AI for the whole scan, and an N64 whose AI runs
+ *    dry does not fall silent, it repeats the last buffer it was given -- the same fragment-of-
+ *    audio symptom documented at length in screen_launch.c. Three seconds of it, here.
+ *  - Advance the plate by REAL elapsed time, so the hold that would otherwise follow the scan is
+ *    spent during it instead.
+ *
+ * Skips the paint rather than blocking when no framebuffer is free, on screen_launch's reasoning:
+ * a dropped frame is invisible, a stalled scan is not. The clock is advanced either way, or a card
+ * that happens to be short of buffers would come out of the scan with the hold still to serve.
+ */
+static void scan_progress (int found) {
+    static uint32_t last_ticks;
+
+    uint32_t now = TICKS_READ();
+    uint32_t dt_us = (last_ticks != 0) ? TIMER_MICROS(TICKS_SINCE(last_ticks)) : SCAN_TICK_US;
+    if (last_ticks != 0 && dt_us < SCAN_TICK_US) {
+        return;
+    }
+    last_ticks = now;
+
+    sound_poll();
+    boot_plate_hold((float)dt_us / 1000000.0f);
+
+    surface_t *fb = display_try_get();
+    if (fb == NULL) {
+        return;
+    }
+    rdpq_attach(fb, NULL);
+    boot_plate_draw(MENU_VERSION, found);
+    rdpq_detach_show();
 }
 
 static void app_init (app_t *app, boot_params_t *boot_params) {
@@ -219,8 +266,21 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * to launch into. Costs one boot-time megabyte scan; compiles to nothing in release. */
     hooktest_run();
 
+    /* Before the scan, not after it, and this is the whole point of arming it here rather than
+     * leaving it to the first screen's enter(). The scan is one blocking call -- 11,499 us per
+     * ROM, so 3.2 s on a 278-title card -- and it ran with nothing on screen at all, after which
+     * the plate started its own 2.5 s hold. Sequential, so the plate covered none of the cost it
+     * exists to cover, and a card that grew from 19 titles to 278 turned a fast boot into a long
+     * one with a blank screen for most of it.
+     *
+     * Armed unconditionally rather than only on the slow path: on a warm index there is no scan
+     * to cover, boot_plate_hold() is never called, and the plate behaves exactly as it did. The
+     * grid and the picker still call boot_plate_arm() in their enter() and both are now no-ops,
+     * which is the documented contract -- first caller wins. */
+    boot_plate_arm();
+
     if (!libindex_load(app->lib, app->storage, SCAN_ROOT)) {
-        library_scan(app->lib, app->storage, SCAN_ROOT);
+        library_scan(app->lib, app->storage, SCAN_ROOT, scan_progress);
         /* Between the scan and the save, and it has to be between them. The scan is the only
          * thing that ever fills lib->art, and nothing rebuilds that table when the index loads
          * instead -- so unless the answers are written into the index now, every boot from a warm

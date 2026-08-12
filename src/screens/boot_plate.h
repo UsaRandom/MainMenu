@@ -33,6 +33,22 @@ void boot_plate_arm (void);
 bool boot_plate_step (float dt, bool ready);
 
 /**
+ * @brief Advance the clock during blocking work, without ever releasing.
+ *
+ * For the stretch before the main loop exists. The library scan is a single blocking call of
+ * about 11.5 ms per ROM -- 3.2 s on a 278-title card, and it runs on every boot on a console
+ * where cache_writable() is false -- and until this existed the screen showed nothing at all for
+ * the whole of it, then the plate began its own 2.5 s hold afterwards. The two were sequential,
+ * so the plate hid none of the cost it was there to hide.
+ *
+ * Clamped to the minimum hold rather than left to run, because the ceiling in boot_plate_step()
+ * would otherwise fire mid-scan and lift the curtain onto a grid that does not exist yet. Arriving
+ * at the main loop already at the threshold is the point: the first step() with a ready screen
+ * releases immediately, so a scan that takes longer than the hold costs nothing beyond itself.
+ */
+void boot_plate_hold (float dt);
+
+/**
  * @brief True while the plate is holding still and background work is free.
  *
  * False during the mark's rise and during the curtain, which are the two animated stretches and

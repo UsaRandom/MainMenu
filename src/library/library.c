@@ -103,6 +103,31 @@ void library_free (library_t *lib) {
     free(lib);
 }
 
+/** @brief Longest art key we will build on the stack. Longer names fall back to the heap. */
+#define ART_KEY_CAP 256
+
+/**
+ * @brief Lowercase @p name with its extension stripped, into @p out.
+ *
+ * Exists so a lookup costs no allocation. library_find_art() used to build its key with
+ * art_key_from_name(), which mallocs -- two lookups per record across a 278-title card is 556
+ * malloc/free pairs on the boot path, for keys that never outlive the comparison.
+ *
+ * @return false if the name is empty or does not fit, in which case @p out is untouched.
+ */
+static bool art_key_into (char *out, size_t cap, const char *name) {
+    const char *dot = strrchr(name, '.');
+    size_t n = (dot != NULL) ? (size_t)(dot - name) : strlen(name);
+    if (n == 0 || n >= cap) {
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (char)tolower((unsigned char)name[i]);
+    }
+    out[n] = '\0';
+    return true;
+}
+
 /** @brief Lowercase @p name with its extension stripped, into a fresh allocation. */
 static char *art_key_from_name (const char *name) {
     const char *dot = strrchr(name, '.');
@@ -121,17 +146,30 @@ static char *art_key_from_name (const char *name) {
     return key;
 }
 
-/** @brief Remember a loose PNG. Duplicates keep the first seen, so the shallowest wins. */
+/**
+ * @brief Remember a loose PNG. Duplicates keep the first one the scan reached.
+ *
+ * This used to say "so the shallowest wins", and that was never true. scan_dir() recurses into a
+ * subdirectory at the point it meets it in the directory listing, so a duplicate one level down
+ * is pushed before a sibling file that readdir happens to return later -- which is exactly what
+ * `tools/hosttest/test_library_art.c` found on the first tree it built. The rule is DFS order,
+ * and it coincides with "shallowest" only when the listing puts the file before the directory.
+ * Behaviour is unchanged; only the description was wrong.
+ *
+ * Appends unconditionally. It used to scan the whole table for a duplicate on every push, which
+ * is O(n^2) across the scan -- about 38,000 strcmp on the 278-cover card that prompted this, and
+ * growing as the square. Deduplication moved into art_sort(), which is already touching every
+ * entry and can drop a duplicate for the cost of one comparison against its neighbour.
+ *
+ * The "first seen wins" rule survives the move because each entry records its scan order in
+ * ::art_entry_t::seq and the sort breaks ties on it. Without that, qsort being unstable would
+ * make which duplicate survives depend on the input order -- the kind of bug that reproduces on
+ * one card and not another.
+ */
 static void art_push (library_t *lib, const char *name, const char *full_path) {
     char *key = art_key_from_name(name);
     if (key == NULL) {
         return;
-    }
-    for (int i = 0; i < lib->art_count; i++) {
-        if (strcmp(lib->art[i].key, key) == 0) {
-            free(key);
-            return;
-        }
     }
     if (lib->art_count == lib->art_capacity) {
         int cap = (lib->art_capacity == 0) ? 32 : lib->art_capacity * 2;
@@ -150,7 +188,49 @@ static void art_push (library_t *lib, const char *name, const char *full_path) {
     }
     lib->art[lib->art_count].key = key;
     lib->art[lib->art_count].path = path;
+    lib->art[lib->art_count].seq = lib->art_count;
     lib->art_count++;
+    lib->art_sorted = false;
+}
+
+/** @brief Order by key, then by scan order so the shallowest duplicate sorts first. */
+static int art_cmp (const void *a, const void *b) {
+    const art_entry_t *x = a, *y = b;
+    int c = strcmp(x->key, y->key);
+    if (c != 0) {
+        return c;
+    }
+    return (x->seq > y->seq) - (x->seq < y->seq);
+}
+
+/**
+ * @brief Sort the art table by key and drop duplicates, leaving it ready for bsearch.
+ *
+ * Called lazily from library_find_art() rather than at the end of the scan, because the scan is
+ * not the only thing that fills the table -- and a table that is sorted at one call site and not
+ * another is exactly how a bsearch starts returning misses for entries that are present.
+ */
+static void art_sort (library_t *lib) {
+    if (lib->art_sorted || lib->art_count == 0) {
+        lib->art_sorted = true;
+        return;
+    }
+    qsort(lib->art, (size_t)lib->art_count, sizeof(art_entry_t), art_cmp);
+
+    /* Compact in place, keeping the first of each run -- which the tiebreak above has already
+     * made the lowest seq, so this is the same survivor the old push-time check would have
+     * picked. */
+    int w = 1;
+    for (int r = 1; r < lib->art_count; r++) {
+        if (strcmp(lib->art[r].key, lib->art[w - 1].key) == 0) {
+            free(lib->art[r].key);
+            free(lib->art[r].path);
+            continue;
+        }
+        lib->art[w++] = lib->art[r];
+    }
+    lib->art_count = w;
+    lib->art_sorted = true;
 }
 
 /** @brief The filename part of @p path, or the whole thing if it has no separator. */
@@ -196,22 +276,35 @@ int library_resolve_loose_art (library_t *lib) {
 }
 
 const char *library_find_art (const library_t *lib, const char *name) {
-    if (lib == NULL || name == NULL || name[0] == '\0') {
+    if (lib == NULL || name == NULL || name[0] == '\0' || lib->art_count == 0) {
         return NULL;
     }
-    char *key = art_key_from_name(name);
-    if (key == NULL) {
+
+    char key[ART_KEY_CAP];
+    if (!art_key_into(key, sizeof(key), name)) {
         return NULL;
     }
-    const char *found = NULL;
-    for (int i = 0; i < lib->art_count; i++) {
-        if (strcmp(lib->art[i].key, key) == 0) {
-            found = lib->art[i].path;
-            break;
+
+    /* Sorting is a mutation of a table the caller handed us as const, and the cast says so. The
+     * const is about the *library* -- records, counts, what the scan found -- and the art table's
+     * order is not part of that: every lookup returns the same path before and after. Same reason
+     * and same shape as library_touch() in thumbcache's art_probe_shape(). */
+    art_sort((library_t *)lib);
+
+    int lo = 0, hi = lib->art_count - 1;
+    while (lo <= hi) {
+        int mid = lo + ((hi - lo) / 2);
+        int c = strcmp(lib->art[mid].key, key);
+        if (c == 0) {
+            return lib->art[mid].path;
+        }
+        if (c < 0) {
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
         }
     }
-    free(key);
-    return found;
+    return NULL;
 }
 
 /** @brief True when @p name looks like art: .png, .jpg or .jpeg, case-insensitively. */
@@ -382,7 +475,8 @@ static bool skipped_file (const char *name) {
     return false;
 }
 
-static int scan_dir (library_t *lib, const char *dir, int depth) {
+static int scan_dir (library_t *lib, const char *dir, int depth,
+                     library_scan_progress_t on_progress) {
     if (depth > SCAN_MAX_DEPTH) {
         return 0;
     }
@@ -397,12 +491,19 @@ static int scan_dir (library_t *lib, const char *dir, int depth) {
             continue;
         }
 
+        /* Per entry rather than per record added, so the readout keeps moving through a folder of
+         * covers or a deep tree of nothing. lib->count rather than `added`, because `added` is
+         * this directory's tally and the plate is showing the library's. */
+        if (on_progress != NULL) {
+            on_progress(lib->count);
+        }
+
         char child[512];
         snprintf(child, sizeof(child), "%s/%s", dir, info.d_name);
 
         if (info.d_type == DT_DIR) {
             if (!library_scan_skipped(info.d_name)) {
-                added += scan_dir(lib, child, depth + 1);
+                added += scan_dir(lib, child, depth + 1, on_progress);
             }
         } else if (skipped_file(info.d_name)) {
             /* Nothing at all: not a game, and not art either. */
@@ -457,7 +558,8 @@ void library_join (char *out, size_t cap, const char *storage_prefix, const char
              (prefix_slash && root[0] == '/') ? root + 1 : root);
 }
 
-int library_scan (library_t *lib, const char *storage_prefix, const char *root) {
+int library_scan (library_t *lib, const char *storage_prefix, const char *root,
+                  library_scan_progress_t on_progress) {
     char base[512];
 
     /* The prefix already ends in a slash ("rom:/", "sd:/") and every caller passes an absolute
@@ -470,7 +572,7 @@ int library_scan (library_t *lib, const char *storage_prefix, const char *root) 
     library_join(base, sizeof(base), storage_prefix, root);
 
     uint32_t t0 = TICKS_READ();
-    int added = scan_dir(lib, base, 0);
+    int added = scan_dir(lib, base, 0, on_progress);
     uint32_t us = TIMER_MICROS(TICKS_SINCE(t0));
 
     qsort(lib->records, lib->count, sizeof(lib_record_t), compare_title);

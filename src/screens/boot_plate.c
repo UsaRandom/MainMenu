@@ -118,6 +118,16 @@ bool boot_plate_done (void) {
     return plate.done;
 }
 
+void boot_plate_hold (float dt) {
+    if (plate.done || !plate.armed || plate.released) {
+        return;
+    }
+    plate.t += dt;
+    if (plate.t > T_HOLD_MIN) {
+        plate.t = T_HOLD_MIN;
+    }
+}
+
 bool boot_plate_step (float dt, bool ready) {
     if (plate.done) {
         return false;

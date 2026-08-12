@@ -119,6 +119,7 @@ typedef struct {
 typedef struct {
     char *key;                  /**< basename with the extension removed, lowercased */
     char *path;                 /**< full path, heap */
+    int   seq;                  /**< scan order; breaks ties so the shallowest duplicate wins */
 } art_entry_t;
 
 /** @brief The whole index. */
@@ -134,6 +135,9 @@ typedef struct {
     art_entry_t *art;
     int art_count;
     int art_capacity;
+    /** True once the art table is sorted by key and deduplicated, which is what makes
+     *  library_find_art() a bsearch instead of a walk. Cleared by every push. */
+    bool art_sorted;
 
     /** Set when a record has changed in a way the index does not yet know about.
      *
@@ -213,6 +217,21 @@ void library_join (char *out, size_t cap, const char *storage_prefix, const char
  */
 bool library_scan_skipped (const char *name);
 
+/**
+ * @brief Called during library_scan() so the caller can show that something is happening.
+ *
+ * @param found  Titles indexed so far. There is no total to divide by -- the scan discovers the
+ *               tree as it walks it -- so this is a count that climbs, not a fraction. The boot
+ *               plate already prints "<n> TITLES", which turns out to be exactly the right
+ *               readout for a scan with no denominator.
+ *
+ * Called often (once per directory entry), so an implementation that draws MUST throttle itself.
+ * It also runs inside a blocking call with the main loop suspended above it, which means nothing
+ * else is feeding the mixer -- see the sound_poll() in screen_launch.c's on_progress for what an
+ * unfed AI does on this console.
+ */
+typedef void (*library_scan_progress_t)(int found);
+
 /** @brief Free the library and every string it owns. */
 void library_free (library_t *lib);
 
@@ -226,9 +245,12 @@ void library_touch (library_t *lib);
  * then the ~450-entry ares database. That single 4 KB read is why a large scan is minutes
  * rather than hours.
  *
+ * @param on_progress  Optional; NULL for a silent scan. See library_scan_progress_t.
+ *
  * @return number of records added.
  */
-int library_scan (library_t *lib, const char *storage_prefix, const char *root);
+int library_scan (library_t *lib, const char *storage_prefix, const char *root,
+                  library_scan_progress_t on_progress);
 
 /**
  * @brief Point every record at its loose art file, using the table the scan just built.
