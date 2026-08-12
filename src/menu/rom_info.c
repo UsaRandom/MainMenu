@@ -1000,6 +1000,32 @@ static bool load_rom_meta_from_embedded_zip (const char *rom_path, rom_header_t 
     return success;
 }
 
+/**
+ * @brief Does `sd:/menu/metadata` exist at all? Answered once, at first use.
+ *
+ * The metadata fallback below builds `menu/metadata/<G>/<A>/<M>/<E>/metadata.ini` and opens it for
+ * every N64 title on the card. On a card with no art pack that is one guaranteed miss per ROM, and
+ * a miss is not free: FatFs resolves a path by walking each directory in it, and this runs from
+ * inside library.c's scan, which is itself part-way through enumerating the directory the ROM
+ * lives in. 278 titles in one flat folder of 556 entries made that measurable in the worst way --
+ * a user-reported 0.7 s per title on hardware, against the 11.5 ms/rom AUDIT.md measured through
+ * ares' DFS, which has no directory to walk at all.
+ *
+ * Cached in a static rather than re-checked, because the answer cannot change during a scan and
+ * the whole point is to do one directory lookup instead of one per ROM. Reset is deliberately not
+ * offered: a card swap reboots the console.
+ */
+static bool metadata_dir_present (void) {
+    static int cached = -1;
+    if (cached < 0) {
+        /* Non-const char* in the fs API, so a literal will not do under -Werror. */
+        static char base[] = "sd:/menu/metadata";
+        cached = directory_exists(base) ? 1 : 0;
+        debugf("[META] metadata base directory %s\n", cached ? "present" : "absent, fallback skipped");
+    }
+    return cached == 1;
+}
+
 static void load_rom_meta_from_file (path_t *path, rom_info_t *rom_info) {
     path_t *rom_info_meta_path = path_clone(path);
 
@@ -1023,6 +1049,12 @@ static void load_rom_meta_from_file (path_t *path, rom_info_t *rom_info) {
 
     if (!file_exists(path_get(rom_info_meta_path))) {
         debugf("[META] load_rom_meta_from_file: metadata.ini not found at '%s'\n", meta_path_str);
+        /* No pack on this card, so the fallback below can only miss -- and a miss costs a full
+         * path walk, once per title, from inside the scan. See metadata_dir_present(). */
+        if (!metadata_dir_present()) {
+            path_free(rom_info_meta_path);
+            return;
+        }
         // If that file does not exist, fall back to metadata database using game_code (like boxart uses).
         // TODO: we should probably check the homebrew path as well.
         char gamecode_str[8];
