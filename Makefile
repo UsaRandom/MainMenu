@@ -109,6 +109,11 @@ ICON_META  = $(FILESYSTEM_DIR)/icons.meta
 ICON_STAMP = $(BUILD_DIR)/.icons-$(ICON_LIMIT)-$(if $(ICON_EXCLUDE),excl,noexcl)-$(shell echo '$(ICON_DIR)' | cksum | cut -d' ' -f1)
 HAVE_ICONS = $(wildcard $(ICON_DIR))
 
+# The cheat corpus is a release artifact built by tools/mkcheatdb.py and is never committed, so a
+# clean checkout has none and the ROM simply ships without it -- the menu then reads the card's
+# copy exactly as it always did. CC BY-SA 4.0, credited in docs/CREDITS.md; see cheatdb.h.
+HAVE_CHEATDB = $(wildcard $(BUILD_DIR)/cheats.db)
+
 # PLAIN_ART=1 builds the fixture from mkfixture's own procedural cards instead of the real corpus,
 # into a directory of its own so the real fixture is left alone. It exists for one script: the
 # real corpus cannot SETTLE. One card in it is 2118 x 1457 and decodes for 38 seconds, so a
@@ -352,6 +357,7 @@ FILESYSTEM = \
 	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(IMAGES:%.png=%.sprite))) \
 	$(FILESYSTEM_DIR)/credits.txt \
 	$(if $(HAVE_ICONS),$(ICON_PACK) $(ICON_META),) \
+	$(if $(HAVE_CHEATDB),$(FILESYSTEM_DIR)/cheats.db,) \
 	$(MUSIC_FS)
 
 $(MINIZ_OBJS): N64_CFLAGS+=-Wno-unused-function -fcompare-debug-second
@@ -444,6 +450,15 @@ $(FILESYSTEM_DIR)/%.wav64: $(ASSETS_DIR)/sounds/%.wav
 # no build tool in the way -- which is also what makes replacing a track a one-file operation.
 $(FILESYSTEM_DIR)/music/%.mid: $(ASSETS_DIR)/music/%.mid
 	@mkdir -p $(dir $@)
+	@cp "$<" "$@"
+
+# Copied, not converted, and deliberately not compressed: cheatdb reads an 18.7 KB index at boot
+# and then one fseek + one fread per game, so a packed blob would have to be inflated whole to
+# use any of it. Card copies win over this one -- see cheatdb_open() -- so a newer corpus is
+# still a file swap and not a reflash.
+$(FILESYSTEM_DIR)/cheats.db: $(BUILD_DIR)/cheats.db
+	@mkdir -p $(dir $@)
+	@echo "    [CHEATS] $@ ($$(du -h $< | cut -f1))"
 	@cp "$<" "$@"
 
 $(FILESYSTEM_DIR)/%.sprite: $(ASSETS_DIR)/images/%.png

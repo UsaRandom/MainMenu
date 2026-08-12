@@ -14,6 +14,12 @@
 /filesystem/credits.txt
 /filesystem/icons.meta
 
+# cheats.db is the libretro cheat corpus, refetched by tools/mkcheatdb.py and packed into the
+# ROM so a card with no database still has cheats. Ignored for two reasons, not one: it is
+# generated like everything else in this block, AND it is someone else's work -- CC BY-SA 4.0,
+# credited in docs/CREDITS.md. Unlike assets/icons, this corpus is deliberately not vendored.
+/filesystem/cheats.db
+
 # icons.pack is the 3,894 icons in assets/icons concatenated by tools/mkpack.py into one blob the
 # ROM can seek within, 6,561,304 bytes of it. Ignored because it is generated, like every other
 # entry in this block -- not because of what is in it. The artwork itself IS committed, in

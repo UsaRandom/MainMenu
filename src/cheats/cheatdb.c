@@ -11,6 +11,7 @@
 
 #include "cheats/cheatdb.h"
 #include "menu/paths.h"
+#include "utils/fs.h"
 
 #define CHEATDB_FILE        "cheats.db"
 
@@ -106,7 +107,21 @@ bool cheatdb_open (const char *storage_prefix) {
      * that buys nothing. See menu/paths.h. */
     char path[300];
     if (!menu_find_file(path, sizeof(path), storage_prefix, CHEATDB_FILE)) {
-        return false;         /* no database on this card; not an error */
+        /* Nothing on the card, so use the copy baked into the cartridge if this build has one.
+         *
+         * Card first, deliberately. The corpus is refetched and regenerated -- 1.1.0's keys are
+         * per region, which is a breaking change to the format's contents -- and a user who drops
+         * a newer cheats.db on their card must get that one rather than whatever was current when
+         * their menu was built. So this is a fallback, never an override, and dropping the file on
+         * the card is still all it takes to update.
+         *
+         * Absent in both places stays "not an error": a build made without the corpus present
+         * ships no copy, and the cheats screen is simply empty, exactly as before. */
+        snprintf(path, sizeof(path), "rom:/%s", CHEATDB_FILE);
+        if (!file_exists(path)) {
+            return false;     /* no database on this card and none in the ROM; not an error */
+        }
+        debugf("CHEATDB: no copy on the card, using the one in the cartridge\n");
     }
 
     db_file = fopen(path, "rb");
