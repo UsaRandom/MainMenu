@@ -8,7 +8,9 @@ Build sd:/menu/cheats.db from libretro's cheat corpus.
 **Output is a release artifact placed on the SD card. It is never committed and never linked
 into the ROM.** The corpus is not committed either.
 
-Corpus: libretro/libretro-database, `cht/Nintendo - Nintendo 64/`. MIT, actively maintained,
+Corpus: libretro/libretro-database, `cht/Nintendo - Nintendo 64/`. CC BY-SA 4.0 -- this said
+MIT until 2026-08-11 and was wrong, which is exactly the drift the CORPUS-LICENSE.txt capture
+below exists to catch. Actively maintained,
 several hundred games. Chosen over the two obvious alternatives for reasons worth keeping:
 mupen64plus' mupencheat.txt is GPLv2-only and this repo is AGPL-3.0, which is incompatible for a
 combined work; Project64's Cheats.rdb has murky provenance. The codes themselves are addresses

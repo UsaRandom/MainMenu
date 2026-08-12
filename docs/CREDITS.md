@@ -207,9 +207,14 @@ emulator's database. ares is ISC licensed, copyright (c) 2004-2025 ares team, Ne
 
   https://ares-emu.net
 
-The cheat codes, where a build ships them, come from libretro-database. MIT.
+The cheat codes come from libretro-database, licensed Creative Commons Attribution-ShareAlike 4.0
+International (CC BY-SA 4.0). This entry said MIT until 2026-08-11, which was wrong; the licence
+was read from the repository rather than from a comment. The database this project builds from it
+-- regrouped, keyed per game code and region, and packed into cheats.db by tools/mkcheatdb.py --
+is an adaptation, and is offered under the same CC BY-SA 4.0 terms.
 
   https://github.com/libretro/libretro-database
+  https://creativecommons.org/licenses/by-sa/4.0/
 
 ---
 
