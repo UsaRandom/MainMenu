@@ -475,6 +475,28 @@ static bool skipped_file (const char *name) {
     return false;
 }
 
+/**
+ * @brief Read a directory's entries out in full before touching anything in it.
+ *
+ * The scan used to interleave: read one entry, then immediately open the ROM it named and probe
+ * three sidecars beside it, then ask for the next entry. Two things came of that, both bad.
+ *
+ * FatFs is built here with FF_FS_TINY, which means ONE 512-byte sector window per filesystem
+ * rather than one per open file. So every probe's path walk evicted the sector the enumeration
+ * was standing on, and the enumeration evicted it back. They thrashed each other for the whole
+ * scan.
+ *
+ * And the probes themselves were answerable from what the enumeration had already seen. A
+ * `<rom>.ini`, `<rom>.meta` or `<rom>.metadata.ini` lives in the directory being read, so once
+ * the listing is in memory the question costs a string compare instead of a directory walk that
+ * has to reach the end to prove absence.
+ *
+ * Recursion moves to the end, after every file here is done. That changes DFS order, and it
+ * changes it toward what art_push() always claimed: with subdirectories visited last, the
+ * SHALLOWEST duplicate cover really does win now, where before it was whichever the directory
+ * listing happened to put first. The claim in art_push() is finally true; see the note there and
+ * the duplicate checks in tools/hosttest/test_library_art.c.
+ */
 static int scan_dir (library_t *lib, const char *dir, int depth,
                      library_scan_progress_t on_progress) {
     if (depth > SCAN_MAX_DEPTH) {
@@ -484,10 +506,42 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
     dir_t info;
     int added = 0;
 
+    /* The listing, held only for this frame. Names rather than a fixed table because a directory
+     * of several hundred covers is normal and a fixed cap would silently stop indexing past it. */
+    char **names = NULL;
+    bool *isdir = NULL;
+    int n = 0, cap = 0;
+
     int result = dir_findfirst(dir, &info);
     while (result == 0) {
-        if (info.d_name[0] == '.') {
-            result = dir_findnext(dir, &info);
+        if (info.d_name[0] != '.') {
+            if (n == cap) {
+                int want = cap ? cap * 2 : 32;
+                char **gn = realloc(names, (size_t)want * sizeof(*gn));
+                bool *gd = realloc(isdir, (size_t)want * sizeof(*gd));
+                if (gn != NULL) { names = gn; }
+                if (gd != NULL) { isdir = gd; }
+                if (gn == NULL || gd == NULL) {
+                    break;      /* out of memory: index what was read, do not lose it */
+                }
+                cap = want;
+            }
+            names[n] = strdup(info.d_name);
+            if (names[n] == NULL) {
+                break;
+            }
+            isdir[n] = (info.d_type == DT_DIR);
+            n++;
+        }
+        result = dir_findnext(dir, &info);
+    }
+
+    /* Files first, so a subdirectory cannot get between a ROM and the sidecar sitting beside it,
+     * and so the listing above is what answers the sidecar question. */
+    rom_info_set_dir_listing((const char *const *)names, n);
+
+    for (int i = 0; i < n; i++) {
+        if (isdir[i]) {
             continue;
         }
 
@@ -499,28 +553,24 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
         }
 
         char child[512];
-        snprintf(child, sizeof(child), "%s/%s", dir, info.d_name);
+        snprintf(child, sizeof(child), "%s/%s", dir, names[i]);
 
-        if (info.d_type == DT_DIR) {
-            if (!library_scan_skipped(info.d_name)) {
-                added += scan_dir(lib, child, depth + 1, on_progress);
-            }
-        } else if (skipped_file(info.d_name)) {
+        if (skipped_file(names[i])) {
             /* Nothing at all: not a game, and not art either. */
-        } else if (is_image(info.d_name)) {
-            /* Art sitting loose in the tree, whatever it is named or formatted as. Recorded here rather than
-             * searched for later: this loop is already visiting every file, so the whole
-             * feature costs one extension compare per entry. */
-            art_push(lib, info.d_name, child);
+        } else if (is_image(names[i])) {
+            /* Art sitting loose in the tree, whatever it is named or formatted as. Recorded here
+             * rather than searched for later: this loop is already visiting every file, so the
+             * whole feature costs one extension compare per entry. */
+            art_push(lib, names[i], child);
         } else {
             uint8_t system;
-            if (classify(info.d_name, &system)) {
+            if (classify(names[i], &system)) {
                 lib_record_t *rec = library_push(lib);
                 if (rec != NULL) {
                     memset(rec, 0, sizeof(*rec));
                     rec->system = system;
                     rec->path = strdup(child);
-                    rec->title = title_from_filename(info.d_name);
+                    rec->title = title_from_filename(names[i]);
                     rec->art_state = ART_PENDING;
                     /* Not zero: zero is ART_PORTRAIT, and a record that has never been probed
                      * must be distinguishable from one whose cover really is portrait -- the
@@ -536,9 +586,26 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
                 }
             }
         }
-
-        result = dir_findnext(dir, &info);
     }
+
+    /* Cleared before recursing: the child installs its own, and a stale parent listing would let
+     * a child answer "is there a sidecar" from the wrong directory's names. */
+    rom_info_set_dir_listing(NULL, 0);
+
+    for (int i = 0; i < n; i++) {
+        if (!isdir[i] || library_scan_skipped(names[i])) {
+            continue;
+        }
+        char child[512];
+        snprintf(child, sizeof(child), "%s/%s", dir, names[i]);
+        added += scan_dir(lib, child, depth + 1, on_progress);
+    }
+
+    for (int i = 0; i < n; i++) {
+        free(names[i]);
+    }
+    free(names);
+    free(isdir);
 
     return added;
 }

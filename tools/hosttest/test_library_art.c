@@ -47,6 +47,18 @@ rom_err_t rom_config_load (path_t *p, rom_info_t *ri) { (void)p; (void)ri; rom_c
 void rom_info_free_meta (rom_info_t *ri) { (void)ri; }
 rom_save_type_t rom_info_get_save_type (rom_info_t *ri) { (void)ri; rom_calls++; return 0; }
 
+/* Installed by scan_dir() around each directory. The stub records the last listing it was handed
+ * so the checks below can prove the scan clears it before recursing -- a child answering "is there
+ * a sidecar" from its parent's names would find the wrong file, or miss the right one. */
+static int listing_count_seen = -1;
+static int listing_cleared = 0;
+static int listing_max = 0;
+void rom_info_set_dir_listing (const char *const *names, int count) {
+    if (names == NULL) { listing_cleared++; }
+    if (names != NULL && count > listing_max) { listing_max = count; }
+    listing_count_seen = (names != NULL) ? count : 0;
+}
+
 /* ------------------------------------------------------------------------------------------ */
 
 static char root[512];
@@ -64,52 +76,6 @@ static void touch (const char *rel) {
     assert(f != NULL);
     fputc('x', f);
     fclose(f);
-}
-
-/**
- * @brief Which copy of @p stem the scan reaches first, by walking the tree the way scan_dir does.
- *
- * The survivor of a duplicate key is decided by DFS order, and DFS order is readdir order, which
- * varies by filesystem. Rather than hardcode an answer that is only true on APFS, the test derives
- * the expected winner from the same enumeration the scan just used. Mirrors scan_dir()'s shape:
- * recurse into a directory at the point it is met, skip leading dots.
- *
- * @return a path relative to the root, or NULL if not found.
- */
-static const char *dfs_first (const char *rel_dir, const char *stem, char *out, size_t cap) {
-    char abs[600];
-    snprintf(abs, sizeof(abs), "%s%s%s", root, rel_dir[0] ? "/" : "", rel_dir);
-    DIR *d = opendir(abs);
-    if (d == NULL) {
-        return NULL;
-    }
-    struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        if (e->d_name[0] == '.') {
-            continue;
-        }
-        char child[600];
-        snprintf(child, sizeof(child), "%s%s%s", rel_dir, rel_dir[0] ? "/" : "", e->d_name);
-        if (e->d_type == DT_DIR) {
-            if (strcmp(e->d_name, "metadata") == 0 || strcmp(e->d_name, "saves") == 0) {
-                continue;
-            }
-            if (dfs_first(child, stem, out, cap) != NULL) {
-                closedir(d);
-                return out;
-            }
-        } else {
-            const char *dot = strrchr(e->d_name, '.');
-            size_t n = dot ? (size_t)(dot - e->d_name) : strlen(e->d_name);
-            if (n == strlen(stem) && strncmp(e->d_name, stem, n) == 0) {
-                snprintf(out, cap, "%s", child);
-                closedir(d);
-                return out;
-            }
-        }
-    }
-    closedir(d);
-    return NULL;
 }
 
 /* Enough duplicate keys, at enough depth, that qsort has a real chance to reorder equal elements.
@@ -192,39 +158,35 @@ int main (void) {
     /* Five named keys plus the DUPES block, each collapsed to one. */
     CHECK(lib->art_count == 5 + DUPES, "art_count after the sort deduplicated");
 
-    /* The seq tiebreak, which is the whole reason art_entry_t carries a seq at all: with it, the
-     * survivor is the first copy the scan reached; without it, qsort's handling of equal keys
-     * decides, and qsort is not stable. Expectation is computed by walking the tree the same way
-     * rather than hardcoded, so this holds on any filesystem's readdir order. */
+    /* The seq tiebreak, which is the whole reason art_entry_t carries a seq at all: with it the
+     * survivor is the first copy the scan pushed, and files-before-subdirectories makes that the
+     * root copy every time. Without the tiebreak, qsort decides among equal keys and qsort is not
+     * stable -- which is why there are 24 of these and not one. A single duplicate in a six-entry
+     * array leaves most qsort implementations stable by accident, and the mutation survived. */
     for (int i = 0; i < DUPES; i++) {
-        char stem[64], want[600], msg[256];
+        char stem[64], want[80], msg[256];
         snprintf(stem, sizeof(stem), "Multi%02d", i);
-        CHECK(dfs_first("", stem, want, sizeof(want)) != NULL, "expectation is computable");
+        snprintf(want, sizeof(want), "/%s.png", stem);
         const char *got = library_find_art(lib, stem);
-        snprintf(msg, sizeof(msg), "duplicate %s resolves to the first copy the scan reached "
-                                   "(want %s, got %s)", stem, want, got ? got : "(null)");
+        snprintf(msg, sizeof(msg), "duplicate %s resolves to the shallow copy (got %s)",
+                 stem, got ? got : "(null)");
         CHECK(got != NULL, msg);
+        CHECK(strstr(got, "/dup2/") == NULL, msg);
         size_t gl = strlen(got), wl = strlen(want);
         CHECK(gl >= wl && strcmp(got + (gl - wl), want) == 0, msg);
     }
 
-    /* Exactly one of the two duplicates survives, it is a real path for that key, and it stays
-     * the same across lookups.
-     *
-     * Deliberately NOT asserting that the shallow one wins. art_push()'s comment claimed that and
-     * it was false: readdir returns "deep" before "Dupe.png" on this filesystem, scan_dir()
-     * recurses on sight, so the deep copy is pushed first and keeps the key. Which one wins is
-     * DFS order, and DFS order is the directory listing's order, which no filesystem promises.
-     * An assertion either way would be pinning this test to APFS. */
-    const char *dup = library_find_art(lib, "Dupe");
-    CHECK(dup != NULL, "duplicate key resolves");
-    CHECK(strcmp(dup, library_find_art(lib, "dupe.z64")) == 0, "duplicate resolves consistently");
-    {
-        size_t l = strlen(dup);
-        const char *tail = "/Dupe.png";
-        CHECK(l >= strlen(tail) && strcmp(dup + (l - strlen(tail)), tail) == 0,
-              "survivor is one of the two real files");
-    }
+    /* The listing is lent per directory and cleared before recursing. Without the clear, a
+     * subdirectory's ROMs would be checked for sidecars against their parent's file names. */
+    /* Lent at all, and with the root's real entry count. Skipping the loan changes no behaviour
+     * -- sidecar_possible() answers "maybe" without one and every probe happens as before -- so
+     * nothing else in this file can notice its absence. Only the cost changes, which is the whole
+     * point of it, so the check has to be on the loan itself. */
+    /* The root's own entries: Dupe/Alpha/beta/GAMMA/delta, the four subdirectories, and the
+     * DUPES block. Each directory is lent separately, so the largest loan is the root's. */
+    CHECK(listing_max == 5 + 4 + DUPES, "the directory listing is lent to rom_info, in full");
+    CHECK(listing_cleared > 0, "scan_dir clears the lent listing before it recurses");
+    CHECK(listing_count_seen == 0, "and the last thing it does with it is clear it");
 
     /* Exclusions. */
     CHECK(library_find_art(lib, "hidden") == NULL, "leading-dot art is not indexed");

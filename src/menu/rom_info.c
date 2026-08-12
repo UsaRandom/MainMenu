@@ -1026,6 +1026,48 @@ static bool metadata_dir_present (void) {
     return cached == 1;
 }
 
+/**
+ * @brief The directory listing library.c's scan is currently working through, or NULL.
+ *
+ * Three of the paths this file probes per title -- `<rom>.ini`, `<rom>.meta` and
+ * `<rom>.metadata.ini` -- sit in the same directory as the ROM, and the scan has just finished
+ * reading that directory. Asking the filesystem again means a walk that must reach the end to
+ * prove absence, once per probe per title, against a directory the caller already holds in
+ * memory. So the caller lends it, and the answer costs a string compare.
+ *
+ * NULL outside a scan, which is the normal case for a single launch -- the detail sheet loads one
+ * ROM's config and pays three ordinary opens, which is nothing. Never cached across directories:
+ * scan_dir() clears it before it recurses, or a child would answer from its parent's names.
+ */
+static const char *const *dir_listing;
+static int dir_listing_count;
+
+void rom_info_set_dir_listing (const char *const *names, int count) {
+    dir_listing = names;
+    dir_listing_count = (names != NULL) ? count : 0;
+}
+
+/**
+ * @brief Could @p path exist? False only when the listing proves it cannot.
+ *
+ * Deliberately one-sided. With no listing installed this says "maybe" and the caller does what it
+ * always did, so the only way this can change behaviour is by skipping an open that was certain
+ * to miss. A listing that is somehow wrong costs a missing sidecar, never a wrong one.
+ */
+static bool sidecar_possible (const char *path) {
+    if (dir_listing == NULL) {
+        return true;
+    }
+    const char *slash = strrchr(path, '/');
+    const char *leaf = slash ? slash + 1 : path;
+    for (int i = 0; i < dir_listing_count; i++) {
+        if (strcasecmp(dir_listing[i], leaf) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void load_rom_meta_from_file (path_t *path, rom_info_t *rom_info) {
     path_t *rom_info_meta_path = path_clone(path);
 
@@ -1035,7 +1077,7 @@ static void load_rom_meta_from_file (path_t *path, rom_info_t *rom_info) {
     debugf("[META] load_rom_meta_from_file: looking for '%s'\n", meta_path_str);
     
     // Try to load as ZIP file first (handles .meta files that are ZIP archives)
-    if (load_metadata_from_zip_file(meta_path_str, rom_info)) {
+    if (sidecar_possible(meta_path_str) && load_metadata_from_zip_file(meta_path_str, rom_info)) {
         debugf("[META] load_rom_meta_from_file: loaded as ZIP file\n");
         path_free(rom_info_meta_path);
         return;
@@ -1047,7 +1089,8 @@ static void load_rom_meta_from_file (path_t *path, rom_info_t *rom_info) {
     path_ext_replace(rom_info_meta_path, "metadata.ini");
     meta_path_str = path_get(rom_info_meta_path);
 
-    if (!file_exists(path_get(rom_info_meta_path))) {
+    if (!sidecar_possible(path_get(rom_info_meta_path)) ||
+        !file_exists(path_get(rom_info_meta_path))) {
         debugf("[META] load_rom_meta_from_file: metadata.ini not found at '%s'\n", meta_path_str);
         /* No pack on this card, so the fallback below can only miss -- and a miss costs a full
          * path walk, once per title, from inside the scan. See metadata_dir_present(). */
@@ -1134,7 +1177,10 @@ static void load_rom_config_from_file (path_t *path, rom_info_t *rom_info) {
 
     path_ext_replace(rom_info_path, "ini");
 
-    ini_t *rom_config_ini = ini_load(path_get(rom_info_path));
+    /* Skipped outright when the scan's listing proves there is no such file in this directory --
+     * a per-ROM override is rare and the open to discover its absence is not free. */
+    ini_t *rom_config_ini = sidecar_possible(path_get(rom_info_path))
+                          ? ini_load(path_get(rom_info_path)) : NULL;
 
     rom_info->boot_override.cic = false;
     rom_info->boot_override.save = false;

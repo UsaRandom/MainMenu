@@ -195,6 +195,14 @@ bool rom_info_get_cic_seed(rom_info_t *rom_info, uint8_t *seed);
 rom_err_t rom_config_load(path_t *path, rom_info_t *rom_info);
 
 /**
+ * @brief Lend rom_config_load() the directory listing it is about to look for sidecars in.
+ *
+ * Set by library.c's scan around each directory and cleared before it recurses. Purely an
+ * optimisation: with none set, every probe happens exactly as it always did.
+ */
+void rom_info_set_dir_listing(const char *const *names, int count);
+
+/**
  * @brief Get the CIC type for the ROM.
  * 
  * @param rom_info Pointer to the ROM information structure
