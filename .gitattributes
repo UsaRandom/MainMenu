@@ -16,3 +16,11 @@ assets/icons/LICENSE.txt -text
 
 src/libs/** linguist-vendored
 assets/icons/** linguist-vendored
+
+# Scripts with a shebang, run directly as well as through an interpreter. Under the eol=crlf rule
+# above the first line becomes "#!/usr/bin/env python3\r", and the kernel looks for an interpreter
+# with a carriage return in its name -- which fails as "Error 127", command not found, from a make
+# rule that names the script and looks for all the world like a missing file. The Makefile invokes
+# this one as `python3 tools/...` so the build does not depend on the bit, and it is still marked
+# LF so that running it by hand works on a fresh clone.
+tools/mkcharset-latin.py text eol=lf

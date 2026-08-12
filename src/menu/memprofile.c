@@ -69,10 +69,6 @@ int mem_icon_cache_cells (void) {
     return mem_small() ? 8 : 64;
 }
 
-bool mem_music_enabled (void) {
-    return !mem_small();
-}
-
 void mem_report (const char *stage) {
     heap_stats_t hs;
     sys_get_heap_stats(&hs);

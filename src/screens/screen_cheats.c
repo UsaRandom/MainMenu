@@ -24,6 +24,7 @@
 #include "screens.h"
 #include "ui/draw.h"
 #include "ui/theme.h"
+#include "menu/memprofile.h"
 
 #define LIST_X      SAFE_X
 #define LIST_Y      88
@@ -149,6 +150,14 @@ static void cheats_render (app_t *app, surface_t *fb) {
 
     if (notice != NULL) {
         ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_YELLOW, notice);
+    } else if (mem_small()) {
+        /* Instead of the count, not beside it: on a console with no Expansion Pak nothing on this
+         * screen will ever be installed. The engine is emitted to 0x807C5C00 and the patcher
+         * stages at 0x80700000, neither of which exists on 4 MB, so build_cheat_list() refuses --
+         * correctly, and until now silently. A player could tick groups all day and watch the game
+         * boot without them, with nothing anywhere saying why. How many are enabled is the less
+         * useful of the two facts when none of them can apply. */
+        ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_YELLOW, "Needs Expansion Pak");
     } else {
         snprintf(buf, sizeof(buf), "%d of %d enabled", enabled_count(set), set->group_count);
         ui_label(SAFE_X, 36, SAFE_W, ALIGN_RIGHT, STL_GRAY, buf);

@@ -84,9 +84,6 @@ int mem_thumb_slots (void);
 /** @brief May the icon cache hold its full complement? The small profile keeps a smaller one. */
 int mem_icon_cache_cells (void);
 
-/** @brief Is background music affordable? Its wavetables are not free. */
-bool mem_music_enabled (void);
-
 /**
  * @brief Print the heap at a named point in the boot.
  *
