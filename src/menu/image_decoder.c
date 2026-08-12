@@ -28,9 +28,11 @@ typedef struct {
      * See image_decoder_start_scaled(). */
     int dst_w, dst_h;
     int crop_x, crop_y, crop_w, crop_h;  /**< source rect that covers the destination */
-    uint32_t *acc;                       /**< dst_w * 3 channel accumulator for one dest row */
+    uint16_t *colrun;                    /**< source pixels folded into each dest column */
+    uint32_t *acc;                       /**< dst_w x RGB accumulator for one dest row */
     uint32_t acc_n;                      /**< source rows folded into the current dest row */
     int acc_row;                         /**< which destination row acc is building */
+    int flushed_row;                     /**< last destination row written, -1 for none */
 
     /* JPEG. picojpeg keeps its own file-scope state, which is safe here only because exactly one
      * decode is ever in flight -- the same reason the PNG side gets away with a single static
@@ -81,6 +83,9 @@ static void image_decoder_deinit (bool free_image) {
         if (decoder->acc != NULL) {
             free(decoder->acc);
         }
+        if (decoder->colrun != NULL) {
+            free(decoder->colrun);
+        }
         if (decoder->band != NULL) {
             free(decoder->band);
         }
@@ -109,7 +114,7 @@ static void image_decoder_deinit (bool free_image) {
  * Integer maths throughout: sw/sh against dst_w/dst_h by cross-multiplication, so there is no
  * float rounding to argue about at the edges.
  */
-static void scaler_plan_crop (image_decoder_t *d, int sw, int sh, int dst_w, int dst_h) {
+static img_err_t scaler_plan (image_decoder_t *d, int sw, int sh, int dst_w, int dst_h) {
     if (sw * dst_h > dst_w * sh) {
         d->crop_h = sh;                       /* source is wider: crop left and right */
         d->crop_w = (sh * dst_w) / dst_h;
@@ -123,6 +128,39 @@ static void scaler_plan_crop (image_decoder_t *d, int sw, int sh, int dst_w, int
     }
     if (d->crop_w < 1) d->crop_w = 1;
     if (d->crop_h < 1) d->crop_h = 1;
+
+    d->dst_w = dst_w;
+    d->dst_h = dst_h;
+    d->acc_row = -1;
+    d->flushed_row = -1;
+
+    /* Everything below is allocated exactly once, here. It used to be allocated in two places --
+     * jpeg_open() and image_decoder_start_scaled() -- and the second overwrote the first, leaking
+     * dst_w * 3 words on every JPEG decoded. One owner, one allocation. */
+    d->acc    = calloc((size_t)dst_w * 3, sizeof(uint32_t));
+    d->colrun = calloc((size_t)dst_w, sizeof(uint16_t));
+    if (d->acc == NULL || d->colrun == NULL) {
+        return IMG_ERR_OUT_OF_MEM;
+    }
+
+    /* How many source pixels each destination column folds in. This is the same for every source
+     * row, so it is counted once here instead of being rebuilt per row: the old inner loop
+     * carried the bucket arithmetic (a compare, an add and a conditional subtract per SOURCE
+     * pixel, 2,081 of them on the widest card in the corpus) and a running per-column count. Both
+     * are now a table lookup, and the accumulator lost its fourth lane with the count.
+     *
+     * Sums to crop_w by construction, so a row is consumed exactly as far as the crop reaches. */
+    int dx = 0, dx_num = 0;
+    for (int sx = 0; sx < d->crop_w && dx < dst_w; sx++) {
+        d->colrun[dx]++;
+        dx_num += dst_w;
+        while (dx_num >= d->crop_w) {
+            dx_num -= d->crop_w;
+            dx++;
+        }
+    }
+
+    return IMG_OK;
 }
 
 /** @brief Feed picojpeg from the already-open FILE. */
@@ -139,14 +177,31 @@ static unsigned char jpeg_need_bytes (unsigned char *buf, unsigned char n,
  * The interesting decision here is @c reduce. picojpeg can keep only each block's DC
  * coefficient, which yields one pixel per 8x8 block and skips the AC dequantisation, the IDCT
  * and the chroma upsampling for every pixel of the image. That is close to free, so it is taken
- * whenever an eighth of the source is still at least the destination size -- below that the tile
- * would be upscaled from a thumbnail, which the crop rule calls blurry and the asset spec calls
- * a bug.
+ * whenever an eighth of the source still roughly covers the destination.
+ *
+ * "Roughly" is #JPEG_REDUCE_SLACK_NUM/DEN and it is the whole point of the rule. picojpeg offers
+ * 1:1 or 1:8 and nothing in between, so a source just under 8x the tile used to fall off a cliff
+ * into a full decode: a 1020 x 747 cover -- that size is in the corpus -- decodes 762,000 pixels
+ * to fill a 13,720 pixel tile, against 12,000 pixels at DC-only. Demanding that an eighth cover
+ * the tile EXACTLY bought a 1.09x upscale at roughly sixty times the cost.
+ *
+ * What is being upscaled matters to whether that is acceptable. DC-only is not a thumbnail
+ * pulled out of the file, it is the exact 8x8 box average of every block, so a 1.14x upscale of
+ * it is not the blurry mess the crop rule warns about -- that warning is about small art, and it
+ * still holds: at more than 1/8 of the slack the full decode is taken.
  *
  * Deciding needs the dimensions, and the dimensions come from the header, so the header is read
  * twice: init, measure, rewind, init again asking for DC only. That second parse is a few
  * hundred bytes of markers against an image-sized saving.
  */
+/** @brief How far below the destination an eighth-scale decode may land and still be taken.
+ *
+ * 7/8, i.e. at most a 1.14x upscale. Chosen, not measured: it is the smallest slack that clears
+ * the 1020 x 747 cover (128 x 93 reduced against a 140 x 98 tile, 1.09x) with margin, and it is
+ * small enough that the result is still denser than the tile in the dimension that binds after
+ * the cover-crop. Widening it further trades picture for speed and wants a look, not a constant. */
+#define JPEG_REDUCE_SLACK_NUM   7
+#define JPEG_REDUCE_SLACK_DEN   8
 /** @brief Map a picojpeg init failure, keeping "cannot" apart from "broken". */
 static img_err_t jpeg_init_err (unsigned char e) {
     if (e == PJPG_UNSUPPORTED_MODE) {
@@ -168,7 +223,9 @@ static img_err_t jpeg_open (image_decoder_t *d, int dst_w, int dst_h) {
 
     int rw = (d->ji.m_width + 7) / 8;
     int rh = (d->ji.m_height + 7) / 8;
-    if (dst_w > 0 && dst_h > 0 && rw >= dst_w && rh >= dst_h) {
+    if (dst_w > 0 && dst_h > 0 &&
+        rw * JPEG_REDUCE_SLACK_DEN >= dst_w * JPEG_REDUCE_SLACK_NUM &&
+        rh * JPEG_REDUCE_SLACK_DEN >= dst_h * JPEG_REDUCE_SLACK_NUM) {
         rewind(d->f);
         perr = pjpeg_decode_init(&d->ji, jpeg_need_bytes, d->f, 1);
         if (perr != 0) {
@@ -195,21 +252,25 @@ static img_err_t jpeg_open (image_decoder_t *d, int dst_w, int dst_h) {
     if (d->image == NULL) {
         return IMG_ERR_OUT_OF_MEM;
     }
-    scaler_plan_crop(d, d->eff_w, d->eff_h, dst_w, dst_h);
+    img_err_t serr = scaler_plan(d, d->eff_w, d->eff_h, dst_w, dst_h);
+    if (serr != IMG_OK) {
+        return serr;
+    }
     *d->image = surface_alloc(FMT_RGBA16, dst_w, dst_h);
     if (d->image->buffer == NULL) {
         return IMG_ERR_OUT_OF_MEM;
     }
+    /* Cleared for the same reason the PNG path clears: a destination row that no source row maps
+     * to is never written by the scaler, and a truncated file stops partway down and delivers
+     * what it has. Uncleared, both of those were whatever the heap last held -- and decode_done()
+     * writes the result to thumbs.pak, so the garbage would have outlived the boot. */
+    memset(d->image->buffer, 0, (size_t)d->image->stride * dst_h);
 
     d->band = malloc((size_t)d->band_h * d->eff_w * 3);
-    d->acc  = calloc((size_t)dst_w * 4, sizeof(uint32_t));
-    if (d->band == NULL || d->acc == NULL) {
+    if (d->band == NULL) {
         return IMG_ERR_OUT_OF_MEM;
     }
 
-    d->dst_w    = dst_w;
-    d->dst_h    = dst_h;
-    d->acc_row  = -1;
     d->band_row = d->band_h;     /* empty, so the first poll fills it */
     d->jpeg     = true;
     debugf("JPEG %dx%d %s -> %dx%d (band %d)\n", d->ji.m_width, d->ji.m_height,
@@ -306,7 +367,10 @@ static void jpeg_poll (void) {
     d->src_y++;
     d->decoded_rows++;
 
-    if (d->src_y >= d->eff_h) {
+    /* Stop at the bottom of the crop, not at the bottom of the file. Every row below it is
+     * discarded by scaler_add_row() anyway, and on this path that is a whole MCU row of Huffman
+     * decode, IDCT and chroma upsampling per band spent on pixels nothing will ever read. */
+    if (d->src_y >= d->eff_h || d->src_y >= d->crop_y + d->crop_h) {
         d->callback(IMG_OK, d->image, d->callback_data);
         image_decoder_deinit(false);
     }
@@ -392,6 +456,28 @@ static img_err_t decoder_open (char *path, int max_width, int max_height,
         return IMG_ERR_INT;
     }
 
+    /* Read before the decode is set up, because it decides whether there will be one. */
+    if (spng_get_ihdr(decoder->ctx, &decoder->ihdr) != SPNG_OK) {
+        image_decoder_deinit(false);
+        return IMG_ERR_BAD_FILE;
+    }
+
+    /* Adam7, refused for the same reason progressive JPEG is: this decoder consumes whole rows in
+     * order and an interlaced PNG delivers neither.
+     *
+     * libspng's progressive API scatters each pass into the caller's buffer at strided offsets
+     * (spng.c, spng_decode_row) and leaves the rest of the row untouched, so a "row" handed to
+     * scaler_add_row() is between an eighth and a half real pixels with the PREVIOUS row's bytes
+     * in the gaps. row_num also arrives out of order -- 0, 8, 16 ... then 4, 12 -- which the
+     * accumulator reads as a new destination row every time and flushes over its own output. The
+     * seven passes total 1.875x the image height, so image_decoder_get_progress() passes 1.0 as
+     * well. It did not fail, it drew nonsense; a placeholder and a line in the log is better. */
+    if (decoder->ihdr.interlace_method != 0) {
+        debugf("PNG: interlaced (Adam7), which this decoder cannot consume -- re-save without interlacing\n");
+        image_decoder_deinit(false);
+        return IMG_ERR_UNSUPPORTED;
+    }
+
     size_t image_size;
 
     if (spng_decoded_image_size(decoder->ctx, SPNG_FMT_RGB8, &image_size) != SPNG_OK) {
@@ -400,11 +486,6 @@ static img_err_t decoder_open (char *path, int max_width, int max_height,
     }
 
     if (spng_decode_image(decoder->ctx, NULL, image_size, SPNG_FMT_RGB8, SPNG_DECODE_PROGRESSIVE) != SPNG_OK) {
-        image_decoder_deinit(false);
-        return IMG_ERR_BAD_FILE;
-    }
-
-    if (spng_get_ihdr(decoder->ctx, &decoder->ihdr) != SPNG_OK) {
         image_decoder_deinit(false);
         return IMG_ERR_BAD_FILE;
     }
@@ -423,11 +504,19 @@ static img_err_t decoder_open (char *path, int max_width, int max_height,
             image_decoder_deinit(false);
             return IMG_ERR_BAD_FILE;
         }
-        scaler_plan_crop(decoder, sw, sh, dst_w, dst_h);
+        img_err_t serr = scaler_plan(decoder, sw, sh, dst_w, dst_h);
+        if (serr != IMG_OK) {
+            image_decoder_deinit(false);
+            return serr;
+        }
         *decoder->image = surface_alloc(FMT_RGBA16, dst_w, dst_h);
         if (decoder->image->buffer != NULL) {
-            /* Cleared because the tile is drawn while it is still filling, so undecoded rows are
-             * on screen and must be background rather than whatever the heap last held. */
+            /* Cleared as a backstop, and the comment that used to be here said why wrongly: it
+             * claimed the tile is drawn while it is still filling, which decode_done() has not
+             * done since it started publishing the surface only on completion. What the clear is
+             * actually for is a decode that stops early -- a truncated file, or a destination row
+             * the scaler's gap fill somehow never reaches -- landing on background rather than on
+             * whatever the heap last held. */
             memset(decoder->image->buffer, 0, (size_t)decoder->image->stride * dst_h);
         }
     } else {
@@ -480,35 +569,132 @@ img_err_t image_decoder_start_scaled (char *path, int dst_w, int dst_h,
     }
 
     /* Limits are generous rather than dst-sized: the point is to accept what the corpus actually
-     * contains. 4096 covers every scan in it with room to spare. */
-    img_err_t err = decoder_open(path, 4096, 4096, callback, callback_data, dst_w, dst_h);
-    if (err != IMG_OK) {
-        return err;
+     * contains. 4096 covers every scan in it with room to spare.
+     *
+     * Everything the scaler needs is set up inside decoder_open(), by scaler_plan(). It used to be
+     * set up again out here, which on the JPEG path silently leaked the buffer jpeg_open() had
+     * already allocated. */
+    return decoder_open(path, 4096, 4096, callback, callback_data, dst_w, dst_h);
+}
+
+/** @brief The start of destination row @p y. */
+static inline uint16_t *scaler_row (image_decoder_t *d, int y) {
+    return (uint16_t *)((uint8_t *)d->image->buffer + (size_t)y * d->image->stride);
+}
+
+/**
+ * @brief Write the accumulated destination row, and any rows above it nothing landed on.
+ *
+ * @p last_row says this is the final source row of the crop, so the rows BELOW this one are the
+ * scaler's last chance too.
+ */
+static void scaler_flush (image_decoder_t *d, int dst_row, bool last_row) {
+    uint16_t *out = scaler_row(d, dst_row);
+    uint32_t rows = d->acc_n;
+    uint16_t prev = 0;
+    bool have_prev = false;
+
+    /* Two divisors, remembered. The count folded into a column is colrun[x] * rows, colrun takes
+     * at most two values across a row and rows is fixed for the flush, so in practice this sees
+     * two distinct divisors and alternates between them.
+     *
+     * The reciprocal is what the memo is protecting. Dividing three channels per column cost
+     * three VR4300 divides -- ~37 cycles each, and they do not pipeline -- which is 3 x 19,600 of
+     * them for a full tile. One divide per distinct divisor, then a multiply-high per channel,
+     * turns that into ~2 divides per row.
+     *
+     * Exact, not approximate: with inv = ceil(2^32/n) the error term is a*(inv*n - 2^32)/2^32,
+     * which stays below 1 while a*(n-1) < 2^32. Here a <= 255*n and n = colrun * rows is bounded
+     * by the 4096 px image limit against the smallest tile (TILE_W_NARROW 109, TILE_H_MIN 64), so
+     * n <= 38 * 65 and 255*n*(n-1) tops out around 1.55e9 against 4.29e9. Checked rather than
+     * argued: an off-tree harness compared it against plain division over every divisor to 2,600
+     * and 123 million dividends, and the equivalent of this loop against the divide-per-channel
+     * version it replaces over 125 source/tile pairs, byte for byte.
+     *
+     * n == 1 is out on its own because ceil(2^32/1) does not fit in the word that holds it -- it
+     * wrapped to zero and blacked out every such column, which is how the harness earned its
+     * keep. It is also the common case rather than a corner: art close to tile size folds one
+     * source pixel per column, 107 of 109 columns on a 112 px cover, so the branch pays for
+     * itself twice over. */
+    uint32_t d0 = 0, i0 = 0, d1 = 0, i1 = 0;
+
+    for (int x = 0; x < d->dst_w; x++) {
+        uint32_t n = (uint32_t)d->colrun[x] * rows;
+        if (n == 0) {
+            /* Upscaling: this column got no source pixel. Replicate the last real one --
+             * nearest neighbour, which the asset spec asks for on undersized art because
+             * blocky reads as a choice and blurry reads as a bug. */
+            out[x] = have_prev ? prev : 0x0001;
+            continue;
+        }
+        const uint32_t *a = &d->acc[x * 3];
+        uint32_t r, g, b;
+        if (n == 1) {
+            r = a[0]; g = a[1]; b = a[2];
+        } else {
+            if (n != d0) {
+                if (n == d1) {
+                    uint32_t td = d0, ti = i0;
+                    d0 = d1; i0 = i1; d1 = td; i1 = ti;
+                } else {
+                    d1 = d0; i1 = i0;
+                    d0 = n;  i0 = 0xFFFFFFFFu / n + 1;
+                }
+            }
+            r = (uint32_t)(((uint64_t)a[0] * i0) >> 32);
+            g = (uint32_t)(((uint64_t)a[1] * i0) >> 32);
+            b = (uint32_t)(((uint64_t)a[2] * i0) >> 32);
+        }
+        prev = (uint16_t)(((r >> 3) << 11) | ((g >> 3) << 6) | ((b >> 3) << 1) | 1);
+        have_prev = true;
+        out[x] = prev;
     }
 
-    image_decoder_t *d = decoder;
-
-    d->acc = calloc((size_t)dst_w * 4, sizeof(uint32_t));
-    if (d->acc == NULL) {
-        image_decoder_abort();
-        return IMG_ERR_OUT_OF_MEM;
+    /* A leading run of empty columns cannot be filled forwards, so fill it backwards from the
+     * first real pixel. Without this an upscaled card starts with a black stripe. */
+    for (int x = 0; x < d->dst_w; x++) {
+        if (d->colrun[x] != 0) {
+            for (int k = 0; k < x; k++) {
+                out[k] = out[x];
+            }
+            break;
+        }
     }
 
-    d->dst_w = dst_w;
-    d->dst_h = dst_h;
-    d->acc_row = -1;
+    /* And the same thing one axis over, which was missing entirely. When the crop is shorter than
+     * the destination, consecutive source rows land on destination rows more than one apart and
+     * the rows between them were never written by anybody: a 126 x 126 cover into a 140 x 140
+     * tile left 14 of 140 rows, a 96 x 96 one left 44. They came out as cleared background on the
+     * PNG path and as heap contents on the JPEG path, and thumbstore_put() then cached the result.
+     *
+     * Filling from the row above is not a guess, it is the mapping read backwards: a destination
+     * row r takes source row crop_y + floor(r * crop_h / dst_h), and for every row in a gap that
+     * is the same source row that produced the row above it. Same nearest-neighbour rule the
+     * empty columns get, for the same reason. */
+    size_t bytes = (size_t)d->dst_w * sizeof(uint16_t);
+    if (d->flushed_row >= 0) {
+        for (int y = d->flushed_row + 1; y < dst_row; y++) {
+            memcpy(scaler_row(d, y), scaler_row(d, d->flushed_row), bytes);
+        }
+    }
+    d->flushed_row = dst_row;
 
-    return IMG_OK;
+    if (last_row) {
+        for (int y = dst_row + 1; y < d->dst_h; y++) {
+            memcpy(scaler_row(d, y), out, bytes);
+        }
+    }
 }
 
 /**
  * @brief Fold one decoded source row into the scaler's accumulator.
  *
  * Horizontal box filter into acc, flushed to the destination once every source row belonging
- * to the current destination row has arrived. Per-column counts are kept explicitly rather
- * than derived, because when upscaling some destination columns receive no source pixel at
- * all and inferring that from "the accumulator is still zero" would corrupt genuinely black
- * pixels into a copy of their neighbour.
+ * to the current destination row has arrived. How many source pixels each destination column
+ * folds in is read from the table scaler_plan() built rather than counted here: it is the same
+ * for every row, and when upscaling some columns receive no source pixel at all, which has to
+ * stay distinguishable from "the accumulator is still zero" or genuinely black pixels would be
+ * corrupted into a copy of their neighbour.
  */
 static void scaler_add_row (int src_y, const uint8_t *rgb) {
     image_decoder_t *d = decoder;
@@ -524,31 +710,31 @@ static void scaler_add_row (int src_y, const uint8_t *rgb) {
 
     if (dst_row != d->acc_row) {
         d->acc_row = dst_row;
-        memset(d->acc, 0, d->dst_w * 4 * sizeof(uint32_t));
+        d->acc_n = 0;
+        memset(d->acc, 0, (size_t)d->dst_w * 3 * sizeof(uint32_t));
     }
 
-    /* dx advanced incrementally rather than recomputed as (sx * dst_w) / crop_w. That division
-     * ran once per SOURCE pixel -- 2,118 of them on the widest card in the corpus -- and the
-     * VR4300's integer divide is ~37 cycles and does not pipeline. Measured at 15 % of row cost;
-     * the other 85 % is inside spng_decode_row and no scheduling change touches it. */
-    int dx = 0, dx_num = 0;
+    /* The bucket arithmetic that used to live in here -- a compare, an add and a conditional
+     * subtract per SOURCE pixel, plus a running count into a fourth accumulator lane -- is a
+     * colrun[] lookup now. What is left is the three adds that are the actual work, and the
+     * accumulator is three lanes instead of four, which is 1.6 KB of an 8 KB data cache rather
+     * than 2.2 KB for a full-width tile. */
     const uint8_t *px = &rgb[d->crop_x * 3];
-    for (int sx = 0; sx < d->crop_w; sx++, px += 3) {
-        if (dx >= d->dst_w) {
-            break;
-        }
-        uint32_t *a = &d->acc[dx * 4];
-        a[0] += px[0];
-        a[1] += px[1];
-        a[2] += px[2];
-        a[3] += 1;
+    uint32_t *a = d->acc;
+    const uint16_t *run = d->colrun;
 
-        dx_num += d->dst_w;
-        while (dx_num >= d->crop_w) {
-            dx_num -= d->crop_w;
-            dx++;
+    for (int x = 0; x < d->dst_w; x++, a += 3) {
+        uint32_t r = 0, g = 0, b = 0;
+        for (int n = run[x]; n > 0; n--, px += 3) {
+            r += px[0];
+            g += px[1];
+            b += px[2];
         }
+        a[0] += r;
+        a[1] += g;
+        a[2] += b;
     }
+    d->acc_n++;
 
     /* Flush once the next source row belongs to a different destination row. */
     int next_dst = ((src_y + 1 - d->crop_y) * d->dst_h) / d->crop_h;
@@ -557,37 +743,7 @@ static void scaler_add_row (int src_y, const uint8_t *rgb) {
         return;
     }
 
-    uint16_t *out = (uint16_t *)((uint8_t *)d->image->buffer + dst_row * d->image->stride);
-    uint16_t prev = 0;
-    bool have_prev = false;
-
-    for (int x = 0; x < d->dst_w; x++) {
-        uint32_t *a = &d->acc[x * 4];
-        if (a[3] == 0) {
-            /* Upscaling: this column got no source pixel. Replicate the last real one --
-             * nearest neighbour, which the asset spec asks for on undersized art because
-             * blocky reads as a choice and blurry reads as a bug. */
-            out[x] = have_prev ? prev : 0x0001;
-            continue;
-        }
-        uint32_t r = a[0] / a[3];
-        uint32_t g = a[1] / a[3];
-        uint32_t b = a[2] / a[3];
-        prev = (uint16_t)(((r >> 3) << 11) | ((g >> 3) << 6) | ((b >> 3) << 1) | 1);
-        have_prev = true;
-        out[x] = prev;
-    }
-
-    /* A leading run of empty columns cannot be filled forwards, so fill it backwards from the
-     * first real pixel. Without this an upscaled card starts with a black stripe. */
-    for (int x = 0; x < d->dst_w; x++) {
-        if (d->acc[x * 4 + 3] != 0) {
-            for (int k = 0; k < x; k++) {
-                out[k] = out[x];
-            }
-            break;
-        }
-    }
+    scaler_flush(d, dst_row, last_row);
 }
 
 /**
@@ -644,6 +800,19 @@ void image_decoder_poll (void) {
             uint32_t st = TICKS_READ();
             scaler_add_row((int)row_info.row_num, decoder->row_buffer);
             img_scale_us += TIMER_MICROS(TICKS_SINCE(st));
+
+            /* Nothing below the crop is ever read, so stop inflating at its last row rather than
+             * at the end of the file. Worth 3-5 % of the rows on the large cards, and it costs a
+             * comparison per row.
+             *
+             * Safe to leave the stream unfinished: scaler_add_row() flushes the last destination
+             * row on exactly this row, deinit frees the spng context mid-decode as it already
+             * does on every error path, and the image is complete by construction. */
+            if ((int)row_info.row_num + 1 >= decoder->crop_y + decoder->crop_h) {
+                decoder->callback(IMG_OK, decoder->image, decoder->callback_data);
+                image_decoder_deinit(false);
+                return;
+            }
             goto row_done;
         }
 
