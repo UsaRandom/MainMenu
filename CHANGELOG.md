@@ -38,15 +38,22 @@
 
 ## Release Notes 2026-08-11 - Tagged 1.1.0
 
-Boot time on a large card. A 278-title library took about 0.7 s per title to scan on hardware;
-this release addresses two of the reasons and covers the remainder with the boot plate.
+Two themes: the cheat engine now runs most of the database it ships with, and a large card boots
+without a long blank screen.
+
+- **Cheats**
+	- **Cheats are now keyed per region.** The keys were wildcarded, so every regional file for a game merged into one row and the merge kept whichever sorted first -- which meant 11,162 USA cheats across 136 games were being replaced outright by a same-named foreign one. Tetrisphere lost 7,183 of them. Star Wars Episode I: Racer's "Infinite Money" wrote to where the truguts live in the European binary. The database goes from 392 rows and 1.75 MB to 802 rows and 3.37 MB.
+	- **Conditionals assemble.** A selection carrying a line the engine could not emit was refused whole rather than half-applied, so one conditional took everything ticked alongside it down silently -- which is what Ocarina's "Infinite Magic" was doing. 42,220 of 42,898 groups are now carried, up from 40,764; Ocarina V1.2 goes from 317 of 337 to 334.
+	- **Repeaters fit.** The 0x50 repeater was unrolled at three instructions per iteration, up to 762 words for one cheat, against boot segments with 15 to 45 words of usable padding on half the shelf. It is a loop now: twelve words whatever the count.
+	- **The exception preamble is identified by what it points at**, rather than by assuming __osException sits sixteen bytes on. That assumption was wrong three times in fifteen: 1080 Snowboarding and Harvest Moon 64 link it +212 away and were refused outright, and Mario Party 3 has a dispatcher stub at exactly +16 so its cheats were written into code that is never copied to 0x80000180. Thirteen of fifteen games on the shelf can hook, up from ten.
+	- Boot-time writes and the osMemSize code are handled; GS-button variants remain refused, because there is no button to read.
 
 - **Performance**
 	- The menu no longer looks for a metadata pack that is not on the card. `menu/metadata/<G>/<A>/<M>/<E>/metadata.ini` was opened once per title, and on a card without an art pack every one of those missed; the answer is now looked up once at boot.
 	- Loose box art is found by binary search rather than by walking the whole table, and the table no longer compares every entry against every other while it is built. On 278 covers that is about 116,000 string compares and 556 allocations on the boot path reduced to about 6,700 and none.
 
 - **New Features**
-	- The boot plate is now held up while the card is scanned, with the title count climbing as titles are found, instead of the screen staying blank until the scan finished. The plate's animation runs during the scan rather than after it, so the curtain lifts as soon as the grid is ready.
+	- The boot plate is held up while the card is scanned, with the title count climbing as titles are found, instead of the screen staying blank until the scan finished. The plate's animation runs during the scan rather than after it, so the curtain lifts as soon as the grid is ready.
 
 - **Bug Fixes**
 	- Audio no longer runs dry during a long scan. Nothing fed the mixer while the scan blocked, and an N64 whose audio interface is not given a new buffer repeats the last one it had.
@@ -56,15 +63,18 @@ this release addresses two of the reasons and covers the remainder with the boot
 	- Corrected a claim in `library.c` that duplicate art resolution favours the shallowest copy. It follows scan order, which is not the same thing.
 
 - **Other**
+	- `tools/cheatshelf.py` audits the shelf one line per ROM; `tools/cheatlook.py` answers the narrower question about a single game.
 	- New host test covering the loose-art table, 156 checks, with seven mutations proving it can fail.
+	- Two of the existing mutation tests had not been mutating anything -- one targeted a rewritten line, the other was anchored with `$` against a tree checked out CRLF. `run.sh` now refuses to report that as a survival.
 
 ### Breaking changes
-- None.
+- **Use the `cheats.db` shipped with this release.** Cheats are keyed per ROM revision and now per region; an older database will apply another region's or revision's addresses.
 
 ### Notes
-- **A flat folder of several hundred ROMs is slow, and no amount of this fixes that.** The cost is titles multiplied by entries in the directory, because the filesystem resolves every path by walking the directory linearly. Splitting a large library into subfolders is worth more than anything in this release: one folder per initial letter took a 556-entry directory to about 21 on the card this was measured against.
+- **A flat folder of several hundred ROMs is slow, and no amount of this fixes that.** The cost is titles multiplied by entries in the directory, because the filesystem resolves every path by walking the directory linearly. Splitting a large library into subfolders is worth more than anything else in this release: one folder per initial letter took a 556-entry directory to about 21 on the card this was measured against.
 
 ### Current known Issues
+- GoldenEye 007 and Star Wars: Shadows of the Empire still cannot be hooked. GoldenEye's only preamble names an address 0x10000000 below its own handler and is unexplained, so nothing is touched; Shadows of the Empire has no preamble anywhere in twelve megabytes.
 - Three more per-title file probes (`<rom>.ini`, `<rom>.meta`, `<rom>.metadata.ini`) still miss on every title on a typical card. Removing them requires changing the order the scan walks directories in, which is what decides duplicate art resolution, so it has been left for a change of its own.
 - On consoles where the menu cannot write to the card, `library.idx` and the thumbnail atlas never persist, so the full scan and every cover decode happen on every boot. That is the larger remaining cost and is not addressed here.
 
