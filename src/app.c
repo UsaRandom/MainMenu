@@ -28,6 +28,7 @@
 #include "menu/fonts.h"
 #include "menu/music.h"
 #include "menu/launchlog.h"
+#include "menu/memprofile.h"
 #include "menu/profile.h"
 #include "ui/icon.h"
 #include "menu/parental.h"
@@ -193,12 +194,15 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * existed is in exactly that state -- so with the order the other way round every profile on
      * every existing card would come up blank, permanently, because profile_load() only runs once.
      * Needs nothing but dfs_init(), which is well above. */
+    mem_report("start");
     icon_init();
+    mem_report("icons");
 
     /* Before cache_init(), which is fine -- profile_load() only reads an ini and clamps an index.
      * It has to happen before playstate_load() below, because which file that reads is a function
      * of which profile is active. */
     profile_load(app->storage);
+    mem_report("profiles");
 
     /* The setting existed and the toggle drew, but nothing ever told the sound system about it --
      * turning sound effects off in settings changed a bool and nothing else. */
@@ -221,6 +225,7 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * being compared. Without that knob "does the seed actually vary" has no way of being asked. */
     music_start(inputscript_active() ? SCRIPT_MUSIC_TRACK : app->settings.music_track,
                 app->settings.music_volume);
+    mem_report("music");
 
     /* The theme belongs to the person, not the console, so it comes off the active profile. Until
      * profiles existed this was a bare assignment and the setting was never persisted at all --
@@ -229,9 +234,15 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
 
     resolution_t resolution = { .width = SCREEN_W, .height = SCREEN_H,
                                 .interlaced = INTERLACE_OFF };
-    display_init(resolution, DEPTH_16_BPP, FB_COUNT, GAMMA_NONE, FILTERS_RESAMPLE);
+    /* Not FB_COUNT any more: on 4 MB the third buffer is the allocation that failed, and it failed
+     * inside display_init's assert -- so the program did not start at all on a console without an
+     * Expansion Pak. With a pak this is still 3 and nothing about the build changes. */
+    display_init(resolution, DEPTH_16_BPP, mem_fb_count(), GAMMA_NONE, FILTERS_RESAMPLE);
+    mem_report("display");
 
+    mem_report("pre-fonts");
     fonts_init(NULL);
+    mem_report("post-fonts");
     /* After fonts_init, not before: it registers the styles this rebinds. */
     theme_apply(app->theme);
 
@@ -304,6 +315,8 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
         scan_us = TIMER_MICROS(TICKS_SINCE(t_scan));
     }
 
+    mem_report("library");
+
     /* Best-effort and never load-bearing, same as every other line this file writes. Opened here
      * and closed immediately: the launch path opens the log again later with its own banner, and
      * two open handles on one file is not something to find out about on a card. */
@@ -316,6 +329,11 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
         launchlog_line("%s %s  storage [%s]  cache %s", MENU_VERSION, verdict,
                        app->storage, cache_status());
         launchlog_line("titles %d", app->lib->count);
+        /* Which memory profile ran, on the card, because "the art cache is smaller than I expected"
+         * and "this console has no Expansion Pak" are the same fact and only one of them is
+         * visible from the sofa. */
+        launchlog_line("memory %u bytes, %s profile", mem_total_bytes(),
+                       mem_small() ? "SMALL (no Expansion Pak)" : "full");
         if (idx.incremental) {
             /* The two halves separately, because they answer different questions: how much of the
              * card the repair had to read, and whether the directory signatures are actually

@@ -2,6 +2,7 @@
 
 #include "fonts.h"
 #include "utils/fs.h"
+#include "menu/memprofile.h"
 
 /* Kept so the styles can be re-registered when the theme changes. rdpq_text_register_font takes
  * ownership for drawing but there is no way to ask it for the pointer back, and rdpq_font_style
@@ -28,8 +29,22 @@ static rdpq_font_t *key_font;
 static rdpq_font_t *field_font;
 
 static void load_default_font (char *custom_font_path) {
-    char *font_path = "rom:/Firple-Bold.font64";
+    /* The body face is the largest allocation this program makes: measured at 1,284,208 bytes of
+     * RDRAM, which is more than the two framebuffers a 4 MB console has to fit beside it in a
+     * 2,221,744-byte heap. It does not fit there with everything else removed, so a console with
+     * no Expansion Pak reads the same typeface at the same size with the CJK dropped -- 339
+     * characters instead of 2,697, and 37,492 bytes on the card instead of 681,040.
+     *
+     * The cost is real and it is stated rather than hidden: a title with Japanese in it draws its
+     * Latin part and holes where the rest was. That is why this is a fallback for a console that
+     * cannot start otherwise, and never a default -- with a pak, the path below is byte for byte
+     * what it always was. */
+    char *font_path = mem_small() ? "rom:/FirpleBody4M.font64" : "rom:/Firple-Bold.font64";
 
+    /* A custom font still wins on either profile. On the small one that is a loaded gun -- a
+     * full-charset face put there by hand is an assert in asset_load and a console that does not
+     * boot -- but refusing a file the owner deliberately installed is worse, and nothing in this
+     * build ever passes one: app.c calls fonts_init(NULL). */
     if (custom_font_path && file_exists(custom_font_path)) {
         font_path = custom_font_path;
     }
@@ -66,10 +81,15 @@ static rdpq_font_t *load_ui_font (const char *path, menu_font_type_t id) {
 
 void fonts_init (char *custom_font_path) {
     load_default_font(custom_font_path);
+    mem_report("f:body");
     load_boot_font();
+    mem_report("f:boot");
     small_font = load_ui_font("rom:/FirpleSmall.font64", FNT_SMALL);
+    mem_report("f:small");
     key_font   = load_ui_font("rom:/FirpleKey.font64",   FNT_KEY);
+    mem_report("f:key");
     field_font = load_ui_font("rom:/FirpleField.font64", FNT_FIELD);
+    mem_report("f:field");
     /* White until a theme says otherwise, so a font drawn before theme_apply() is still legible
      * on the dark plate the boot screen paints. */
     fonts_set_palette(0xFFFF, 0xA5A5, 0xFFFF);

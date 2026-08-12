@@ -6228,6 +6228,73 @@ Item 2 is covered by the host suite, which is where the atlas is reachable. The 
 claim and stays one until a card reports it.
 
 ---
+## 1bb. The 4 MB profile: what it took, and what it costs
+
+A user asked whether the menu needs an Expansion Pak. It did -- not marginally, and not for one
+reason. On a stock N64 it did not start: `display_init()` asserted on its third framebuffer before
+a frame existed. This is the branch that fixes that, measured throughout under ares with the pak
+switched off.
+
+**Testing it at all needed two harness fixes first, and the first one produced a false pass.**
+`ARES_SETTINGS` was only ever read by regress.sh's own preflight checks; ares went on loading its
+real settings file. So the first 4 MB run validated as 4 MB, ran as 8, and reported that the menu
+boots fine without a pak. **The only reason it was caught is that the heap total in the log was
+byte-for-byte the 8 MB one.** regress.sh now passes `--settings-file` through, and `FOURMB=1`
+INVERTS the pak check rather than disabling it -- a 4 MB run against a settings file with the pak
+still on is refused, because that is the same mistake wearing a different hat.
+
+**The heap on 4 MB is 2,221,744 bytes** against 6,416,048 on 8 MB; the ~1.97 MB outside it is the
+same on both. Four things had to move, and the order they run in is what decides whether the next
+one has room:
+
+| stage | full | small | how |
+| --- | --- | --- | --- |
+| icons | 249,808 | 81,528 | picker cache 64 cells -> 8 |
+| framebuffers | 1,843,264 | 1,228,848 | 3 -> 2, which is what upstream runs |
+| fonts | 1,364,624 | 186,096 | body face on a Latin charset |
+| art pool | 36 slots | 4 slots | bounded in claim_slot() |
+
+**The body font was the whole problem.** 1,284,208 bytes of RDRAM -- more than the two
+framebuffers it would have to share the heap with -- and 2,187 of its 2,697 characters are CJK
+ideographs. It does not fit with everything else stripped out and it does not fit with nothing
+else at all. `tools/mkcharset-latin.py` derives the Latin subset from the same charset.txt rather
+than committing a second one that can drift, and the face bakes to 37,492 bytes on the card
+against 681,040, 105,680 in RAM against 1,284,208. **Both ship; one is loaded, on one hardware
+probe.**
+
+**Measured at the design ceiling, not extrapolated to it.** `SAMPLE_SCALE` is a new knob because a
+budget argued from the 48-title fixture is not a budget. At 48 and 115 titles the growth is 373
+bytes of peak per title, which predicts 2,136,549 for a 499-title card; the 499-title card
+measures **2,126,472 against a 2,220,448 heap, 93,976 spare**. An earlier draft with 8 art slots
+fitted the 48-title fixture with 70,000 to spare and would have been about 160,000 short on a full
+one -- which is exactly the mistake the knob exists to stop.
+
+**Nothing changes with a pak present, and that is checked rather than asserted.** Every stage
+delta on 8 MB is identical to the pre-branch baseline -- icons 249,808, music 54,576, framebuffers
+1,843,264, body font 1,284,208, pool 36 of 36 -- and ten input scripts produce identical frame
+counts on both profiles. The 16-byte offsets between the two runs are the heap base moving because
+the binary grew.
+
+**What a 4 MB console gives up**, all of it stated rather than discovered:
+
+- **Cheats.** The Datel engine is emitted to 0x807C5C00, 7.77 MB, and the patcher stages at
+  0x80700000. Upstream's own cheats.c at the fork point uses the same two addresses, so "fall back
+  to the original engine" is not available -- there is no lighter one. `build_cheat_list()` already
+  refused without a pak and still does. Cheats remain browsable and are silently never installed,
+  which is a UX gap this branch does not close.
+- **Japanese titles** draw their Latin part and holes where the rest was.
+- **Art fills in more slowly**: four resident tiles against a twelve-tile screen, so tiles evict
+  while scrolling. Affordable only because the display path no longer decodes on a card with an
+  atlas -- it fetches, at one seek and about 27 KB. The thrash 1u warns about is decode thrash.
+- **The icon picker re-rasterises** as it is paged.
+
+`hooktest_run()` also had to opt out: it emits the engine to an address 4 MB does not have, and
+the run stopped dead after "cheats: engine placed at 807c5c00" with no frames, which reads exactly
+like a hung ROM. And `dbg_fbdump()`'s scratch keeps its 320x240 floor on the full profile -- that
+floor is what makes allocation measurements comparable across scales -- but takes exactly what the
+scale needs on the small one, where 153,600 bytes against 143,144 free meant no captures at all.
+
+---
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon

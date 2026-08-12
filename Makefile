@@ -153,9 +153,14 @@ endif
 #   make SAMPLE=1 SAMPLE_MIX=true      the control: every cover the right shape
 #   make SAMPLE=1 SAMPLE_MIX=hostile   half the card wrong
 SAMPLE_MIX ?= realistic
+# A percentage of the 115-title card, so a build can be a card of any size. 435 is about 500
+# titles, which is the number DESIGN.md sizes for and the number the 4 MB memory budget has to
+# survive -- and a budget extrapolated from 48 and 115 titles is arithmetic, not a measurement.
+# The directory carries the scale so two sizes do not overwrite each other's fixture.
+SAMPLE_SCALE ?=
 ifdef SAMPLE
-FIXTURE_DIR = $(BUILD_DIR)/sample-$(SAMPLE_MIX)
-FIXTURE_ART = --mix $(SAMPLE_MIX)
+FIXTURE_DIR = $(BUILD_DIR)/sample-$(SAMPLE_MIX)$(if $(SAMPLE_SCALE),-$(SAMPLE_SCALE),)
+FIXTURE_ART = --mix $(SAMPLE_MIX) $(if $(SAMPLE_SCALE),--scale $(SAMPLE_SCALE),)
 FIXTURE_GEN = tools/mksample.py
 FIXTURE = 1
 endif
@@ -241,6 +246,7 @@ SRCS = \
 	library/thumbcache.c \
 	library/thumbstore.c \
 	menu/cart_load.c \
+	menu/memprofile.c \
 	menu/ini_parser.c \
 	menu/fonts.c \
 	menu/parental.c \
@@ -354,6 +360,7 @@ DEPS = $(OBJS:.o=.d)
 
 FILESYSTEM = \
 	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(FONTS:%.ttf=%.font64))) \
+	$(FILESYSTEM_DIR)/FirpleBody4M.font64 \
 	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(SOUNDS:%.wav=%.wav64))) \
 	$(addprefix $(FILESYSTEM_DIR)/, $(notdir $(IMAGES:%.png=%.sprite))) \
 	$(FILESYSTEM_DIR)/credits.txt \
@@ -387,6 +394,15 @@ $(FILESYSTEM_DIR)/FirpleBoot.font64: MKFONT_FLAGS+=--compress 1 --size 32 --char
 # The cost is that a character outside charset-ui.txt draws as a hole and nothing says so at build
 # time. tools/charsetcheck.py is what turns that into a build failure; anything drawn through
 # ui_text_font() has to stay inside it.
+# The body font again, on the Latin part of the same charset, for a console with no Expansion Pak.
+#
+# Measured: the full-charset body font is 1,284,208 bytes of RDRAM -- MORE than the two
+# framebuffers beside it -- against a 4 MB heap of 2,221,744. It does not fit with anything else,
+# and it does not fit with nothing else either. 2,187 of its 2,697 characters are CJK ideographs.
+#
+# Both faces ship. Only one is ever loaded, by fonts.c, on the answer to one hardware probe -- so
+# an 8 MB console reads exactly the font it always did and pays nothing for this but ROM.
+$(FILESYSTEM_DIR)/FirpleBody4M.font64: MKFONT_FLAGS+=--compress 1 --outline 1 --size 20 --charset $(BUILD_DIR)/charset-latin.txt --ellipsis 2026,1
 $(FILESYSTEM_DIR)/FirpleSmall.font64: MKFONT_FLAGS+=--compress 1 --size 24 --charset $(ASSETS_DIR)/fonts/charset-ui.txt --ellipsis 2E,3
 $(FILESYSTEM_DIR)/FirpleKey.font64:   MKFONT_FLAGS+=--compress 1 --size 32 --charset $(ASSETS_DIR)/fonts/charset-ui.txt --ellipsis 2E,3
 $(FILESYSTEM_DIR)/FirpleField.font64: MKFONT_FLAGS+=--compress 1 --size 40 --charset $(ASSETS_DIR)/fonts/charset-ui.txt --ellipsis 2E,3
@@ -405,7 +421,14 @@ $(FILESYSTEM_DIR)/%.font64: $(ASSETS_DIR)/fonts/%.ttf
 # repository -- and git history keeps a blob forever, so that copy would be permanent.
 # An explicit rule beats the pattern rule above, which is what stops make looking for a
 # FirpleBoot.ttf that does not exist.
+$(BUILD_DIR)/charset-latin.txt: $(ASSETS_DIR)/fonts/charset.txt tools/mkcharset-latin.py
+	@mkdir -p $(BUILD_DIR)
+	@python3 tools/mkcharset-latin.py -i $< -o $@
+
+$(FILESYSTEM_DIR)/FirpleBody4M.font64: $(BUILD_DIR)/charset-latin.txt
+
 $(FILESYSTEM_DIR)/FirpleBoot.font64 \
+$(FILESYSTEM_DIR)/FirpleBody4M.font64 \
 $(FILESYSTEM_DIR)/FirpleSmall.font64 \
 $(FILESYSTEM_DIR)/FirpleKey.font64 \
 $(FILESYSTEM_DIR)/FirpleField.font64: $(ASSETS_DIR)/fonts/Firple-Bold.ttf $(ASSETS_DIR)/fonts/charset-ui.txt

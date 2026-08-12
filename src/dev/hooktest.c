@@ -11,6 +11,7 @@
 #include "boot/cheats.h"
 #include "boot/vr4300_asm.h"
 #include "dev/hooktest.h"
+#include "menu/memprofile.h"
 
 /* Same three as enginetest.c: libdragon has macros for none of WatchLo's spellings but the C
  * one, and the fallback scenario arms a real watch on a live console that must be disarmed
@@ -190,6 +191,16 @@ static void check_preamble_pattern (void) {
 }
 
 void hooktest_run (void) {
+    /* The Datel engine is emitted to CHEATS_DEFAULT_ENGINE_ADDRESS, 0x807C5C00 -- 7.77 MB, which
+     * only exists on a console with an Expansion Pak. On 4 MB this wrote into nothing and the run
+     * stopped dead after "cheats: engine placed at 807c5c00" with no frames dumped, which reads
+     * exactly like a hung ROM. The product already refuses cheats without a pak (see
+     * build_cheat_list in screen_launch.c); the harness has to refuse for the same reason. */
+    if (mem_small()) {
+        debugf("HOOKTEST skipped: no Expansion Pak, so the engine's address does not exist\n");
+        return;
+    }
+
     check_preamble_pattern();
 
     volatile uint32_t *vec = (volatile uint32_t *)(0x80000180);

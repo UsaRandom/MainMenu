@@ -10,6 +10,7 @@
 #include <stdlib.h>
 
 #include "debug_emux.h"
+#include "menu/memprofile.h"
 
 /* Sized for what this build's DBG_FBDUMP_SCALE will actually ask for, but never smaller than
  * the 320x240 that scales 2 and 4 have always used. Both halves matter. Without the first, a
@@ -22,6 +23,22 @@
  * and make a memory regression look like a rendering one. */
 #define DBG_FB_WANTED ((640 / DBG_FBDUMP_SCALE) * (480 / DBG_FBDUMP_SCALE))
 #define DBG_FB_MAX_PIXELS (DBG_FB_WANTED > (320 * 240) ? DBG_FB_WANTED : (320 * 240))
+
+/**
+ * @brief Pixels to reserve: the padded figure above, or exactly what the scale needs on 4 MB.
+ *
+ * The 320x240 floor is there so a scale-4 build and a scale-1 build put the same hole in the heap
+ * and an allocation measurement means the same thing in both -- see the note above, and keep it.
+ * It cannot survive the small profile: 153,600 bytes against 143,144 free at the end of an idle
+ * run means the dump fails, and a harness that cannot capture is a 4 MB build nobody can look at.
+ * At scale 4 the real requirement is 38,400.
+ *
+ * Nothing in AUDIT.md is measured on a 4 MB console, so there is no comparability to protect here,
+ * and any future measurement there starts from this number rather than from the padded one.
+ */
+static size_t scratch_pixels (void) {
+    return mem_small() ? (size_t)DBG_FB_WANTED : (size_t)DBG_FB_MAX_PIXELS;
+}
 
 static uint16_t *scratch = NULL;
 
@@ -52,13 +69,13 @@ void dbg_fbdump (surface_t *fb, int scale) {
 
     /* Refuse rather than truncate. A silently shortened dump still decodes to an image, just a
      * wrong one, and that reads as a rendering fault instead of a harness limit. */
-    if (w * h > DBG_FB_MAX_PIXELS) {
-        debugf("FBDUMP skipped: %dx%d at scale %d exceeds the %d-pixel scratch\n",
-               fb->width, fb->height, scale, DBG_FB_MAX_PIXELS);
+    if ((size_t)(w * h) > scratch_pixels()) {
+        debugf("FBDUMP skipped: %dx%d at scale %d exceeds the %u-pixel scratch\n",
+               fb->width, fb->height, scale, (unsigned)scratch_pixels());
         return;
     }
 
-    if (scratch == NULL && (scratch = malloc(DBG_FB_MAX_PIXELS * sizeof(uint16_t))) == NULL) {
+    if (scratch == NULL && (scratch = malloc(scratch_pixels() * sizeof(uint16_t))) == NULL) {
         debugf("FBDUMP skipped: scratch allocation failed\n");
         return;
     }

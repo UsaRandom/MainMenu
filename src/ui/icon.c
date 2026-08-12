@@ -11,6 +11,7 @@
 
 #include "svg64/svg64.h"
 #include "ui/icon.h"
+#include "menu/memprofile.h"
 
 #define PACK_PATH   "rom:/icons.pack"
 #define META_PATH   "rom:/icons.meta"
@@ -271,15 +272,23 @@ void icon_init (void) {
     }
     (void)open_meta();
 
-    if (!cache_alloc(&cache_small, CACHE_40, ICON_SMALL) ||
+    /* The 40 px class is the largest single allocation this program makes, and on a console with
+     * no Expansion Pak it is 204,800 bytes out of a heap the body font alone takes a third of.
+     * Shrinking it costs re-rasterisation when the picker is paged, which is time; keeping it
+     * costs the font, which is the program. With a pak the count is unchanged. */
+    if (!cache_alloc(&cache_small, mem_icon_cache_cells(), ICON_SMALL) ||
         !cache_alloc(&cache_large, CACHE_60, ICON_LARGE)) {
         debugf("icon: cache allocation failed; icons are disabled\n");
         pack_count = 0;
     }
+    /* The COUNT THAT WAS ALLOCATED, not the constant. This printed CACHE_40 regardless of what
+     * cache_alloc() was handed, so the first small-profile run reported a 64-entry cache it had
+     * not built -- a log that answers a question it is not being asked. */
+    int n_small = cache_small.n, n_large = cache_large.n;
     debugf("icon: caches %d x %d px and %d x %d px = %u bytes\n",
-           CACHE_40, ICON_SMALL, CACHE_60, ICON_LARGE,
-           (unsigned)(CACHE_40 * ICON_SMALL * ICON_SMALL * 2 +
-                      CACHE_60 * ICON_LARGE * ICON_LARGE * 2));
+           n_small, ICON_SMALL, n_large, ICON_LARGE,
+           (unsigned)(n_small * ICON_SMALL * ICON_SMALL * 2 +
+                      n_large * ICON_LARGE * ICON_LARGE * 2));
 }
 
 int icon_count (void) {

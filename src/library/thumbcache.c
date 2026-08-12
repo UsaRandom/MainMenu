@@ -13,6 +13,7 @@
 #include "menu/paths.h"
 #include "boxart.h"
 #include "thumbcache.h"
+#include "menu/memprofile.h"
 #include "thumbstore.h"
 #include "ui/theme.h"
 #include "utils/fs.h"
@@ -64,6 +65,11 @@ struct thumbcache_s {
     /** Which root the pack turned out to be under, resolved with the line above. Held rather
      *  than recomputed because it is on the path of every title that misses a loose image. */
     char metadata_root[300];
+
+    /** How many slots may hold a surface. THUMB_SLOTS with an Expansion Pak, fewer without --
+     *  the array stays full size either way, because a slot costs a few bytes until something
+     *  lands in it and the surfaces are the entire cost. See menu/memprofile.h. */
+    int slot_limit;
 
     int resident;
     uint32_t decoded_count;
@@ -122,9 +128,14 @@ thumbcache_t *thumbcache_init (const char *storage_prefix) {
     tc->storage = storage_prefix;
     tc->decoding_slot = -1;
     tc->metadata_dir = -1;      /* unknown until the first record needs it */
+    tc->slot_limit = mem_thumb_slots();
+    if (tc->slot_limit > THUMB_SLOTS) {
+        tc->slot_limit = THUMB_SLOTS;
+    }
     for (int i = 0; i < THUMB_SLOTS; i++) {
         tc->slots[i].rom_id = 0xFFFF;
     }
+    debugf("THUMB pool: %d of %d slots usable\n", tc->slot_limit, THUMB_SLOTS);
     active = tc;
     return tc;
 }
@@ -554,7 +565,10 @@ static int claim_slot (thumbcache_t *tc, library_t *lib, uint16_t rom_id, bool m
     int best = -1;
     uint32_t oldest = 0xFFFFFFFF;
 
-    for (int i = 0; i < THUMB_SLOTS; i++) {
+    /* slot_limit, not THUMB_SLOTS: this is the only place a slot is ever handed out, so bounding
+     * it here is what bounds the pool's memory. Everything else may walk the whole array -- the
+     * slots past the limit are permanently empty and cost nothing to skip over. */
+    for (int i = 0; i < tc->slot_limit; i++) {
         if (!tc->slots[i].used && tc->slots[i].art == NULL) {
             return i;
         }
@@ -562,7 +576,7 @@ static int claim_slot (thumbcache_t *tc, library_t *lib, uint16_t rom_id, bool m
     if (!may_evict && !THUMB_AB_PREFIX) {
         return -1;
     }
-    for (int i = 0; i < THUMB_SLOTS; i++) {
+    for (int i = 0; i < tc->slot_limit; i++) {
         /* Never evict what is wanted this frame, or a working set larger than the pool would
          * thrash: every tile would evict the one drawn just before it and nothing would ever
          * stay resident. */
