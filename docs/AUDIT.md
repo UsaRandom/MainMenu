@@ -2265,7 +2265,10 @@ Two things fall out, and neither is about texture loading.
 
 **The scan is the bigger cost.** 5.75 s of scanning against, at worst, tens of milliseconds per
 scroll row of art. And 11,499 µs/rom was measured through the DFS, which is faster than FatFs
-over the cart, so the real figure is worse. `library.idx` with per-directory signatures — the
+over the cart, so the real figure is worse. **Superseded as a predictor by 1aw: hardware came in
+at roughly 0.7 s/rom, sixty times this, and the gap is not SD latency — the DFS has no directory
+to walk, so this number could not see the cost that dominates on a card.** `library.idx` with
+per-directory signatures — the
 plan's sub-200 ms revalidation — stops being an optimisation and becomes the thing that makes a
 500-title library bootable at all. It is also strictly easier than the art cache: 500 records is
 84 KB, one `fread`, no format questions.
@@ -5957,6 +5960,53 @@ menu with 160 identical-looking rows, merging them into one group is wrong where
 alternatives rather than a set (GoldenEye's "Number Of Shots Fired Modifier" has 78 copies, two of
 which write the same address), and numbering them is honest but unusable. Recorded as the largest
 remaining loss.
+
+---
+
+## 1aw. The scan's real cost is the directory walk, and ares cannot see it
+
+A card that grew from 19 titles to 278 went from booting acceptably to about **0.7 s per title**,
+reported from hardware. AUDIT's own figure was 11,499 us/rom through ares' DFS. Sixty times out,
+and the reason is not SD latency: **the DFS has no directory to walk.**
+
+`rom_config_load()` probes five paths for every title, and on a card with no metadata pack four of
+them miss:
+
+| # | probe | on this card |
+| - | ----- | ------------ |
+| 1 | the ROM itself, 4 KB header | hit |
+| 2 | `<rom>.ini` | miss |
+| 3 | `<rom>.meta` | miss |
+| 4 | `<rom>.metadata.ini` | miss |
+| 5 | `menu/metadata/<G>/<A>/<M>/<E>/metadata.ini` | miss |
+
+A miss is not cheap. FatFs resolves a path by walking each directory in it linearly, and all 556
+entries -- 278 ROMs and 278 covers -- were in one flat folder, with long filenames costing about
+six 32-byte slots each. That is roughly 107 KB, some 210 sectors, **per probe**. Five probes
+across 278 titles is on the order of 292,000 sector reads, which at about a millisecond each is
+the reported second per title. Worse, `index_n64()` issues those opens from inside the scan's own
+`dir_findfirst`/`dir_findnext` enumeration of the same directory, so each one re-seeks the walk
+already in progress.
+
+The cost is therefore `titles x entries-in-directory` -- quadratic in library size, not linear.
+19 titles in 38 files was invisible; 278 in 556 is about 220 times the work. **This dwarfs the
+O(n^2) in the loose-art table fixed alongside it**, which was around 116,000 strcmp -- tens of
+milliseconds, against minutes here. Fixing the visible quadratic first and the expensive one
+second is the mistake worth recording.
+
+Two things changed. `load_rom_meta_from_file()` now asks once whether `sd:/menu/metadata` exists
+at all and skips probe 5 entirely when it does not, turning 278 guaranteed misses into one
+directory lookup. And the card was split into one folder per initial letter, taking the worst
+directory from 556 entries to 57 and the average to about 21. Saves moved with their ROMs because
+`cart_load.c` derives the save path from the ROM's directory; a ROM that moves without its save
+silently starts a new game.
+
+**Not measured, and that is the residual distrust.** The improvement was reported as "works a lot
+better", not as a number -- there is no instrumented before/after from hardware, because `debugf`
+goes to a USB link this cart does not have. Probes 2, 3 and 4 still miss once per title. Killing
+those means having the scan record the sidecars it already walks past, which requires buffering
+each directory before recursing, which changes DFS order -- and DFS order is what decides which
+duplicate cover wins. See the note on art_push() in library.c.
 
 ---
 
