@@ -2,7 +2,7 @@
 #
 # Two things are being checked and only one of them is the new screen.
 #
-# The settings list gained an eighth row and started scrolling, which means the row a cursor is on
+# The settings list grew past the window and started scrolling, which means the row a cursor is on
 # and the row drawn at a given y are no longer the same number. Every earlier settings frame in
 # this suite was taken when they were. So the first three dumps here are about the window: the
 # list at rest, the list after the cursor has pushed it down by one, and the position bar that
@@ -18,11 +18,11 @@ wait 120
 
 press start         # settings
 wait 20
-fbdump              # 1: eight rows do not fit; seven are drawn, position bar at the top
+fbdump              # 1: eleven rows, nine visible; Theme through Parental on screen
 
-press down x7       # -> Credits, which is the row that pushed the list past the window
+press down x10      # -> Credits (past the two cheat rows under Parental)
 wait 20
-fbdump              # 2: the list has scrolled by one, Players is gone off the top, bar at the bottom
+fbdump              # 2: cursor on Credits, window scrolled so the last rows are visible
 
 press a             # -> credits
 wait 30

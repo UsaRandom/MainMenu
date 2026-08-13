@@ -103,6 +103,8 @@ void library_clear (library_t *lib) {
     lib->art_count = 0;
     lib->art_capacity = 0;
     lib->art_sorted = false;
+    lib->dir_busiest = 0;
+    lib->dir_busiest_name[0] = '\0';
 }
 
 void library_free (library_t *lib) {
@@ -340,6 +342,25 @@ bool library_is_art_name (const char *name) {
 
 /** @brief Grow by doubling. Upstream's browser reallocs once per entry; at 500 files that is
  *  500 reallocs and the fragmentation to match. */
+void library_note_dir (library_t *lib, const char *dir, int entries) {
+    if (lib == NULL || entries <= lib->dir_busiest) {
+        return;
+    }
+    lib->dir_busiest = entries;
+    const char *base = dir;
+    if (dir != NULL) {
+        const char *slash = strrchr(dir, '/');
+        if (slash != NULL && slash[1] != '\0') {
+            base = slash + 1;
+        }
+    }
+    if (base == NULL || base[0] == '\0' || strchr(base, ':') != NULL) {
+        snprintf(lib->dir_busiest_name, sizeof(lib->dir_busiest_name), "card root");
+    } else {
+        snprintf(lib->dir_busiest_name, sizeof(lib->dir_busiest_name), "%s", base);
+    }
+}
+
 void library_touch (library_t *lib) {
     if (lib != NULL) {
         lib->dirty = true;
@@ -563,6 +584,8 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
         }
         result = dir_findnext(dir, &info);
     }
+
+    library_note_dir(lib, dir, n);
 
     /* Files first, so a subdirectory cannot get between a ROM and the sidecar sitting beside it,
      * and so the listing above is what answers the sidecar question. */

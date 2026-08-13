@@ -55,6 +55,7 @@ typedef enum {
     SCREEN_CLOCK,      /**< setting the date and time; see screen_clock.c */
     SCREEN_CODE,       /**< the button-code pad; see screen_code_ask() */
     SCREEN_CREDITS,    /**< what this program owes to other people; see screen_credits.c */
+    SCREEN_SYSINFO,    /**< build, card, memory; see screen_sysinfo.c */
     SCREEN_KEYBOARD,   /**< typing a name; see screen_keyboard_ask() */
     SCREEN_APPEARANCE, /**< picking a profile's face and colour; see screen_appearance.c */
     SCREEN_LAUNCH,

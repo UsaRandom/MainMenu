@@ -266,6 +266,7 @@ int main (void) {
     /* --- round trip ----------------------------------------------------------------------- */
     library_t *scanned = fresh_scan();
     CHECK(scanned->count == 3, "three ROMs are indexed (art and saves are not titles)");
+    CHECK(scanned->dir_busiest >= 3, "the scan remembers the fullest folder");
 
     CHECK(libindex_save(scanned, root, "/", NULL), "save succeeds");
 
@@ -273,6 +274,7 @@ int main (void) {
     library_t *loaded = library_init();
     CHECK(libindex_load(loaded, root, "/", NULL, &res), "an untouched card loads its index");
     CHECK(loaded->count == scanned->count, "same title count");
+    CHECK(loaded->dir_busiest >= 3, "the revalidation walk remembers the fullest folder too");
     CHECK(!res.incremental, "an untouched card is believed as it stands, not repaired");
     CHECK(res.dirs_rescanned == 0, "and nothing is read off the card again");
 

@@ -20,6 +20,7 @@ extern const screen_t SCREEN_PROFILES_DEF;
 extern const screen_t SCREEN_CLOCK_DEF;
 extern const screen_t SCREEN_CODE_DEF;
 extern const screen_t SCREEN_CREDITS_DEF;
+extern const screen_t SCREEN_SYSINFO_DEF;
 extern const screen_t SCREEN_KEYBOARD_DEF;
 extern const screen_t SCREEN_APPEARANCE_DEF;
 

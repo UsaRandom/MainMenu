@@ -89,13 +89,20 @@ Without the matching file, that tab simply does not appear. The same files also 
 
 ### Cheats
 
-Copy `cheats.db` to the top of the card (or into `mainmenu`). It covers N64 games from [libretro's collection](https://github.com/libretro/libretro-database) and is not in the menu download; if you are building from source, `tools/mkcheatdb.py --fetch` makes it.
+The menu already contains a cheat database for N64 games from [libretro's collection](https://github.com/libretro/libretro-database). You can also drop `cheats.db` on the card (top, `mainmenu`, or `menu`) if you want a newer one. If you are building from source, `tools/mkcheatdb.py --fetch` makes it.
 
-Cheats are switched on by name, not line by line. Two codes that only work together stay together. You can also type your own from the menu, which is the only option for other systems.
+Cheats are switched on by name, not line by line. Two codes that only work together stay together. You can type your own from a game's cheat list with **R**.
+
+**Start → Settings** has two rows for this:
+
+- **Use cheat database** — Yes (the usual case) lists the shipped codes for that game. No hides them, so only codes you typed stay in the list. The database itself stays on the card either way.
+- **Cheat engine** — Cartridge is the default. Classic is the older engine; try it on a title Cartridge cannot hook. The two never run together.
+
+A game with no codes at all still lets you type one.
 
 ### More than one person
 
-**Start → Players.** Each person gets their own saves, favourites, history and colours. A card with one player looks the same as it always did.
+**L** off the first tab opens the player list (or **B** on the grid, when there is more than one person). Each person gets their own saves, favourites, history and colours. A card with one player looks the same as it always did.
 
 Player 1 is the original person on the card and cannot be deleted — those are the saves that were already there. Deleting anyone else deletes their saved games. The menu counts them and asks first.
 
@@ -115,14 +122,18 @@ There is no master code. Deleting that file is the only way in.
 
 ## If something is wrong
 
+The boot screen says the urgent ones. **Start → Settings → System info** is the full list --
+the page to photograph when something is wrong.
+
 | what you see | what to try |
 |---|---|
 | Empty grid | Games are zipped, or they sit inside `emulators` / `metadata` / `saves` / `menu` / `mainmenu`. Move them out. |
 | No NES / SNES / Game Boy tab | The matching file is missing from `emulators/`. |
 | No covers | First boot is still working, or the JPEGs are progressive, or there are no pictures on the card. |
 | Slow every time you start | The card cannot be written. Check the lock switch. Eject it properly from the computer next time. |
+| "files in one folder" | Split that folder (by system, or A–Z). One giant folder is slow. |
 | Forgot the lock code | Delete `mainmenu/parental.ini`. |
-| A game has no cheats | There is no `cheats.db`, or that title is not in it. You can still type codes on its page. |
+| A game has no cheats | That title is not in the database, or **Use cheat database** is off. You can still type codes on its page. |
 
 Deleting the whole `mainmenu` folder makes the menu forget settings, favourites, history and player faces. **Saved games are not in there** and are not touched.
 

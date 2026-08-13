@@ -20,9 +20,9 @@ fbdump              # 1: the settings screen itself
 # that had lost a third of its contents.
 #
 # Now x6: folding the sound screen back into Settings added three rows -- effects, music and
-# track -- between Theme and Clock, and Players went in above Theme. This count is expected to
-# move whenever that list does, and a run that suddenly dumps the wrong screen is the count being
-# wrong, not the screen.
+# track -- between Theme and Clock. The cheat-database and cheat-engine rows sit BELOW Parental,
+# so this count did not move with them. It is expected to move whenever the list above Parental
+# does, and a run that suddenly dumps the wrong screen is the count being wrong, not the screen.
 press down x6       # -> Parental controls
 press a             # no code yet, so straight in
 wait 20

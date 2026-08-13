@@ -363,6 +363,9 @@ static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
                        (unsigned long)(rec->check_code >> 32),
                        (unsigned long)(rec->check_code & 0xFFFFFFFFu));
     }
+    launchlog_line("mode     engine %s, database %s",
+                   app->settings.cheat_engine == CHEAT_ENGINE_CLASSIC ? "classic" : "cartridge",
+                   app->settings.use_cheat_database ? "on" : "off");
     launchlog_line("engine   %s -- %s",
                    fit_detail,
                    (fit == CHEATFIT_OK) ? "will hook"
@@ -375,7 +378,10 @@ static void log_launch (app_t *app, const uint32_t *cheats, int emu) {
     /* The line this whole exercise exists to produce. Everything that used to be unobservable --
      * whether a preamble was found, where, what was written, and whether the cartridge agrees --
      * is now a fact recorded before the console boots. */
-    if (!launch_patch.attempted) {
+    if (app->settings.cheat_engine == CHEAT_ENGINE_CLASSIC) {
+        launchlog_line("         not attempted (classic engine; the cartridge is left alone)");
+        launchlog_line("         classic: IPL3 hook + watch; 6105 rewrites DMEM word 486");
+    } else if (!launch_patch.attempted) {
         launchlog_line("         not attempted (no cheats ticked, emulated game, or no cart)");
     } else if (!launch_patch.crc_ok) {
         launchlog_line("rompatch REFUSED: header says %08lx %08lx, which is not what this ROM "
@@ -532,8 +538,14 @@ static void do_load (app_t *app) {
 
     int cheat_lines = 0;
     bool cheats_fit = rompatch_cheats_fit(cheat_list, &cheat_lines);
+    bool classic = (app->settings.cheat_engine == CHEAT_ENGINE_CLASSIC);
 
-    if (ROMPATCH_ENABLED && !flashcart_is_dummy() && emu < 0 && cheat_list != NULL) {
+    /* Exclusive. Cartridge writes the image; Classic hands the list to cheats_install() and
+     * leaves the cartridge alone. Doing both on a 6105 title is a black screen: Classic nops
+     * DMEM word 486, which is inside that CIC's checksum window, and Cartridge leaves the
+     * header describing a clean image. Never a fallback -- a selection that cannot hook is
+     * a logged miss, not a second engine. */
+    if (!classic && ROMPATCH_ENABLED && !flashcart_is_dummy() && emu < 0 && cheat_list != NULL) {
         cic_type_t cic = rom_info_get_boot_cic(&app->launch.rom_info);
         uint32_t entry = (uint32_t)(app->launch.rom_info.boot_address);
 
@@ -555,6 +567,8 @@ static void do_load (app_t *app) {
         diag_reportf("crc ok %d  found %d  written %d  read back %d  agrees %d",
                 launch_patch.crc_ok, launch_patch.found, launch_patch.written,
                 launch_patch.verified, launch_patch.reverified);
+    } else if (classic && cheat_list != NULL) {
+        diag_reportf("classic engine; cartridge patch skipped");
     } else {
         diag_reportf("no patch: dummy %d  emu %d  cheats %s",
                 flashcart_is_dummy(), emu, cheat_list ? "ticked" : "none ticked");
@@ -603,23 +617,34 @@ static void do_load (app_t *app) {
         default:               bp->tv_type = BOOT_TV_TYPE_PASSTHROUGH; break;
     }
 
-    /* Always NULL, whether the patch went in or not, and the "or not" half is the important one.
-     * cheats_install() writes a nop into IPL3's DMEM copy at word 486, and byte 0x798 is inside
-     * the 0x750 window CIC 6105 mixes into its checksum -- so on a launch where rompatch wrote
-     * nothing, and the header therefore still describes the pristine image, that nop would make
-     * IPL3 compute a checksum the header disagrees with and refuse to boot. Handing the list over
-     * as a fallback would turn "your cheat selection has a conditional in it" into a black screen
-     * on every 6105 game. It has also never once been shown to work on this console: the boot-time
-     * engine needs either the watch exception, which the M64's CPU does not implement (AUDIT 1af),
-     * or an IPL3 DMEM patch that does not take (2x).
+    /* Cartridge: always NULL. Classic: the list, and only the list.
      *
-     * So cheats apply through the cartridge or not at all, and the launch log says which. */
-    bp->cheat_list = NULL;
+     * cheats_install() writes a nop into IPL3's DMEM copy at word 486, and byte 0x798 is inside
+     * the 0x750 window CIC 6105 mixes into its checksum. On a Cartridge launch the header still
+     * describes the pristine image (or the image rompatch just wrote, which did not include that
+     * nop), so handing the list over as well would make IPL3 refuse to boot. That is why the two
+     * engines never share a launch, and why Classic is not a fallback for a Cartridge miss.
+     *
+     * Classic on this M64 is an explicit experiment: the boot-time engine needs the watch
+     * exception, which this CPU does not implement (AUDIT 1af), or an IPL3 DMEM patch that has
+     * not been shown to take (2x). A title Cartridge cannot hook is the reason the switch exists.
+     * The launch log records which was asked for. */
+    if (classic && emu < 0 && cheat_list != NULL) {
+        cheats_set_beacon(app->settings.cheat_beacon);
+        cheats_set_rom_hook(false, 0, 0);
+        bp->cheat_list = cheat_list;
+    } else {
+        bp->cheat_list = NULL;
+    }
 
     /* Last thing before the point of no return. app->running = false returns to main(), which
      * calls boot() immediately -- there is no later. */
     log_launch(app, cheat_list, emu);
-    free(cheat_list);
+    /* boot() reads through the pointer, so a Classic list is deliberately not freed. Cartridge
+     * handed NULL; the allocation is ours to drop. */
+    if (bp->cheat_list == NULL) {
+        free(cheat_list);
+    }
 
     app->running = false;
 }

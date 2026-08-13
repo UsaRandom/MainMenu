@@ -91,6 +91,10 @@ static int cheats_for_rom = -1;
 /** Whether a cheat load is owed for the current game. See detail_enter(). */
 static bool cheats_pending;
 
+/** Whether the set in memory was loaded with the database on. A toggle in Settings must
+ *  not keep showing the previous list for the same game. */
+static bool cheats_from_db;
+
 /** Whether the cheat engine can hook this game at all, decided alongside the load. */
 static cheatfit_t cheats_fit = CHEATFIT_OK;
 
@@ -106,7 +110,9 @@ static void detail_enter (app_t *app) {
      * of cheats.db, which is nothing under ares -- the DFS is in the ROM -- and about a second on
      * FatFs over a real SC64. Doing it inside enter() put that second inside a screen transition,
      * where nothing feeds the mixer, and the music audibly stopped every time a sheet opened. */
-    cheats_pending = (app->launch.rom_id >= 0 && cheats_for_rom != app->launch.rom_id);
+    cheats_pending = (app->launch.rom_id >= 0 &&
+                      (cheats_for_rom != app->launch.rom_id ||
+                       cheats_from_db != app->settings.use_cheat_database));
 }
 
 /**
@@ -123,8 +129,15 @@ static void load_cheats_now (app_t *app) {
 
     cheatdb_free(&app->cheats);
     cheats_for_rom = app->launch.rom_id;
+    cheats_from_db = app->settings.use_cheat_database;
     const lib_record_t *r = &app->lib->records[app->launch.rom_id];
-    cheatdb_load(r->check_code, r->game_code, r->version, &app->cheats);
+    /* Skip the file read entirely rather than load-and-hide. A game with four figures of
+     * groups costs about a second on FatFs, and the user who turned the database off asked
+     * not to see those groups. The file stays open; only this list is empty of them.
+     * usercheats_apply() on a zeroed set just appends, so typed codes still appear. */
+    if (app->settings.use_cheat_database) {
+        cheatdb_load(r->check_code, r->game_code, r->version, &app->cheats);
+    }
     /* Before cheatstate_apply(), so a remembered tick covers a hand-entered cheat too. They
      * are keyed by name like every other group and need no special case. */
     usercheats_apply(&app->cheats, playstate_key(r));
@@ -396,7 +409,8 @@ static void detail_render (app_t *app, surface_t *fb) {
          * engine hooks a ROM image, and the same game in another region may well be fine. */
         y = info_row(INFO_X, y, INFO_W, "Cheats", "Not supported for this ROM");
     } else if (app->cheats.group_count == 0) {
-        y = info_row(INFO_X, y, INFO_W, "Cheats", "None available");
+        y = info_row(INFO_X, y, INFO_W, "Cheats",
+                     app->settings.use_cheat_database ? "None available" : "Database off");
     } else {
         snprintf(buf, sizeof(buf), "%d of %d enabled", on, app->cheats.group_count);
         y = info_row(INFO_X, y, INFO_W, "Cheats", buf);

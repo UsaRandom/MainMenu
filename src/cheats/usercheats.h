@@ -24,9 +24,10 @@
  *
  * ## Where they live in the set
  *
- * `usercheats_apply()` appends them to a `cheatset_t` after `cheatdb_load()` has filled it, so
- * everything downstream -- the cheats list, `cheatstate` restore and capture, `cheatdb_emit()` --
- * treats them exactly like shipped ones. `cheatstate` keys on the group NAME, so a user cheat's
+ * `usercheats_apply()` appends them to a `cheatset_t` after `cheatdb_load()` has filled it (or
+ * after a skip, when Settings has the shipped database off), so everything downstream -- the
+ * cheats list, `cheatstate` restore and capture, `cheatdb_emit()` -- treats them exactly like
+ * shipped ones. `cheatstate` keys on the group NAME, so a user cheat's
  * enabled flag is remembered by the same mechanism and needs no special case.
  *
  * Their names cannot point into the database's string table, so `cheatset_t` carries a second
@@ -86,7 +87,8 @@ bool usercheats_save (void);
  * @brief Append @p game_key's user cheats to @p set.
  *
  * Grows the set's groups and codes arrays and allocates its `user_strtab`. Call after
- * cheatdb_load(), and before cheatstate_apply() so the restored selections cover these too.
+ * cheatdb_load() (or a skip, when the shipped database is off), and before cheatstate_apply()
+ * so the restored selections cover these too.
  *
  * @return how many groups were appended.
  */

@@ -90,4 +90,12 @@ cart_load_err_t cart_load_n64_rom_and_save(app_t *app, flashcart_progress_callba
  */
 cart_load_err_t cart_load_emulator(app_t *app, cart_load_emu_type_t emu_type, flashcart_progress_callback_t progress);
 
+/**
+ * @brief Is the core for @p emu_type on the card?
+ *
+ * Same three-root probe cart_load_emulator() uses, including the sodium64 fallback for SNES.
+ * For the boot plate and Settings, which need to say "NES is missing" before anyone presses A.
+ */
+bool cart_load_emu_present (const char *storage, cart_load_emu_type_t emu_type);
+
 #endif /* CART_LOAD_H__ */

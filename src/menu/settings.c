@@ -4,6 +4,15 @@
 #include "settings.h"
 #include "utils/fs.h"
 
+/** @brief "classic" is the only non-default; anything else, including a missing key, is Cartridge. */
+static cheat_engine_t parse_cheat_engine (const char *s) {
+    /* Index 1 is enough: classic vs cartridge. Case-insensitive so a hand-edited Classic lands. */
+    if (s != NULL && (s[0] == 'c' || s[0] == 'C') && (s[1] == 'l' || s[1] == 'L')) {
+        return CHEAT_ENGINE_CLASSIC;
+    }
+    return CHEAT_ENGINE_CARTRIDGE;
+}
+
 
 static char *settings_path = NULL;
 
@@ -38,6 +47,12 @@ static settings_t init = {
     .show_browser_rom_tags = true,
     .rumble_enabled = false,
     .cheat_beacon = false,
+    /* On: the embedded database is the product. Off is for the case where the list is too long
+     * and the user only wants what they typed. */
+    .use_cheat_database = true,
+    /* Cartridge: Classic plus a 6105 title is a black screen, and Classic has never been shown
+     * to run on this M64 (AUDIT 1af). An explicit pick, never a fallback. */
+    .cheat_engine = CHEAT_ENGINE_CARTRIDGE,
     .boxart_region = "Automatic",
 };
 
@@ -96,6 +111,10 @@ void settings_load (settings_t *settings) {
     settings->show_browser_rom_tags = ini_get_bool(ini, "menu", "show_browser_rom_tags", init.show_browser_rom_tags);
     settings->rumble_enabled = ini_get_bool(ini, "menu_beta_flag", "rumble_enabled", init.rumble_enabled);
     settings->cheat_beacon = ini_get_bool(ini, "menu", "cheat_beacon", init.cheat_beacon);
+    settings->use_cheat_database = ini_get_bool(ini, "menu", "use_cheat_database",
+                                                init.use_cheat_database);
+    settings->cheat_engine = parse_cheat_engine(
+        ini_get_string(ini, "menu", "cheat_engine", "cartridge"));
 
     free(settings->boxart_region);
     settings->boxart_region = strdup(ini_get_string(ini, "menu", "boxart_region", init.boxart_region));
@@ -122,6 +141,9 @@ void settings_save (settings_t *settings) {
      * back with "beacon off" in its own log. A setting that is read and not written is worse than
      * one that does not exist: it works once. */
     ini_set_bool(ini, "menu", "cheat_beacon", settings->cheat_beacon);
+    ini_set_bool(ini, "menu", "use_cheat_database", settings->use_cheat_database);
+    ini_set_string(ini, "menu", "cheat_engine",
+                   settings->cheat_engine == CHEAT_ENGINE_CLASSIC ? "classic" : "cartridge");
     ini_set_int(ini, "menu", "music_volume", settings->music_volume);
     ini_set_int(ini, "menu", "music_track", settings->music_track);
     ini_set_string(ini, "menu", "boxart_region", settings->boxart_region);

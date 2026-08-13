@@ -6436,6 +6436,47 @@ That is correct behaviour on an invented ROM, it was equally true of the 7 Aug c
 script's comment has been corrected to say so rather than left claiming otherwise.
 
 ---
+## 1be. What the cheat database can theoretically do, counted
+
+The converter already refuses what `body_words()` cannot emit -- GS-button, dangling activators,
+odd 16-bit stores, types Datel itself ignores. What was left unasked is whether a group that
+*emits* will land in RAM the console actually has, and whether a ROM on the shelf can be hooked
+at all. `tools/cheataudit.py` walks every group in `build/cheats.db` and, with `--shelf`, every
+ROM under a folder.
+
+**The database, 802 games, 81,852 groups.** Zero leaks: every group `body_words()` accepts, none
+over 128 engine words. Shape: 77,799 plain writes, 2,877 conditionals, 718 repeaters, 426
+boot-writes, 32 `osMemSize`.
+
+**RAM band, which is the new question.** 81,139 groups (99.1 %) write only in the first 4 MB.
+713 (0.9 %) write at or above `0x80400000`. None write past 8 MB. On a console with no Expansion
+Pak those 713 stores go nowhere; they are now dropped at `cheatdb_load()` when `mem_small()` is
+true, so they cannot be ticked. An 8 MB console, including this M64, still sees the lot.
+
+**The shelf, 297 ROMs** under `sdstage-2026-08-11/roms`, the same set the card was built from:
+
+| | n |
+|---|---:|
+| hookable | 239 |
+| no usable preamble | 29 |
+| CRC gate refuses the image | 0 |
+| no database row | 29 |
+| hookable, every group fits the padding | 228 |
+| hookable, some groups too big for the padding | 11 |
+| hookable, nothing fits | 0 |
+
+The 29 that cannot hook include the two already on the books -- GoldenEye (Europe), Shadows of
+the Empire (Europe) -- plus Perfect Dark (Europe) and Extreme-G, which have no padding the gap
+rule will accept, and a handful with candidates the preamble scan will not take (Armorines,
+Conker, Re-Volt, the Turok Europe set). The 11 that only partly fit are padding-poor rather
+than unhookable: Banjo-Kazooie Europe 97/99 in 20 words, Mortal Kombat Mythologies 99/113 in
+58, Tony Hawk 3 42/43 in 35.
+
+A group in the 4 MB band, on a hookable ROM, that fits the padding, is the strongest claim this
+audit can make. It is still not a playtest. The name on the cheat is the corpus's, not a
+verification that the address still means that in this revision.
+
+---
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
@@ -6655,3 +6696,29 @@ already have. See 2a. What remains open is throughput, not capability.
   is a time-based animation sampled a hair earlier or later because the DFS moved. Anything that
   changes text or rodata size shifts these frames. **A diff in boot.txt frames 03-05 is not
   evidence of anything until a same-size build reproduces it.**
+
+---
+
+## 1bf. Cheat engine and database are settings, and the two engines never share a launch
+
+Two rows under Parental in Settings:
+
+- **Use cheat database** `[Yes|No]`, default Yes. `cheats.db` stays embedded and stays on the
+  card. No skips `cheatdb_load()` so the list is only what `usercheats_apply()` appends. The
+  file is not unloaded; a game with four figures of groups is not read only to be hidden.
+- **Cheat engine** `[Cartridge|Classic]`, default Cartridge. Exclusive. Cartridge is rompatch
+  into the image, `boot_params->cheat_list = NULL`. Classic is the inherited Datel path:
+  `cheats_install()` gets the list and the cartridge is not rewritten.
+
+They are not combined, and Classic is not a fallback when Cartridge cannot hook. AUDIT 2aa
+recorded why: Classic nops DMEM word 486, which is inside CIC 6105's checksum window. A
+Cartridge launch leaves the header describing a clean (or rompatch-rewritten) image; handing
+the list over as well is a black screen on every 6105 title. A miss is a line in `launch.log`,
+not a second engine.
+
+Classic on this M64 is still the experiment it was. The watch exception is not implemented
+(1af) and the IPL3 DMEM patch has not been shown to take (2x). The switch exists for titles
+Cartridge cannot hook (1be: 29 of 297 on the shelf have no usable preamble), and for machines
+where the Datel path did work. Unverified on this console.
+
+`config.ini`: `use_cheat_database = true`, `cheat_engine = cartridge|classic`.

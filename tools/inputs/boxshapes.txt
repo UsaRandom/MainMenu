@@ -27,7 +27,7 @@ fbdump              # 4: squares, and only four across -- a square earns the wid
 
 press start         # Settings
 wait 40
-press down x2       # Players, Theme, Box art
+press down          # Theme, Box art
 wait 20
 fbdump              # 5: the Box art row, reading "Automatic" -- shapes come from the covers
 
@@ -45,7 +45,7 @@ fbdump              # 7: 109 x 174 cells, forced -- the covers no longer get a s
                     #    Still five across: 0.625 is far too tall for the wide column.
 
 press start
-press down x2
+press down
 press a             # -> squat
 wait 20
 press b
@@ -53,7 +53,7 @@ wait 250
 fbdump              # 8: 140 x 100 landscape cells, four across and three rows deep
 
 press start
-press down x2
+press down
 press a             # -> wraps back to Automatic
 wait 20
 press b

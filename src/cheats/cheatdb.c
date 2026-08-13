@@ -10,6 +10,9 @@
 #include <libdragon.h>
 
 #include "cheats/cheatdb.h"
+#ifdef N64
+#include "menu/memprofile.h"
+#endif
 #include "menu/paths.h"
 #include "utils/fs.h"
 
@@ -361,25 +364,56 @@ bool cheatdb_load (uint64_t check_code, const char *game_code, uint8_t version, 
         return false;
     }
 
+    int kept = 0;
     for (uint32_t i = 0; i < n; i++) {
         uint32_t off = raw[i].name_off;
-        groups[i].name    = (off < blob_size) ? &blob[off] : "(unnamed)";
-        groups[i].first   = raw[i].code_first;
-        groups[i].count   = raw[i].code_count;
-        groups[i].enabled = false;
+        groups[kept].name    = (off < blob_size) ? &blob[off] : "(unnamed)";
+        groups[kept].first   = raw[i].code_first;
+        groups[kept].count   = raw[i].code_count;
+        groups[kept].enabled = false;
+#ifdef N64
+        /* Hidden rather than shown-and-inert: a tick that cannot write is the failure this
+         * whole stack exists to stop producing. The 8 MB console still sees every group. */
+        if (mem_small() && cheat_group_needs_pak(codes, groups[kept].first, groups[kept].count)) {
+            continue;
+        }
+#endif
+        kept++;
     }
 
     char *strtab = blob;
     out->groups      = groups;
-    out->group_count = (int)n;
+    out->group_count = kept;
     out->codes       = codes;
     out->code_count  = (int)total_codes;
     out->strtab      = strtab;
     /* Everything loaded here came from the database, so anything appended after this point is a
      * user cheat. usercheats.c needs the boundary to repoint its own names across a realloc; on
      * the failure paths above the struct is left zeroed, where 0 == group_count says the same. */
-    out->user_first  = (int)n;
+    out->user_first  = kept;
     return true;
+}
+
+bool cheat_group_needs_pak (const cheat_code_t *codes, int first, int count) {
+    if (codes == NULL || first < 0 || count <= 0) {
+        return false;
+    }
+    for (int i = 0; i < count; i++) {
+        uint32_t raw = codes[first + i].address;
+        uint8_t kind = (uint8_t)(raw >> 24);
+        if (kind == 0x50) {
+            if (i + 1 >= count) {
+                break;
+            }
+            raw = codes[first + ++i].address;
+            kind = (uint8_t)(raw >> 24);
+        }
+        if (((kind & 0xF0) == 0x80 || (kind & 0xF0) == 0xA0 || kind == 0xF0 || kind == 0xF1) &&
+            (raw & 0x007FFFFFu) >= 0x400000u) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int cheatdb_total_lines (const cheatset_t *set) {

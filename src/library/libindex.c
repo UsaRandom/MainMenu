@@ -543,6 +543,12 @@ bool libindex_load (library_t *lib, const char *storage_prefix, const char *root
     bool walked = sig_collect(storage_prefix, root, true, on_progress, &now);
     uint32_t walk_us = TIMER_MICROS(TICKS_SINCE(t0));
     res.dirs_total = walked ? now.count : 0;
+    if (walked) {
+        for (int i = 0; i < now.count; i++) {
+            library_note_dir(lib, now.paths != NULL ? now.paths[i] : NULL,
+                             (int)now.sigs[i].entries);
+        }
+    }
 
     bool fresh = (walked && now.count == (int)h->dirsig_count);
     if (fresh) {

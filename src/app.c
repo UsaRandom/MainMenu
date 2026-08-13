@@ -28,6 +28,7 @@
 #include "menu/fonts.h"
 #include "menu/music.h"
 #include "menu/launchlog.h"
+#include "menu/cardstat.h"
 #include "menu/memprofile.h"
 #include "menu/profile.h"
 #include "ui/icon.h"
@@ -307,6 +308,8 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * scan is 5.75 s, which is the single largest fixed cost in the product; libindex_load()
      * answers the same question with a directory enumeration and no file opens at all. */
     cache_init(app->storage);
+    cardstat_bind(app->storage, app->lib);
+    cardstat_probe_cores();
     mem_report("cache");
     boot_tick(-1);
 
@@ -401,6 +404,7 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * and the second reader would be the log. */
     unsigned gap = sound_worst_gap_us(), slack = sound_slack_us();
     debugf("BOOT audio worst gap %u us, buffers hold %u us\n", gap, slack);
+    cardstat_set_boot(idx_hit, idx.incremental, idx_us, scan_us, gap, slack);
 
     launchlog_begin_boot();
     if (launchlog_open()) {
@@ -436,6 +440,7 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
          * produced it, a warm index on a full card, does not exist under ares. */
         launchlog_line("audio worst gap %u us of %u us buffered%s", gap, slack,
                        (slack > 0 && gap > slack) ? "  -- STARVED" : "");
+        cardstat_log();
         launchlog_end();
     }
 

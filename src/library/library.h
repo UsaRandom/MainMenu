@@ -153,6 +153,14 @@ typedef struct {
      *  library_find_art() a bsearch instead of a walk. Cleared by every push. */
     bool art_sorted;
 
+    /** The fullest directory the scan or the signature walk saw, and how many entries it had.
+     *
+     * FatFs resolves every path by walking the directory linearly, so a flat folder of several
+     * hundred files is the scan's real cost -- not the header reads. The plate and Settings
+     * mention it once it crosses CARDSTAT_BUSY_WARN. */
+    int  dir_busiest;
+    char dir_busiest_name[40];
+
     /** Set when a record has changed in a way the index does not yet know about.
      *
      * This exists because of an ordering problem: libindex_save() runs straight after the scan,
@@ -293,6 +301,15 @@ void library_sort (library_t *lib);
 
 /** @brief Note that a record changed and the on-disk index is now behind. */
 void library_touch (library_t *lib);
+
+/**
+ * @brief Remember @p dir if it is the fullest seen so far.
+ *
+ * Called from the scan and from the signature walk, which visit the same tree. The name stored
+ * is the last path component, so Settings can say "278 files in roms" without printing a
+ * storage prefix.
+ */
+void library_note_dir (library_t *lib, const char *dir, int entries);
 
 /**
  * @brief Walk @p root recursively and index every ROM found.

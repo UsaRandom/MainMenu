@@ -38,6 +38,35 @@
 #define SNES_CORE               "lithium64.z64"
 #define SNES_CORE_FALLBACK      "sodium64.z64"
 
+static const char *emu_core_name (cart_load_emu_type_t emu_type) {
+    switch (emu_type) {
+        case CART_LOAD_EMU_TYPE_NES:                 return "neon64bu.rom";
+        case CART_LOAD_EMU_TYPE_SNES:                return SNES_CORE;
+        case CART_LOAD_EMU_TYPE_GAMEBOY:             return "gb.v64";
+        case CART_LOAD_EMU_TYPE_GAMEBOY_COLOR:       return "gbc.v64";
+        case CART_LOAD_EMU_TYPE_SEGA_GENERIC_8BIT:   return "smsPlus64.z64";
+        case CART_LOAD_EMU_TYPE_FAIRCHILD_CHANNELF:  return "Press-F.z64";
+    }
+    return NULL;
+}
+
+bool cart_load_emu_present (const char *storage, cart_load_emu_type_t emu_type) {
+    const char *core = emu_core_name(emu_type);
+    if (core == NULL || storage == NULL) {
+        return false;
+    }
+    char leaf[80], path[300];
+    snprintf(leaf, sizeof(leaf), EMU_SUBDIR "/%s", core);
+    if (menu_find_file(path, sizeof(path), storage, leaf)) {
+        return true;
+    }
+    if (emu_type == CART_LOAD_EMU_TYPE_SNES) {
+        snprintf(leaf, sizeof(leaf), EMU_SUBDIR "/%s", SNES_CORE_FALLBACK);
+        return menu_find_file(path, sizeof(path), storage, leaf);
+    }
+    return false;
+}
+
 /**
  * @brief Create the saves subdirectory, and the profile's folder inside it.
  *
@@ -189,32 +218,27 @@ cart_load_err_t cart_load_emulator (app_t *app, cart_load_emu_type_t emu_type, f
     uint32_t emulated_rom_offset = 0x200000;
     uint32_t emulated_file_offset = 0;
 
+    core = emu_core_name(emu_type);
     switch (emu_type) {
         case CART_LOAD_EMU_TYPE_NES:
-            core = "neon64bu.rom";
              // Tested against Neon 64 v1.2, v0.3 and v2
             save_type = FLASHCART_SAVE_TYPE_SRAM_1MBIT;
             break;
         case CART_LOAD_EMU_TYPE_SNES:
-            core = SNES_CORE;
             save_type = FLASHCART_SAVE_TYPE_SRAM_256KBIT;
             break;
         case CART_LOAD_EMU_TYPE_GAMEBOY:
-            core = "gb.v64";
             // TODO: Saves might be less problematic by using the FAKE type.
             save_type = FLASHCART_SAVE_TYPE_FLASHRAM_1MBIT; //FLASHCART_SAVE_TYPE_FLASHRAM_FAKE;
             break;
         case CART_LOAD_EMU_TYPE_GAMEBOY_COLOR:
-            core = "gbc.v64";
             // TODO: Saves might be less problematic by using the FAKE type.
             save_type = FLASHCART_SAVE_TYPE_FLASHRAM_1MBIT; //FLASHCART_SAVE_TYPE_FLASHRAM_FAKE;
             break;
         case CART_LOAD_EMU_TYPE_SEGA_GENERIC_8BIT:
-            core = "smsPlus64.z64";
             save_type = FLASHCART_SAVE_TYPE_NONE;
             break;
         case CART_LOAD_EMU_TYPE_FAIRCHILD_CHANNELF:
-            core = "Press-F.z64";
             save_type = FLASHCART_SAVE_TYPE_NONE;
             break;
     }

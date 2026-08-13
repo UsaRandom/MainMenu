@@ -33,6 +33,7 @@
 #include <string.h>
 #include <libdragon.h>
 
+#include "menu/cardstat.h"
 #include "menu/fonts.h"
 #include "utils/fs.h"
 #include "screens/boot_plate.h"
@@ -229,4 +230,13 @@ void boot_plate_draw (const char *version, int title_count) {
     snprintf(right, sizeof(right), "%d TITLES", title_count);
     ui_text(SAFE_X, SAFE_Y + SAFE_H + dy, SAFE_W, ALIGN_LEFT, STL_GRAY, left);
     ui_text(SAFE_X, SAFE_Y + SAFE_H + dy, SAFE_W, ALIGN_RIGHT, STL_GRAY, right);
+
+    /* Warnings only, and at most two: the plate is a splash. Settings holds the rest.
+     * Body face, not FNT_BOOT: these sentences have lowercase and the boot face cannot
+     * spell them. */
+    char warn[2][72];
+    int nw = cardstat_plate(warn, 2);
+    for (int i = 0; i < nw; i++) {
+        ui_text(SAFE_X, 348 + i * 26 + dy, SAFE_W, ALIGN_CENTER, STL_GRAY, warn[i]);
+    }
 }

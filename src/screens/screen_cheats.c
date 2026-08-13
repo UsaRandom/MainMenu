@@ -165,7 +165,9 @@ static void cheats_render (app_t *app, surface_t *fb) {
 
     if (set->group_count == 0) {
         ui_label(LIST_X, LIST_Y + 40, LIST_W, ALIGN_CENTER, STL_GRAY,
-                 "No cheats for this game.");
+                 app->settings.use_cheat_database
+                     ? "No cheats for this game."
+                     : "Cheat database is off.");
         ui_label(LIST_X, LIST_Y + 72, LIST_W, ALIGN_CENTER, STL_GRAY,
                  "Press R to type one in.");
     }

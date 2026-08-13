@@ -802,9 +802,10 @@ static void grid_update (app_t *app, float dt) {
      * you do once a session. B is free here in a way it is nowhere else: every other screen spends
      * it on Back, and the grid is the root, so there is nothing behind it to go back to.
      *
-     * Switching player is a per-session action for a family, so burying it in Settings would be
-     * wrong even though Settings also offers it. Silent when there is one profile: a button that
-     * does nothing is better unbound than bound to a screen with one row. */
+     * Switching player is a per-session action for a family, so it lives here rather than in
+     * Settings. Silent when there is one profile: a button that does nothing is better unbound
+     * than bound to a screen with one row. L off the first tab still opens the picker, which is
+     * how a single-player card adds a second person. */
     if (input_pressed(in, BTN_B) && profile_count() > 1) {
         sound_play_effect(SFX_ENTER);
         app_goto(app, SCREEN_PROFILES);

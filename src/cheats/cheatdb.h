@@ -83,7 +83,7 @@ void cheatdb_close (void);
 /** @brief True once cheatdb_open() has succeeded. */
 bool cheatdb_available (void);
 
-/** @brief How many games the database covers, for the settings screen. */
+/** @brief How many games the database covers, for System info. */
 int cheatdb_game_count (void);
 
 /**
@@ -122,5 +122,14 @@ size_t cheatdb_emit (const cheatset_t *set, uint32_t *out, size_t out_cap);
 
 /** @brief Total lines across all groups, for sizing an emit buffer. */
 int cheatdb_total_lines (const cheatset_t *set);
+
+/**
+ * @brief Do any of these lines write at or above 4 MB of RDRAM?
+ *
+ * Those stores land only if an Expansion Pak is present. On a 4 MB console they write into
+ * nothing, or into whatever the mapper puts there, and the cheat is a no-op at best. 713 of
+ * 81,852 groups in the shipped database do this. See AUDIT 1be.
+ */
+bool cheat_group_needs_pak (const cheat_code_t *codes, int first, int count);
 
 #endif /* CHEATS_CHEATDB_H__ */

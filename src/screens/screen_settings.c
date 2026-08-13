@@ -6,9 +6,9 @@
  * Reached with Start from the grid; B goes back. Deliberately short: every row here is either
  * something a user changes to suit themselves, or a fact they would otherwise have to ask for.
  *
- * The status block at the bottom is the second half of that. "How many games did it find", "is
- * there a cheat database", "which build is this" are the first three questions of every support
- * conversation, and a menu that cannot answer them turns each one into a round trip.
+ * Facts that are not settings -- build, whether the card can be written, why a tab is missing --
+ * live behind the System info row. Dumping them under the list made Settings a support page
+ * that also happened to have volume sliders.
  */
 
 #include <stdio.h>
@@ -42,31 +42,18 @@
  * put while the rows move under them. Scrolling the build string off the bottom would make "what
  * version is this" a question about scroll position.
  */
-#define INFO_GAP    24      /**< separator, and the air around it */
-#define INFO_LINE_H 22
-#define INFO_LINES  2       /**< Build, Cheat engine */
-#define INFO_H      76      /**< reserved below the rows; must cover the lines above */
+#define INFO_H      0       /**< diagnostics moved to System info; the list uses the rest */
 
 /**
  * @brief Rows visible at once, and the reason this screen scrolls at all.
  *
- * At seven rows the list ended at y=334 with the info block below it reaching 402, against a
- * footer at 424 -- twenty-two pixels of slack. The Credits row makes it eight and that slack is
- * gone: the info block would have been drawn straight through the footer.
- *
- * VISIBLE is derived from INFO_H, so the list can never overrun the footer by construction and
- * an assertion saying so would be a tautology -- it was written that way first and could not be
- * made to fail, which is the whole reason for checking. What *can* go wrong is the reservation
- * being too small for what is drawn into it: a third diagnostic line added without growing
- * INFO_H puts text under the footer, silently. That is what these two check, and both fail when
- * fed a number that would break them.
+ * Diagnostics used to sit in a reserved block under the list. They live on System info now,
+ * so the list uses the whole space down to the footer.
  */
 #define LIST_H      (FOOTER_Y - LIST_Y - INFO_H)
 #define VISIBLE     (LIST_H / ROW_H)
 
 _Static_assert(VISIBLE >= 1, "settings list has no room for a single row");
-_Static_assert(INFO_H >= INFO_GAP + INFO_LINES * INFO_LINE_H,
-               "the info block draws more lines than the space reserved for it below the rows");
 
 /** The level meter drawn in place of a number. A number tells you 6; a meter tells you 6 of 10. */
 #define METER_W     14
@@ -88,14 +75,16 @@ _Static_assert(INFO_H >= INFO_GAP + INFO_LINES * INFO_LINE_H,
 #define TRACK_SETTLE_S  0.30f
 
 typedef enum {
-    ROW_PROFILES = 0,
-    ROW_THEME,
+    ROW_THEME = 0,
     ROW_BOXART,
     ROW_SFX,
     ROW_MUSIC,
     ROW_TRACK,
     ROW_CLOCK,
     ROW_PARENTAL,
+    ROW_CHEATDB,
+    ROW_ENGINE,
+    ROW_SYSINFO,
     ROW_CREDITS,
     ROW_COUNT,
 } row_t;
@@ -106,12 +95,12 @@ static int top;         /**< first visible row; see VISIBLE */
 /**
  * @brief Set on the way out to a screen that comes back here, so enter() keeps the cursor.
  *
- * Four rows open something -- the roster, the clock, the parental panel and the credits -- and
+ * Four rows open something -- the clock, the parental panel, system info and the credits -- and
  * every one of them returns to SCREEN_SETTINGS, which re-enters this screen and used to reset
- * the cursor to the top. That was survivable while the list was seven rows and fitted on screen.
- * It stopped being survivable when Credits became the eighth row and the list started scrolling:
- * reading the licence and pressing B put you back at Players with the window scrolled home, so
- * getting back to where you were meant seven presses down through a list that moves under you.
+ * the cursor to the top. That was survivable while the list fitted on screen. It stopped being
+ * when the list started scrolling: reading the licence and pressing B put you back at the first
+ * row with the window scrolled home, so getting back to where you were meant seven presses down
+ * through a list that moves under you.
  *
  * Measured on the frames from tools/inputs/credits.txt: before this, dump 7 was byte-identical to
  * dump 1 -- the whole round trip left no trace, which is exactly the complaint.
@@ -227,18 +216,6 @@ static void settings_update (app_t *app, float dt) {
      * not a value. So each row says what it sounds like. */
 
     switch ((row_t)cursor) {
-        case ROW_PROFILES:
-            if (toggle) {
-                sound_play_effect(SFX_SETTING);
-                /* Not behind the parental code, deliberately. A profile is not a permission --
-                 * the padlocks and the schedule apply to every profile at once and switching
-                 * cannot get round either -- so gating this would cost every family a code entry
-                 * to protect nothing. See profile.h. */
-                returning = true;
-                app_goto(app, SCREEN_PROFILES);
-                return;
-            }
-            break;
         case ROW_THEME:
             if (delta != 0 || toggle) {
                 sound_play_effect(SFX_SETTING);
@@ -354,6 +331,28 @@ static void settings_update (app_t *app, float dt) {
                 return;
             }
             break;
+        case ROW_CHEATDB:
+            if (delta != 0 || toggle) {
+                sound_play_effect(SFX_SETTING);
+                app->settings.use_cheat_database = !app->settings.use_cheat_database;
+            }
+            break;
+        case ROW_ENGINE:
+            if (delta != 0 || toggle) {
+                sound_play_effect(SFX_SETTING);
+                app->settings.cheat_engine =
+                    (app->settings.cheat_engine == CHEAT_ENGINE_CLASSIC)
+                        ? CHEAT_ENGINE_CARTRIDGE : CHEAT_ENGINE_CLASSIC;
+            }
+            break;
+        case ROW_SYSINFO:
+            if (toggle) {
+                sound_play_effect(SFX_SETTING);
+                returning = true;
+                app_goto(app, SCREEN_SYSINFO);
+                return;
+            }
+            break;
         case ROW_CREDITS:
             if (toggle) {
                 sound_play_effect(SFX_SETTING);
@@ -436,16 +435,10 @@ static void settings_render (app_t *app, surface_t *fb) {
     ui_fill(0, 64 - ACCENT_BAR, SCREEN_W, ACCENT_BAR, th->tab_underline);
     ui_label(SAFE_X, 36, SAFE_W, ALIGN_LEFT, STL_DEFAULT, "Settings");
 
-    /* First, above Theme, because the theme belongs to whoever this row names -- reading the two
-     * in order is what says so. The value is the active player, so the row answers "who am I"
-     * without being opened. */
     /* Scissored to the window, so a row scrolling past either end is cut rather than drawn over
-     * the header or the info block. The rows themselves are drawn unconditionally: at eight rows
-     * and seven visible there is exactly one off screen, and a branch per row to save one clipped
-     * fill would be the more complicated of the two. */
+     * the header or the footer. The rows themselves are drawn unconditionally. */
     rdpq_set_scissor(0, LIST_Y, SCREEN_W, LIST_Y + VISIBLE * ROW_H);
 
-    draw_row(app, ROW_PROFILES, "Players", profile_name(profile_active()));
     draw_row(app, ROW_THEME, "Theme", th->name);
     draw_row(app, ROW_BOXART, "Box art", boxart_region_name(boxart_region_current()));
     draw_volume_row(app, ROW_SFX, "Sound effects", app->settings.sfx_volume);
@@ -467,6 +460,13 @@ static void settings_render (app_t *app, surface_t *fb) {
     draw_row(app, ROW_PARENTAL, "Parental controls",
              parental_code_set() ? "On" : "Off");
 
+    draw_row(app, ROW_CHEATDB, "Use cheat database",
+             app->settings.use_cheat_database ? "Yes" : "No");
+    draw_row(app, ROW_ENGINE, "Cheat engine",
+             app->settings.cheat_engine == CHEAT_ENGINE_CLASSIC ? "Classic" : "Cartridge");
+
+    draw_row(app, ROW_SYSINFO, "System info", "");
+
     /* Last, because it is the row nobody is looking for and the one row here that changes
      * nothing about the console. */
     draw_row(app, ROW_CREDITS, "Credits and licences", "");
@@ -484,24 +484,6 @@ static void settings_render (app_t *app, surface_t *fb) {
         ui_fill(POSBAR_X, LIST_Y, POSBAR_W, track_h, th->panel);
         ui_fill(POSBAR_X, LIST_Y + pos, POSBAR_W, thumb, th->text_dim);
     }
-
-    /* Just the build. There were two more lines here -- a library count and a cheat database
-     * count -- on the theory that they answered the first support questions anyone would ask.
-     * They do not: the grid already shows how many games there are, one tab at a time and with
-     * their names on, and the cheat count answers a question nobody asks in the form "how many
-     * games does the database cover". The build string is the only one of the three that cannot
-     * be read off any other screen. */
-    /* Anchored to the bottom of the window rather than to the number of rows. It was
-     * LIST_Y + ROW_COUNT * ROW_H + 24, which is where the eighth row put it straight through the
-     * footer -- the reason VISIBLE and its static assertion exist. */
-    int y = LIST_Y + VISIBLE * ROW_H + INFO_GAP;
-    ui_fill(LIST_X, y, LIST_W, HAIRLINE, th->panel_alt);
-    y += INFO_LINE_H;
-
-    snprintf(buf, sizeof(buf), "%s  %s", MENU_VERSION, BUILD_TIMESTAMP);
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_LEFT, STL_GRAY, "Build");
-    ui_label(LIST_X + 16, y, LIST_W - 32, ALIGN_RIGHT, STL_GRAY, buf);
-    y += INFO_LINE_H;
 
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel);
     (void)ui_hint(SAFE_X, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Change");

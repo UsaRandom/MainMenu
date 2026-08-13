@@ -246,6 +246,7 @@ SRCS = \
 	library/thumbcache.c \
 	library/thumbstore.c \
 	menu/cart_load.c \
+	menu/cardstat.c \
 	menu/memprofile.c \
 	menu/ini_parser.c \
 	menu/fonts.c \
@@ -281,6 +282,7 @@ SRCS = \
 	screens/screen_clock.c \
 	screens/screen_parental.c \
 	screens/screen_settings.c \
+	screens/screen_sysinfo.c \
 	screens/screen_fault.c \
 	libs/svg64/svg64.c \
 	libs/svg64/path.c \
@@ -549,6 +551,8 @@ $(BUILD_DIR)/screens/screen_profiles.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\
 $(BUILD_DIR)/screens/screen_profiles.o: .FORCE
 $(BUILD_DIR)/screens/screen_settings.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\" -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
 $(BUILD_DIR)/screens/screen_settings.o: .FORCE
+$(BUILD_DIR)/screens/screen_sysinfo.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\" -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
+$(BUILD_DIR)/screens/screen_sysinfo.o: .FORCE
 # The cheat diagnostic page opens with the version code, so a photographed report can never be
 # read against the wrong build's source -- which has already happened, twice.
 $(BUILD_DIR)/screens/screen_launch.o: FLAGS+=-DMENU_VERSION=\"$(MENU_VERSION)\"

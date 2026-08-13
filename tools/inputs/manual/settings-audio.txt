@@ -11,7 +11,7 @@ wait 120
 press start         # settings
 wait 20
 
-press down x2       # -> Sound effects (past Players and Theme)
+press down x2       # -> Sound effects (past Theme and Box art)
 press left x4       # down to 2 of 10, so filled and empty are both clearly visible
 wait 20
 fbdump              # 1: effects selected, meter part full

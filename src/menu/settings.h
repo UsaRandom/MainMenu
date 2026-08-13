@@ -7,6 +7,16 @@
 #ifndef SETTINGS_H__
 #define SETTINGS_H__
 
+/** @brief Which cheat hook runs at launch. Exclusive: never both, never a fallback.
+ *
+ * Cartridge writes the engine into the ROM image on the cart (rompatch). Classic is the
+ * inherited Datel IPL3 + watch engine. Combining them on a 6105 title black-screens --
+ * Classic nops DMEM word 486, which is inside that CIC's checksum window, and Cartridge
+ * leaves the header describing a clean image. See screen_launch.c. */
+typedef enum {
+    CHEAT_ENGINE_CARTRIDGE = 0,
+    CHEAT_ENGINE_CLASSIC,
+} cheat_engine_t;
 
 /** @brief Settings Structure */
 typedef struct {
@@ -69,6 +79,16 @@ typedef struct {
      *  answer one question on hardware, and it is edited on the card by whoever is chasing that
      *  question. See src/boot/cheats.c. */
     bool cheat_beacon;
+
+    /** @brief Fill the cheats list from the shipped database. Default on.
+     *
+     *  The file stays on the card either way -- it is embedded so install is one file. Off only
+     *  skips the load, so a game with four figures of groups shows the one or two the user typed
+     *  instead of the whole corpus. */
+    bool use_cheat_database;
+
+    /** @brief Cartridge (default) or Classic. See cheat_engine_t. */
+    cheat_engine_t cheat_engine;
 
     /** @brief Where tile shapes come from: "Automatic" reads each cover's own aspect, "NTSC" is
      *         the built-in table, anything else names a section of menu/boxart.ini. A name rather

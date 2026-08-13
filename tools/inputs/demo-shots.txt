@@ -66,11 +66,11 @@ press r              # back onto the rail
 wait 40
 press start              # settings
 wait 40
-press down x6        # down the list, far enough that the window has scrolled
+press down x6        # -> Parental; the two cheat rows sit below it
 wait 30
 fbdump               # 7: settings
 
-press down x4        # to the Credits row
+press down x6        # to the Credits row (Use cheat database, Cheat engine, System info, Credits)
 press a
 wait 60
 press down x5        # into the licence text
