@@ -228,6 +228,18 @@ void music_stop (void) {
     release();
 }
 
+void music_resume (void) {
+    /* Restart from the stored selection rather than taking arguments, so the caller cannot
+     * accidentally disagree with what boot chose -- under a scripted run that choice was the
+     * pinned track, not the settings file, and a resume that re-read the settings would silently
+     * unpin it. On shuffle this picks a fresh song, which is right: the grid is being arrived at
+     * again, not un-paused. */
+    if (playing || volume == 0) {
+        return;
+    }
+    music_start(selected, volume);
+}
+
 void music_set_track (int track) {
     selected = (track < 0 || track >= TRACK_COUNT) ? MUSIC_TRACK_SHUFFLE : track;
     if (volume == 0) return;

@@ -6381,7 +6381,9 @@ under ares and never will. `sound_poll()` tracks the longest interval between ca
 | after, 8 MB | 109,459 | 316,059 |
 | after, 4 MB | 66,536 | 316,059 |
 
-**The harness had to opt out of its own instrument.** `hooktest_run()` spends 1,127,728 us with
+**The harness had to opt out of its own instrument.** *(Superseded by 1bg: the disown treated a
+real stall as a reporting problem. hooktest now runs before the first feed and
+`sound_gap_forget()` is gone.)* `hooktest_run()` spends 1,127,728 us with
 nothing feeding the mixer and compiles to nothing without `DEV_HARNESS`, so every ares run reported
 a starved boot no console can have. It calls `sound_gap_forget()`, which disowns the interval --
 **not** a reset, which was tried first and would have thrown away the boxart/cache gaps already
@@ -6722,3 +6724,45 @@ Cartridge cannot hook (1be: 29 of 297 on the shelf have no usable preamble), and
 where the Datel path did work. Unverified on this console.
 
 `config.ini`: `use_cheat_database = true`, `cheat_engine = cartridge|classic`.
+
+## 1bg. The harness starved the music anyway, and the disown kept it out of the log
+
+1bc ended with the harness opting out of its own instrument: `hooktest_run()` blocks for about a
+second, nothing can feed the mixer through it, so `sound_gap_forget()` struck that second from
+the record to keep the boot figure the product's. What that traded away took one report to
+surface: "a short second where audio isn't playing" on the launch screen. In every `DEV_HARNESS`
+boot the music started at the post-font feed, played for roughly the 316 ms the buffers hold, and
+stalled through the rest of hooktest's second -- while the one number built to catch exactly this
+read 64 ms and green. Removing the disown and running boot.txt put it on the record:
+**1,036,606 us against 316,059 us buffered**.
+
+**Feeding it was never an option; moving it was.** The holds run with interrupts off -- the
+timing channel is the thing under test (1ao) -- so no callback can pump the mixer through them.
+But nothing hooktest touches exists later than `display_init()`: it borrows VI_ORIGIN and
+restores it, mallocs a frame, and reads the clock. It now runs between `display_init()` and the
+fonts, on the silent side of the first feed. Nothing has reached the DAC yet, so there is nothing
+to starve; its second is spent in the same imperceptible silence the font load already sits in,
+and the first feed stays exactly where 1bc measured it belonging. `sound_gap_forget()` is deleted
+outright -- with nothing to disown, the worst-gap number reports the product again in every
+build, harness included.
+
+| hooktest call site | worst gap (boot.txt, ares) | budget |
+|---|---:|---:|
+| after cache_init(), disown removed | 1,036,606 | 316,059 |
+| after display_init() | 64,552 | 316,059 |
+
+The plate is untouched by the move: the fixed run's first three boot.txt dumps are the same
+held-plate hash as verify-main's, and the hold released by the screen at 2,507 ms against that
+baseline's 2,505. The later curtain frames differ -- as they already did between verify-main and
+8mb-final, two prior runs of the unmoved code: the release is decided by decode readiness, which
+is a cycle count and moves with any change to the binary.
+
+**Found next to it: the dummy launch returned to a menu that had gone silent for good.**
+`music_stop()` before `do_load()` is right -- the player must be gone before the handoff, and a
+real launch never returns. But the dummy path DOES return, and only boot ever called
+`music_start()`, so under ares the first launch was the last note the session played.
+`music_resume()` restarts from the stored selection -- stored, not re-read from settings, so a
+scripted run resumes its pinned track rather than silently unpinning itself -- and the dummy
+return in `do_load()` is its only caller. Verified under ares with an ad-hoc launch-and-return
+script: `[MUSIC] playing` appears twice, either side of `LAUNCH would boot`. On hardware the
+path cannot run; a real launch boots the game before any resume could.

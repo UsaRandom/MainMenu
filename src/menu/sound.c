@@ -196,12 +196,6 @@ void sound_poll (void) {
     }
 }
 
-void sound_gap_forget (void) {
-    /* The interval ending now was not the product's, so do not charge it to the product. Only the
-     * dev harness has any business calling this; see the note at the end of hooktest_run(). */
-    last_poll_ticks = TICKS_READ();
-}
-
 unsigned sound_worst_gap_us (void) {
     unsigned worst = worst_gap_us;
     worst_gap_us = 0;

@@ -265,6 +265,22 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     display_init(resolution, DEPTH_16_BPP, mem_fb_count(), GAMMA_NONE, FILTERS_RESAMPLE);
     mem_report("display");
 
+    /* Harness builds only: execute the emitted cheat patcher against a synthetic game image and
+     * prove the preamble hook end-to-end, which no launch under ares can do -- ares has no cart
+     * to launch into. Costs one boot-time megabyte scan; compiles to nothing in release.
+     *
+     * BEFORE the first boot_tick() feed, and that placement is load-bearing. This call spends
+     * 1,026,809 us under ares -- a megabyte scan and two timing holds, most of it with interrupts
+     * off -- and nothing can feed the mixer through any of it. It used to run after cache_init(),
+     * a second past the first feed, where it drained the 316 ms of buffered audio and the music
+     * died for most of a second in every harness boot; the gap was then disowned with
+     * sound_gap_forget() so the BOOT audio line could not even say so. Up here nothing has ever
+     * been fed to the DAC, so the same second is spent in a silence nobody can hear, and the boot
+     * gap metric is honest again with nothing to disown. It needs only the display (it borrows
+     * and restores VI_ORIGIN) and malloc, both of which exist by this line. */
+    hooktest_run();
+    mem_report("hooktest");
+
     mem_report("pre-fonts");
     fonts_init(NULL);
     mem_report("post-fonts");
@@ -312,13 +328,6 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     cardstat_probe_cores();
     mem_report("cache");
     boot_tick(-1);
-
-    
-    /* Harness builds only: execute the emitted cheat patcher against a synthetic game image and
-     * prove the preamble hook end-to-end, which no launch under ares can do -- ares has no cart
-     * to launch into. Costs one boot-time megabyte scan; compiles to nothing in release. */
-    hooktest_run();
-    mem_report("hooktest");
 
     /* Before the scan, not after it, and this is the whole point of arming it here rather than
      * leaving it to the first screen's enter(). The scan is one blocking call -- 11,499 us per

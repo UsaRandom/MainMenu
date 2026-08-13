@@ -51,6 +51,16 @@ void music_start (int track, int volume);
 /** @brief Stop playback and release the player. The tables are kept; see music_shutdown(). */
 void music_stop (void);
 
+/**
+ * @brief Start again after music_stop(), from the selection and volume already stored.
+ *
+ * For the one launch path that comes back: on the dummy flashcart a "launch" fades out, stops the
+ * music, pretends to load, and returns to the grid -- which then sat silent for the rest of the
+ * session, because only boot ever called music_start(). A real launch never returns and never
+ * gets here. No-op while playing or when the volume is 0.
+ */
+void music_resume (void);
+
 /** @brief Switch tracks, starting music if it was off. */
 void music_set_track (int track);
 
@@ -65,7 +75,9 @@ void music_set_volume (int volume);
  * the player at zero -- so a fade through it would be audibly stepped and would leave the user's
  * volume set to nothing the next time they switched on.
  *
- * Nothing restores this. The only caller is on its way out of the program.
+ * Nothing restores the scaled gain on a live player. The only caller is on its way out of the
+ * program; the one path that comes back (the dummy-cart launch) goes through music_stop() and
+ * music_resume(), which builds a fresh player at full gain.
  */
 void music_fade (float gain);
 

@@ -12,7 +12,6 @@
 #include "boot/vr4300_asm.h"
 #include "dev/hooktest.h"
 #include "menu/memprofile.h"
-#include "menu/sound.h"
 
 /* Same three as enginetest.c: libdragon has macros for none of WatchLo's spellings but the C
  * one, and the fallback scenario arms a real watch on a live console that must be disarmed
@@ -594,17 +593,10 @@ void hooktest_run (void) {
 
     debugf("HOOKTEST %d/%d ok\n", checks - failures, checks);
 
-    /* The harness's cost is not the product's, and the boot audio figure has to report the
-     * product's. This function spends 1,026,809 us under ares -- a megabyte scan, two timing holds
-     * and a display it points somewhere else -- with nothing feeding the mixer, and none of that
-     * exists in a build without DEV_HARNESS. Left in, every ares run would report a starved boot
-     * that no console can have, and the number would be permanently red for the wrong reason.
-     *
-     * Disowned rather than reset, because a reset would also throw away the real gaps measured
-     * before this ran -- boxart and cache, which sit between the first poll and here. The font
-     * load is not one of those: last_poll_ticks only starts on the post-font boot_tick(), so a
-     * reset could not have thrown it away. Disowned first, then fed, so the poll charges itself
-     * nothing. */
-    sound_gap_forget();
-    sound_poll();
+    /* No sound_poll() on the way out, and no sound_gap_forget() either -- both existed for the
+     * old call site, a second PAST the first mixer feed, where this function's blocked second
+     * starved the music audibly and then hid the gap from the boot audio line. app_init() now
+     * runs it before anything has fed the DAC: the same second passes in a silence that cannot
+     * be heard, the first feed stays where the font-load margin was measured (app.c), and the
+     * BOOT audio worst gap number reports only what a shipped build would do. */
 }

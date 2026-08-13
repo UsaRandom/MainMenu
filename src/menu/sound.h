@@ -119,16 +119,6 @@ void sound_poll(void);
  */
 unsigned sound_worst_gap_us (void);
 
-/**
- * @brief Disown the interval since the last poll, so sound_worst_gap_us() never sees it.
- *
- * For the dev harness only. A DEV_HARNESS build spends a second in hooktest_run() that no shipped
- * build spends anywhere, and without this every ares run would report a starved boot that no
- * console can have -- red for the wrong reason, permanently. It hides nothing real: what it skips
- * is code that does not exist in the ROM anybody plays.
- */
-void sound_gap_forget (void);
-
 /** @brief How much audio is buffered ahead of the DAC, in us. The budget sound_worst_gap_us()
  *         has to stay under. */
 unsigned sound_slack_us (void);

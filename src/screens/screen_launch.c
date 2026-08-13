@@ -587,6 +587,12 @@ static void do_load (app_t *app) {
                app->launch.rom_info.title[0] ? app->launch.rom_info.title : "(untitled)",
                cheat_list ? "cheats" : "no cheats");
         free(cheat_list);
+        /* The player was released before the load on the reasoning that the program never comes
+         * back. On this path it does, and nothing else ever calls music_start() again -- so the
+         * grid returned to a menu that had fallen permanently silent. A fresh player at full
+         * gain, not a fade-in: the return is a cut, and the music should arrive with the
+         * picture the same way it left with it. */
+        music_resume();
         app_goto(app, SCREEN_GRID);
         return;
     }
