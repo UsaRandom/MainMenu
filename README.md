@@ -1,70 +1,31 @@
 # MainMenu
 
-A box-art game launcher for the N64, run from a [SummerCart64](https://github.com/Polprzewodnikowy/SummerCart64) flashcart.
+A box-art launcher for the N64, run from a [SummerCart64](https://github.com/Polprzewodnikowy/SummerCart64).
 
 ![The grid](docs/images/demo-grid-scrolled.png)
 
+Put `sc64menu.n64` in the root of an SD card and your games anywhere on it. The menu finds them, matches covers, and launches N64 titles plus NES, SNES, GB, GBC and SMS through cores kept on the card. Up to ten people can share one card, each with their own saves, favourites, history and theme.
 
-<br>
-<br>
-<img width="640" height="480" alt="1-profile-picker" src="https://github.com/user-attachments/assets/13b6c3d2-9fc4-4381-ab98-5529c618d54a" />
+![Who's playing?](docs/images/demo-players.png)
 
+Both pictures are of invented games: [`tools/mkdemo.py`](tools/mkdemo.py) draws the art, so this page ships nobody else's covers. The faces come from [game-icons.net](https://game-icons.net) and are credited in [CREDITS.md](docs/CREDITS.md).
 
-*Every game, every cover and every cheat in that picture is invented —
-[`tools/mkdemo.py`](tools/mkdemo.py) draws original art for titles that do not exist. Nothing is
-written on the covers; the menu is what puts a name under one.*
+- **Setting up a card:** [CARD.md](docs/CARD.md)
+- **Building it:** [BUILDING.md](docs/BUILDING.md)
+- Also [CREDITS.md](docs/CREDITS.md), [DESIGN.md](docs/DESIGN.md), [AUDIT.md](docs/AUDIT.md)
 
-## What it does
-
-- **Presents games, not files.** Point it at an SD card and it finds the ROMs, reads their
-  headers, matches them against a 450-game database and shows you a grid of covers. There is
-  nothing to prepare and no list to hand-write.
-- **Finds the covers itself**, PNG or JPEG, at whatever size and aspect the scan happens to be,
-  and caches the decoded art on the card so the next boot is warm.
-- **Fits the grid to the covers.** A tile is the shape of the art in it, and a tab of wide covers
-  lays out four across (above) where a tab of tall ones lays out five. Nothing is cropped to fit.
-- **Tabs per system** — N64, NES, SNES, GB, GBC, SMS — plus Recent, Most Played and Favourites.
-  Empty tabs do not appear.
-- **Remembers what you played** and offers it back at the top.
-- **Runs other systems** through emulator cores kept on the card.
-- **Up to ten players share one card.** Each picks a name and a face out of 3,894 icons in two
-  colours of their own, and keeps their own saves, favourites, play history, cheat selections and
-  theme.
-- **Cheats as named things.** A cheat database is prepared on a PC and read on the console; the
-  detail sheet says how many are switched on, and there is a hex editor for the codes behind it.
-- **Parental controls** — a code, playable hours, and per-game locks.
-- **Themes, music and sound.** 28 CC0 MIDI tracks, synthesised on the console rather than
-  streamed.
-- **Credits screen** carrying every licence the cartridge owes, generated from the same file this
-  repository publishes.
-
-> Every measurement in this repository was taken under [ares](https://ares-emu.net/), an emulator.
-> Nothing here has been timed on a real console. The open questions are in
-> [AUDIT.md](docs/AUDIT.md); [HARDWARE.md](docs/HARDWARE.md) is the order to bring one up in.
-
-**Setting up a card:** [CARD.md](docs/CARD.md). **Building it:** [BUILDING.md](docs/BUILDING.md).
-Also [CREDITS.md](docs/CREDITS.md), [DESIGN.md](docs/DESIGN.md), [AUDIT.md](docs/AUDIT.md). The
-numbered guides under [`docs/`](docs/) are inherited from upstream and describe upstream, some of
-it removed here.
-
----
+Forked from [N64FlashcartMenu](https://github.com/Polprzewodnikowy/N64FlashcartMenu) @ `6407ab15`. The boot and flashcart plumbing is theirs; the presentation layer is not. The numbered guides under [`docs/`](docs/) describe upstream, some of it removed here.
 
 # Licence
 
-Copyright © 2026 UsaRandom, and the N64FlashcartMenu contributors this is forked from. Released
-under the [GNU Affero General Public License](LICENSE.md), version 3 or later, inherited from
-upstream. There is no warranty; see sections 15 and 16.
+Copyright © 2026 UsaRandom, and the N64FlashcartMenu contributors this is forked from. Released under the [GNU Affero General Public License](LICENSE.md), version 3 or later. There is no warranty; see sections 15 and 16.
 
-Substantially the work of the N64FlashcartMenu authors and
-[contributors](https://github.com/Polprzewodnikowy/N64FlashcartMenu/graphs/contributors); this
-fork replaces the presentation layer and takes responsibility for its own bugs.
+Substantially the work of the N64FlashcartMenu authors and [contributors](https://github.com/Polprzewodnikowy/N64FlashcartMenu/graphs/contributors). This fork takes responsibility for its own bugs.
 
 * [Mateusz Faderewski / Polprzewodnikowy](https://github.com/Polprzewodnikowy)
 * [Robin Jones / NetworkFusion](https://github.com/networkfusion)
 
-Not affiliated with or endorsed by any console or cartridge maker, or by the upstream project. The
-GitHub Actions workflows are upstream's and have not been adapted — the build artifact is still
-labelled for a flashcart this fork no longer supports.
+Not affiliated with or endorsed by any console or cartridge maker, or by the upstream project. The GitHub Actions workflows are still upstream's; the artifact they label is for a flashcart this fork does not support.
 
 ## Libraries
 * [libdragon](https://github.com/DragonMinded/libdragon/tree/preview) - [UNLICENSE License](https://github.com/DragonMinded/libdragon/blob/preview/LICENSE.md)
@@ -74,31 +35,16 @@ labelled for a flashcart this fork no longer supports.
 * [svg64](src/libs/svg64) - [MIT License](src/libs/svg64/LICENSE) — vendored, not a submodule
 * [picojpeg](src/libs/picojpeg) - public domain, by Rich Geldreich
 
-Two more are linked in from inside libdragon rather than chosen here, and are credited for that
-reason:
+Linked through libdragon rather than chosen here:
 
-* [FatFs](http://elm-chan.org/fsw/ff/) by *ChaN* - [its own licence](libdragon/src/fatfs/License.md), the filesystem that reads the card
+* [FatFs](http://elm-chan.org/fsw/ff/) by *ChaN* - [its own licence](libdragon/src/fatfs/License.md)
 * [libcart](https://github.com/devwizard64/libcart) by *devwizard64* - the flashcart driver. The copy inside libdragon states no licence terms.
 
 ## Icons
-The 3,894 icons players choose from are from [game-icons.net](https://game-icons.net), under
-[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) (a few authors CC0). That is an
-attribution licence and the cartridge is what redistributes, so all 36 authors are named in
-[CREDITS.md](docs/CREDITS.md) and on the menu's own credits screen. They ride in the cartridge as
-SVG text and are turned into pixels when one is needed, which is why there can be thousands of
-them and why they follow whatever colours a player picks.
-
-The artwork is in [`assets/icons/`](assets/icons/), by author, with the corpus's own licence and
-a per-author count beside it — a clone builds the same ROM this tree does. 286 of the corpus's
-4,180 icons are not here at all: their subject is recognisably someone else's property, and they
-were left out one at a time rather than filtered out on the way past. Leaving them out reduces
-nothing that is owed for the rest, which is why the credits name all 36 authors regardless of how
-many icons a given build packs.
+3,894 icons from [game-icons.net](https://game-icons.net), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) (a few authors CC0). Authors are named in [CREDITS.md](docs/CREDITS.md) and on the credits screen. Source is in [`assets/icons/`](assets/icons/). 286 icons from the original corpus were left out because they depict someone else's property; that does not change what is owed for the rest.
 
 ## Data
-The database that recognises a cartridge and knows how it saves is derived from
-[ares](https://ares-emu.net)' own, ISC licensed, copyright © 2004-2025 ares team, Near et al. The
-cheat corpus, where a build ships one, is [libretro-database](https://github.com/libretro/libretro-database), MIT.
+The database that recognises a cartridge and knows how it saves is derived from [ares](https://ares-emu.net)' own, ISC licensed, copyright © 2004-2025 ares team, Near et al. The cheat corpus, where a build ships one, is [libretro-database](https://github.com/libretro/libretro-database), MIT.
 
 ## Sounds
 See [License](https://pixabay.com/en/service/license-summary/) for the following sounds:
