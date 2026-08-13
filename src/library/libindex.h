@@ -112,8 +112,13 @@ typedef struct {
  * - **Unusable.** No file, a header that does not survive its bounds checks, a walk that failed,
  *   or nothing at all left to keep. Returns false and the caller scans.
  *
- * @param on_progress  Optional; passed to any rescan so the boot plate keeps moving. NULL is
- *                     silent, which is what the host tests use.
+ * @param on_progress  Optional; called once with the cached title count, then during the
+ *                     revalidation walk (always -1) and any rescan, so the boot plate keeps
+ *                     moving and -- the reason it reaches the walk at all -- the mixer keeps
+ *                     being fed. The seed is what stops a warm walk painting 0 TITLES. The walk
+ *                     is one blocking pass over every directory on the card and nothing else
+ *                     touches the AI while it runs. NULL is silent, which is what the host tests
+ *                     use.
  * @param out          Optional; filled in on every non-trivial return.
  *
  * @return true if @p lib is now populated and no scan is needed.
@@ -121,7 +126,14 @@ typedef struct {
 bool libindex_load (library_t *lib, const char *storage_prefix, const char *root,
                     library_scan_progress_t on_progress, libindex_result_t *out);
 
-/** @brief Write @p lib and a fresh set of directory signatures. False if storage is read-only. */
-bool libindex_save (const library_t *lib, const char *storage_prefix, const char *root);
+/**
+ * @brief Write @p lib and a fresh set of directory signatures. False if storage is read-only.
+ *
+ * @param on_progress  Optional, and only ever called with -1: this takes the same full walk of the
+ *                     card libindex_load() does, so it needs the same tick to keep the audio alive.
+ *                     It has nothing to report about progress and does not pretend to.
+ */
+bool libindex_save (const library_t *lib, const char *storage_prefix, const char *root,
+                    library_scan_progress_t on_progress);
 
 #endif /* LIBRARY_LIBINDEX_H__ */

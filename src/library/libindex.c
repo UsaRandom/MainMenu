@@ -163,7 +163,8 @@ static void sig_note_art (sigwalk_t *w, const char *full_path) {
  * of a console that can write to its card. Nothing under ares can catch that: the DFS is read-only,
  * so those directories never move and the walk looks stable.
  */
-static void sig_dir (sigwalk_t *w, const char *dir, int depth) {
+static void sig_dir (sigwalk_t *w, const char *dir, int depth,
+                     library_scan_progress_t on_tick) {
     if (depth > SIG_MAX_DEPTH || w->overflow) {
         return;
     }
@@ -215,13 +216,22 @@ static void sig_dir (sigwalk_t *w, const char *dir, int depth) {
                 }
             }
         }
+        /* Once per entry, exactly where library_scan_dir() ticks, and for a reason that has
+         * nothing to do with progress: this walk is one blocking call that reads every directory
+         * on the card, and until this existed nothing fed the mixer for the whole of it. The audio
+         * buffers hold 8 x 640 samples at 16 kHz -- 320 ms -- so a revalidation of a full card ran
+         * the AI dry and the music stalled on the boot plate for about a second. The callback
+         * throttles itself; see boot_tick() in app.c. */
+        if (on_tick != NULL) {
+            on_tick(-1);
+        }
         result = dir_findnext(dir, &info);
     }
 
     for (int i = 0; i < kid_count && !w->overflow; i++) {
         char child[512];
         snprintf(child, sizeof(child), "%s/%s", dir, kids[i]);
-        sig_dir(w, child, depth + 1);
+        sig_dir(w, child, depth + 1, on_tick);
     }
     free(kids);
 }
@@ -237,7 +247,7 @@ static void sig_dir (sigwalk_t *w, const char *dir, int depth) {
  * duplicate wins" means the same thing whichever walk built the table.
  */
 static bool sig_collect (const char *storage_prefix, const char *root, bool detail,
-                         sigwalk_t *out) {
+                         library_scan_progress_t on_tick, sigwalk_t *out) {
     char base[512];
     library_join(base, sizeof(base), storage_prefix, root);
 
@@ -255,7 +265,7 @@ static bool sig_collect (const char *storage_prefix, const char *root, bool deta
         }
     }
 
-    sig_dir(out, base, 0);
+    sig_dir(out, base, 0, on_tick);
 
     if (out->overflow || out->count == 0) {
         sig_free(out);
@@ -521,10 +531,16 @@ bool libindex_load (library_t *lib, const char *storage_prefix, const char *root
     }
 
     /* Revalidate BEFORE populating: the walk is the expensive half of this path and there is no
-     * point paying for hundreds of strdups first. */
+     * point paying for hundreds of strdups first. The walk ticks -1 and the plate holds the last
+     * real count, so seed it now or a warm revalidation paints 0 TITLES for the whole walk --
+     * seconds, on the card this exists to cover -- and then jumps. Incremental rescans overwrite
+     * it with a live lib->count. */
+    if (on_progress != NULL) {
+        on_progress((int)h->record_count);
+    }
     uint32_t t0 = TICKS_READ();
     sigwalk_t now;
-    bool walked = sig_collect(storage_prefix, root, true, &now);
+    bool walked = sig_collect(storage_prefix, root, true, on_progress, &now);
     uint32_t walk_us = TIMER_MICROS(TICKS_SINCE(t0));
     res.dirs_total = walked ? now.count : 0;
 
@@ -622,13 +638,14 @@ static bool str_push (char **tab, uint32_t *len, uint32_t *cap, const char *s, u
     return true;
 }
 
-bool libindex_save (const library_t *lib, const char *storage_prefix, const char *root) {
+bool libindex_save (const library_t *lib, const char *storage_prefix, const char *root,
+                    library_scan_progress_t on_progress) {
     if (!cache_writable() || lib->count == 0) {
         return false;
     }
 
     sigwalk_t w;
-    if (!sig_collect(storage_prefix, root, false, &w)) {
+    if (!sig_collect(storage_prefix, root, false, on_progress, &w)) {
         debugf("LIBINDEX: could not fingerprint the tree, not caching\n");
         return false;
     }

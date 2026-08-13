@@ -100,7 +100,7 @@ void app_fault (app_t *app, const char *message) {
 #define SCAN_TICK_US    33000
 
 /**
- * @brief Paint the boot plate from inside the library scan. See library_scan_progress_t.
+ * @brief Keep the console alive through a blocking boot step. See library_scan_progress_t.
  *
  * The second place in this codebase where drawing happens outside render(), and for the same
  * reason as the first (screen_launch.c's on_progress): the work is one blocking call and the main
@@ -119,9 +119,25 @@ void app_fault (app_t *app, const char *message) {
  * Skips the paint rather than blocking when no framebuffer is free, on screen_launch's reasoning:
  * a dropped frame is invisible, a stalled scan is not. The clock is advanced either way, or a card
  * that happens to be short of buffers would come out of the scan with the hold still to serve.
+ *
+ * Called from app_init() between steps as well as from inside them, because the scan was never
+ * the only blocking call at boot -- it was only the one that had a callback. Measured under ares
+ * on the 48-title fixture, the stretch from music starting to the first mixer poll was 223,305 us
+ * with the fonts alone accounting for 211,234 of it, and on a card with a warm index the
+ * revalidation walk that follows adds a second more. The buffers hold 320 ms. That is the whole
+ * bug: music started, nothing fed it, and the plate came up to silence.
+ *
+ * @param found  Titles so far, or -1 for "no count, just tick" -- which is what the boot steps
+ *               that have not built a library yet, and the index walk, pass. The last real count
+ *               is kept, so the plate never counts back down to zero.
  */
-static void scan_progress (int found) {
+static void boot_tick (int found) {
     static uint32_t last_ticks;
+    static int last_found;
+
+    if (found >= 0) {
+        last_found = found;
+    }
 
     uint32_t now = TICKS_READ();
     uint32_t dt_us = (last_ticks != 0) ? TIMER_MICROS(TICKS_SINCE(last_ticks)) : SCAN_TICK_US;
@@ -133,12 +149,20 @@ static void scan_progress (int found) {
     sound_poll();
     boot_plate_hold((float)dt_us / 1000000.0f);
 
+    /* Nothing to paint before the plate is armed, and painting anyway would be worse than nothing:
+     * boot_plate_draw() returns without drawing while the plate is un-armed, so the attach/show
+     * below would put an uninitialised framebuffer on screen. The early boot steps still get their
+     * sound_poll() above, which is the only part of this they need. */
+    if (boot_plate_done()) {
+        return;
+    }
+
     surface_t *fb = display_try_get();
     if (fb == NULL) {
         return;
     }
     rdpq_attach(fb, NULL);
-    boot_plate_draw(MENU_VERSION, found);
+    boot_plate_draw(MENU_VERSION, last_found);
     rdpq_detach_show();
 }
 
@@ -243,6 +267,17 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     mem_report("pre-fonts");
     fonts_init(NULL);
     mem_report("post-fonts");
+    /* The first feed of the whole program, and deliberately not one line earlier.
+     *
+     * music_start() ran well above, but starting a song only attaches a waveform to a mixer
+     * channel -- nothing reaches the DAC until somebody polls, so nothing can stutter before the
+     * first poll either. Feeding at display_init() instead was measured and was worse: it filled
+     * 316 ms of buffers that then drained through the font load, which is 286,953 us under ares
+     * and left 29 ms of margin. Feeding after the fonts costs a silence nobody can perceive --
+     * there is nothing playing to compare it against -- and buys the whole buffer back.
+     *
+     * From here to the end of app_init() every blocking step is bracketed by one of these. */
+    boot_tick(-1);
     /* After fonts_init, not before: it registers the styles this rebinds. */
     theme_apply(app->theme);
 
@@ -260,6 +295,8 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * whether a cached tile still fits. Reading one small ini before any of them exist is
      * cheaper than making all three cope with not knowing yet. */
     boxart_init(app->storage, app->settings.boxart_region);
+    mem_report("boxart");
+    boot_tick(-1);
 
     app->lib = library_init();
     if (app->lib == NULL) {
@@ -270,12 +307,15 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * scan is 5.75 s, which is the single largest fixed cost in the product; libindex_load()
      * answers the same question with a directory enumeration and no file opens at all. */
     cache_init(app->storage);
+    mem_report("cache");
+    boot_tick(-1);
 
     
     /* Harness builds only: execute the emitted cheat patcher against a synthetic game image and
      * prove the preamble hook end-to-end, which no launch under ares can do -- ares has no cart
      * to launch into. Costs one boot-time megabyte scan; compiles to nothing in release. */
     hooktest_run();
+    mem_report("hooktest");
 
     /* Before the scan, not after it, and this is the whole point of arming it here rather than
      * leaving it to the first screen's enter(). The scan is one blocking call -- 11,499 us per
@@ -284,10 +324,11 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * exists to cover, and a card that grew from 19 titles to 278 turned a fast boot into a long
      * one with a blank screen for most of it.
      *
-     * Armed unconditionally rather than only on the slow path: on a warm index there is no scan
-     * to cover, boot_plate_hold() is never called, and the plate behaves exactly as it did. The
-     * grid and the picker still call boot_plate_arm() in their enter() and both are now no-ops,
-     * which is the documented contract -- first caller wins. */
+     * Armed unconditionally rather than only on the slow path. A warm walk is also seconds on a
+     * full card, and boot_tick() now calls boot_plate_hold() on every unthrottled entry, so the
+     * plate covers that walk the same way it covers a scan. First-caller-wins is the remaining
+     * reason to arm here: the grid and the picker still call boot_plate_arm() in their enter()
+     * and both are then no-ops, which is the documented contract. */
     boot_plate_arm();
 
     /* Where the boot time actually goes, written to the card because nothing else on this console
@@ -297,13 +338,14 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * number with a cause attached instead of a hypothesis. */
     uint32_t t_idx = TICKS_READ();
     libindex_result_t idx = { 0 };
-    bool idx_hit = libindex_load(app->lib, app->storage, SCAN_ROOT, scan_progress, &idx);
+    bool idx_hit = libindex_load(app->lib, app->storage, SCAN_ROOT, boot_tick, &idx);
     uint32_t idx_us = TIMER_MICROS(TICKS_SINCE(t_idx));
+    mem_report("index");
     uint32_t scan_us = 0;
 
     if (!idx_hit) {
         uint32_t t_scan = TICKS_READ();
-        library_scan(app->lib, app->storage, SCAN_ROOT, scan_progress);
+        library_scan(app->lib, app->storage, SCAN_ROOT, boot_tick);
         /* Between the scan and the save, and it has to be between them. The scan is the only
          * thing that ever fills lib->art, and nothing rebuilds that table when the index loads
          * instead -- so unless the answers are written into the index now, every boot from a warm
@@ -311,15 +353,55 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
          * none after a restart, and a library.idx holding 56 strings without a single image path
          * among them. Memory only; the scan already saw every file. */
         library_resolve_loose_art(app->lib);
-        libindex_save(app->lib, app->storage, SCAN_ROOT);
+        libindex_save(app->lib, app->storage, SCAN_ROOT, boot_tick);
         scan_us = TIMER_MICROS(TICKS_SINCE(t_scan));
+        mem_report("scan");
     }
 
     mem_report("library");
 
+    /* After the library exists, never before: playstate is applied onto records and keys on the
+     * check codes the index or the scan just produced. */
+    playstate_load(app->lib);
+    mem_report("playstate");
+    boot_tick(app->lib->count);
+    /* After playstate, never before: locks_load() decides whether a card is carrying its padlocks
+     * in the old place by looking at what playstate just applied. See locks.h. */
+    locks_load(app->lib);
+    cheatstate_load();
+    usercheats_load();
+    mem_report("locks+state");
+    boot_tick(app->lib->count);
+
+    /* Opened once and held: the index is 24 bytes a game, and the alternative is reopening the
+     * file every time a detail sheet appears. Absent is normal -- a card with no cheats.db is a
+     * card whose owner did not install one, not a fault. */
+    cheatdb_open(app->storage);
+    mem_report("cheatdb");
+    boot_tick(app->lib->count);
+
+    app->thumbs = thumbcache_init(app->storage);
+    if (app->thumbs == NULL) {
+        app_fault(app, "Out of memory allocating the art cache.");
+    }
+    thumbstore_open();
+    mem_report("thumbs");
+    boot_tick(app->lib->count);
+
     /* Best-effort and never load-bearing, same as every other line this file writes. Opened here
      * and closed immediately: the launch path opens the log again later with its own banner, and
-     * two open handles on one file is not something to find out about on a card. */
+     * two open handles on one file is not something to find out about on a card.
+     *
+     * Written at the END of app_init rather than straight after the library, so the audio line
+     * below covers the whole of boot and not just the part of it that had happened when the
+     * library was ready. Nothing it reports changes in between.
+     *
+     * The gap is read once, before the log is opened, because sound_worst_gap_us() resets on read
+     * -- asking it twice would report the boot to one reader and a few microseconds to the other,
+     * and the second reader would be the log. */
+    unsigned gap = sound_worst_gap_us(), slack = sound_slack_us();
+    debugf("BOOT audio worst gap %u us, buffers hold %u us\n", gap, slack);
+
     launchlog_begin_boot();
     if (launchlog_open()) {
         const char *verdict = "index MISS -> full scan";
@@ -348,28 +430,14 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
                            (unsigned long)idx_us, (unsigned long)scan_us,
                            (unsigned long)(app->lib->count ? scan_us / (uint32_t)app->lib->count : 0));
         }
+        /* The one number that says whether the music survived the boot. Anything at or over the
+         * slack is the AI repeating its last buffer for the difference -- a stall a listener hears
+         * and no frame capture can show. It is recorded rather than asserted because the case that
+         * produced it, a warm index on a full card, does not exist under ares. */
+        launchlog_line("audio worst gap %u us of %u us buffered%s", gap, slack,
+                       (slack > 0 && gap > slack) ? "  -- STARVED" : "");
         launchlog_end();
     }
-
-    /* After the library exists, never before: playstate is applied onto records and keys on the
-     * check codes the index or the scan just produced. */
-    playstate_load(app->lib);
-    /* After playstate, never before: locks_load() decides whether a card is carrying its padlocks
-     * in the old place by looking at what playstate just applied. See locks.h. */
-    locks_load(app->lib);
-    cheatstate_load();
-    usercheats_load();
-
-    /* Opened once and held: the index is 24 bytes a game, and the alternative is reopening the
-     * file every time a detail sheet appears. Absent is normal -- a card with no cheats.db is a
-     * card whose owner did not install one, not a fault. */
-    cheatdb_open(app->storage);
-
-    app->thumbs = thumbcache_init(app->storage);
-    if (app->thumbs == NULL) {
-        app_fault(app, "Out of memory allocating the art cache.");
-    }
-    thumbstore_open();
 
     /* The last thing app_init does, and it has to be: asking who is playing is only worth a
      * screen once the library behind it exists, and app_fault() above may already have taken the
@@ -392,7 +460,7 @@ static void app_deinit (app_t *app) {
          * before a single tile had been asked for, so it carried no art paths at all -- see
          * library_t::dirty. Without this the five-rule art search is repeated in full on every
          * boot for the entire library, which is the one cost the index was supposed to remove. */
-        libindex_save(app->lib, app->storage, SCAN_ROOT);
+        libindex_save(app->lib, app->storage, SCAN_ROOT, boot_tick);
     }
     /* app->lib is NULL whenever app_init() faulted before building it -- no flashcart, or out of
      * memory. Nothing can have marked playstate dirty in that case, so this guard has never

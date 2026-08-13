@@ -110,5 +110,19 @@ int mem_icon_cache_cells (void) {
 void mem_report (const char *stage) {
     heap_stats_t hs;
     sys_get_heap_stats(&hs);
-    debugf("MEM %-14s used %8d  free %8d  of %d\n", stage, hs.used, hs.total - hs.used, hs.total);
+
+    /* Elapsed since the previous stage, as well as the heap.
+     *
+     * Added because a user reported the music stalling for about a second on the boot plate and
+     * there was no way to say which call did it: boot is a dozen blocking calls in a row and only
+     * the library scan was ever timed. A stage longer than sound_slack_us() -- eight buffers at
+     * 16 kHz, measured at 316,059 us -- is a stage the audio cannot survive, so the number that
+     * matters is per-stage wall clock and not the total. */
+    static uint32_t prev_ticks;
+    uint32_t now = TICKS_READ();
+    unsigned long us = (prev_ticks != 0) ? (unsigned long)TIMER_MICROS(TICKS_DISTANCE(prev_ticks, now)) : 0;
+    prev_ticks = now;
+
+    debugf("MEM %-14s used %8d  free %8d  of %d  (+%lu us)\n",
+           stage, hs.used, hs.total - hs.used, hs.total, us);
 }

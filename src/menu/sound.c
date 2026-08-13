@@ -39,6 +39,18 @@
 static wav64_t sfx_cursor, sfx_error, sfx_enter, sfx_exit, sfx_setting;
 
 static bool sound_initialized = false;
+
+/** How long the AI has gone unfed, at worst, since the last time anybody asked.
+ *
+ * A buffer is CALC_BUFFER(SOUND_FREQUENCY) samples and there are NUM_BUFFERS of them: at 16 kHz
+ * that is 640 samples each, eight of them, 320 ms of slack in total. Go past that and the AI does
+ * not fall silent, it repeats the last buffer it was handed -- which is what a stalled boot sounds
+ * like, and what nothing in this program could measure until now. ares cannot reproduce the case
+ * that prompted it, a card with a warm index revalidating for about a second, because its storage
+ * is read-only and there is never a warm index -- so the number has to come off the console, which
+ * means it has to be recorded on the console. */
+static uint32_t last_poll_ticks;
+static uint32_t worst_gap_us;
 static bool sfx_enabled = false;
 static float sfx_volume = SFX_VOLUME_UNIT;
 
@@ -169,9 +181,41 @@ void sound_deinit (void) {
  */
 void sound_poll (void) {
     if (sound_initialized) {
-        
+        uint32_t now = TICKS_READ();
+        if (last_poll_ticks != 0) {
+            uint32_t gap = TIMER_MICROS(TICKS_DISTANCE(last_poll_ticks, now));
+            if (gap > worst_gap_us) {
+                worst_gap_us = gap;
+            }
+        }
+        last_poll_ticks = now;
+
         // Check whether one audio buffer is ready, otherwise wait for next
         // frame to perform mixing.
         mixer_try_play();
     }
+}
+
+void sound_gap_forget (void) {
+    /* The interval ending now was not the product's, so do not charge it to the product. Only the
+     * dev harness has any business calling this; see the note at the end of hooktest_run(). */
+    last_poll_ticks = TICKS_READ();
+}
+
+unsigned sound_worst_gap_us (void) {
+    unsigned worst = worst_gap_us;
+    worst_gap_us = 0;
+    return worst;
+}
+
+unsigned sound_slack_us (void) {
+    /* Asked of the audio subsystem rather than recomputed from SOUND_FREQUENCY, because
+     * audio_init() rounds the buffer length down to a multiple of eight and a second copy of that
+     * arithmetic here would drift the moment either number moved. */
+    int freq = audio_get_frequency();
+    if (freq <= 0) {
+        return 0;
+    }
+    return (unsigned)((uint64_t)audio_get_buffer_length() * NUM_BUFFERS * 1000000ull /
+                      (uint64_t)freq);
 }

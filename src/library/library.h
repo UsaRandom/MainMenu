@@ -239,6 +239,14 @@ bool library_scan_skipped (const char *name);
  *               plate already prints "<n> TITLES", which turns out to be exactly the right
  *               readout for a scan with no denominator.
  *
+ *               **-1 means "no count to report, just tick".** libindex.c's revalidation walk uses
+ *               it: that walk finds no titles at all, it only fingerprints directories, but it is
+ *               the longest blocking call at boot and it needs the callback for the same reason
+ *               everything else does. An implementation must keep whatever count it last had
+ *               rather than printing zero, or the plate counts back down to nothing every time
+ *               the index is written. libindex_load() therefore calls once with the cached count
+ *               before the walk starts.
+ *
  * Called often (once per directory entry), so an implementation that draws MUST throttle itself.
  * It also runs inside a blocking call with the main loop suspended above it, which means nothing
  * else is feeding the mixer -- see the sound_poll() in screen_launch.c's on_progress for what an

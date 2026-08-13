@@ -6329,6 +6329,77 @@ floor is what makes allocation measurements comparable across scales -- but take
 scale needs on the small one, where 153,600 bytes against 143,144 free meant no captures at all.
 
 ---
+## 1bc. The music stalled on the boot plate, and nothing in the program could say so
+
+Reported from a console: about a second of stalled music on the title screen at boot. No frame
+capture can show it and no log recorded it, so the first job was to make the question askable.
+
+**`mem_report()` now prints elapsed time as well as heap**, which turns the existing stage list
+into a boot profile for free. Under ares on the 48-title fixture, 8 MB:
+
+| stage | us | note |
+|---|---:|---|
+| music | 360,272 | 353,881 of it building midi64's oscillator tables |
+| display | 7,983 | |
+| fonts | 212,285 | the body font alone is 195,515, one `asset_load()` |
+| hooktest | 1,127,728 | DEV_HARNESS only; does not exist in a shipped ROM |
+| index + scan | 1,230,722 | ticked throughout already |
+| playstate .. thumbs | 10,156 | four separate reads off the card |
+
+**The mechanism.** `music_start()` runs at `app.c:226`; the first `sound_poll()` was inside the
+library scan's progress callback. Everything between them -- `display_init`, five fonts,
+`boxart_init`, `cache_init`, and on a card with a warm index the whole revalidation walk -- ran
+with nothing feeding the mixer. The buffers hold `audio_get_buffer_length() * NUM_BUFFERS` samples,
+**measured at 316,059 us**, and an N64 whose AI runs dry repeats its last buffer rather than going
+quiet. That is the reported symptom exactly.
+
+**The revalidation walk is the second most likely blocking call and the one ares cannot see.**
+`sig_collect()` reads every directory on the card, and under ares it never runs at all: storage is
+read-only, so `cache_load()` fails, there is never an index to revalidate, and the walk is skipped
+before it starts. Hardware measured that walk at seconds on a full card (1ax, 1ay).
+
+**Three changes.** `sig_dir()` calls back once per entry, exactly where `scan_dir()` already did,
+with `found == -1` for "no count, just tick". The walk finds no titles, so `libindex_load()`
+seeds the cached count once first -- without that a warm plate sat on `0 TITLES` for the whole
+walk and then jumped. `scan_progress()` became `boot_tick()` and is now called between the boot
+steps as well as inside them. `libindex_save()` takes the callback too, because it walks the
+same card the same way, on the way OUT to a game.
+
+**The first feed belongs AFTER the fonts, and putting it before them was measurably worse.**
+Starting a song only attaches a waveform to a mixer channel; nothing reaches the DAC until somebody
+polls, so nothing can stutter before the first poll. Feeding at `display_init()` filled 316 ms of
+buffers that then drained through the font load: **286,953 us of gap, 29 ms of margin**. Feeding
+after the fonts costs a silence with nothing to compare it against, and buys the whole buffer back.
+
+**The number is now recorded on the card**, because the case that produced the bug does not exist
+under ares and never will. `sound_poll()` tracks the longest interval between calls;
+`launchlog` writes `audio worst gap N us of M us buffered`, with `-- STARVED` when it is over.
+
+| build | worst gap | budget |
+|---|---:|---:|
+| before, 8 MB | boot never fed the mixer at all | 316,059 |
+| after, 8 MB | 109,459 | 316,059 |
+| after, 4 MB | 66,536 | 316,059 |
+
+**The harness had to opt out of its own instrument.** `hooktest_run()` spends 1,127,728 us with
+nothing feeding the mixer and compiles to nothing without `DEV_HARNESS`, so every ares run reported
+a starved boot no console can have. It calls `sound_gap_forget()`, which disowns the interval --
+**not** a reset, which was tried first and would have thrown away the boxart/cache gaps already
+on the clock. The font load is not in `worst_gap_us`: `sound_poll()` only starts that clock on
+its first call, and that call is the post-font `boot_tick(-1)`.
+
+**The test is in the host suite because it cannot be anywhere else.** `test_libindex.c` loads a
+fresh index with a counting callback fitted: a plain hit, `dirs_rescanned == 0`, so every tick
+after the seed can only have come from the walk. Removing the tick from `sig_dir()` leaves only
+the seed (`tick_count == 1`). Passing NULL from `libindex_save()` leaves the save silent.
+Removing the seed paints the first tick as `-1`. 451 checks to 460.
+
+**A failing check in that suite printed to a hole.** `run.sh` runs it with `2>/dev/null` to
+swallow the `[rom]` debugf noise, and `CHECK` wrote to stderr -- so an abort said only "exit 1"
+with no line number and no message. It writes to stdout now. **The other five suites still have
+this**, and it is why the first mutation run above looked like a silent crash.
+
+---
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon

@@ -33,10 +33,13 @@
 
 static int checks = 0;
 
+/* Failures go to stdout, not stderr: run.sh runs this with 2>/dev/null to swallow the [rom]
+ * debugf noise, so a message sent to stderr is a message nobody ever reads -- a failing check
+ * would abort the whole suite with nothing but an exit code to say which one it was. */
 #define CHECK(cond, what) do {                                                  \
     checks++;                                                                   \
     if (!(cond)) {                                                              \
-        fprintf(stderr, "  FAIL %s:%d  %s\n", __FILE__, __LINE__, (what));      \
+        printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, (what));               \
         exit(1);                                                                \
     }                                                                           \
 } while (0)
@@ -144,7 +147,7 @@ static library_t *fresh_scan (void) {
 /** @brief Scan, save, then load into a second library. @return the loaded one, or NULL on miss. */
 static library_t *save_then_load (void) {
     library_t *a = fresh_scan();
-    CHECK(libindex_save(a, root, "/"), "index saves");
+    CHECK(libindex_save(a, root, "/", NULL), "index saves");
     int n = a->count;
     library_free(a);
 
@@ -161,7 +164,7 @@ static library_t *save_then_load (void) {
 /** @brief Scan the tree as it stands now and write that as the index the next load will meet. */
 static void baseline (void) {
     library_t *a = fresh_scan();
-    CHECK(libindex_save(a, root, "/"), "baseline index written");
+    CHECK(libindex_save(a, root, "/", NULL), "baseline index written");
     library_free(a);
 }
 
@@ -174,6 +177,41 @@ static library_t *load_reporting (libindex_result_t *res) {
         return NULL;
     }
     return l;
+}
+
+/* --- the tick, which is not a progress readout ------------------------------------------------
+ *
+ * The revalidation walk is the longest blocking call at boot and nothing else feeds the mixer
+ * while it runs, so it calls back once per directory entry purely to keep the audio alive. That
+ * is not observable from ares -- its storage is read-only, so there is never an index to
+ * revalidate and the walk is never taken. It is observable here.
+ *
+ * The walk itself still reports -1, because it finds no titles. The first callback is different:
+ * libindex_load() seeds the cached count so a plate that printed the last real number would
+ * hold it, not sit on zero for the whole walk and then jump.
+ */
+static int  tick_count;
+static int  tick_first;
+static bool tick_rest_minus_one;
+static bool tick_always_minus_one;
+
+static void count_tick (int found) {
+    if (tick_count == 0) {
+        tick_first = found;
+    } else if (found != -1) {
+        tick_rest_minus_one = false;
+    }
+    if (found != -1) {
+        tick_always_minus_one = false;
+    }
+    tick_count++;
+}
+
+static void tick_reset (void) {
+    tick_count = 0;
+    tick_first = -999;
+    tick_rest_minus_one = true;
+    tick_always_minus_one = true;
 }
 
 /**
@@ -229,7 +267,7 @@ int main (void) {
     library_t *scanned = fresh_scan();
     CHECK(scanned->count == 3, "three ROMs are indexed (art and saves are not titles)");
 
-    CHECK(libindex_save(scanned, root, "/"), "save succeeds");
+    CHECK(libindex_save(scanned, root, "/", NULL), "save succeeds");
 
     libindex_result_t res;
     library_t *loaded = library_init();
@@ -263,6 +301,30 @@ int main (void) {
     CHECK(with_art == 1, "the one cover in the tree is carried in the index");
     library_free(scanned);
     library_free(loaded);
+
+    /* Straight after the round trip, with the tree untouched, so this is a plain hit: no rescan
+     * runs, which means every tick counted below can only have come from the walk. Without that
+     * the check would pass on ticks from library_scan_dir() and prove nothing about the path the
+     * bug was actually in. */
+    tick_reset();
+    library_t *ticked = library_init();
+    CHECK(libindex_load(ticked, root, "/", count_tick, &res), "a fresh index loads with a tick fitted");
+    CHECK(!res.incremental, "and it is a plain hit");
+    CHECK(res.dirs_rescanned == 0, "with nothing rescanned, so the walk is the only source of ticks");
+    CHECK(tick_count > 1, "the revalidation walk feeds the mixer as it goes");
+    CHECK(tick_first == 3, "first tick is the cached count, so the plate does not open on zero");
+    CHECK(tick_rest_minus_one, "the walk itself still reports -1");
+    library_free(ticked);
+
+    /* The save takes the same walk of the same card and needs the same tick. It ran unfed until
+     * this was fitted, which is a full second of stalled music on the way OUT of the menu -- the
+     * one moment a launch sound is playing. */
+    tick_reset();
+    library_t *ticked_save = fresh_scan();
+    CHECK(libindex_save(ticked_save, root, "/", count_tick), "a save with a tick fitted succeeds");
+    CHECK(tick_count > 0, "and ticks, because it walks the whole card to fingerprint it");
+    CHECK(tick_always_minus_one, "with nothing to report either");
+    library_free(ticked_save);
 
     /* --- abandoning a half-built library ---------------------------------------------------
      *
@@ -444,7 +506,7 @@ int main (void) {
             marked->records[i].art_state = ART_NONE;
         }
     }
-    CHECK(libindex_save(marked, root, "/"), "an index recording a title as having no art");
+    CHECK(libindex_save(marked, root, "/", NULL), "an index recording a title as having no art");
     library_free(marked);
 
     put("roms/covers/Ant.png", 300);
