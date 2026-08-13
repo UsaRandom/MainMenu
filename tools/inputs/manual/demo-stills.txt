@@ -16,6 +16,13 @@ wait 22
 fbdump              # 1: the boot plate, part way through its rise
 
 wait 260
+
+# The demo card has four players, so the menu opens on the PICKER and not on the grid --
+# demo-profiles.txt says so and this script did not act on it. Without this press every
+# frame below is the picker: `r` does nothing there, and `down`/`right` walk the cursor
+# through the empty slots, so nine README stills were nine pictures of the same screen.
+press a
+wait 200
 fbdump              # 2: Recent, the tab the menu opens on because playstate.dat is not empty
 
 press r
@@ -47,7 +54,10 @@ fbdump              # 7: the detail sheet
 
 press z
 wait 60
-press a             # tick three groups, so the sheet behind reads "3 of 5 enabled"
+press a             # tick three groups. The sheet behind does NOT then read "3 of 5": the
+                    # demo ROMs are synthetic, so the engine finds no preamble to hook and
+                    # the Cheats row says "Not supported for this ROM" either way. Frames 7
+                    # and 9 have the same hash for that reason and it is not a stuck frame.
 press down
 press a
 press down

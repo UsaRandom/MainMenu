@@ -6400,6 +6400,42 @@ with no line number and no message. It writes to stdout now. **The other five su
 this**, and it is why the first mutation run above looked like a silent crash.
 
 ---
+## 1bd. The README's screenshots were nine pictures of the same screen
+
+Refreshing one stale screenshot turned up a capture script that had stopped capturing.
+
+`tools/inputs/manual/demo-stills.txt` produces every README still. It presses `r` to change tab,
+`down`/`right` to scroll, `start` for settings. **The demo card has four players, so the menu opens
+on the profile picker** -- which `demo-profiles.txt` says in its own header -- and none of those
+presses mean anything there. Frames 2, 3 and 4 came out byte-identical to each other and to the
+picker; `down`/`right` walked the cursor through the empty slots instead. One `press a` fixes it.
+
+Nothing announced this. The script ran, ares exited cleanly, nine PNGs appeared at 640x480, and
+the hashes differed enough to look like nine different screens. It is the screenshot version of
+the harness traps in 1o and 1bb: **a run that produces plausible output while measuring nothing.**
+
+**What was actually stale, checked rather than assumed.** Six of the eight committed `demo-*.png`
+moved and one did not:
+
+| image | verdict |
+|---|---|
+| `demo-players` | **pixel-identical** to a fresh capture -- the picker has not changed since 7 Aug |
+| `demo-grid-scrolled` | stale: the footer read `Z Players`, it is `B Players` now |
+| `demo-settings`, `demo-detail`, `demo-cheats`, `demo-appearance`, `demo-keyboard` | refreshed |
+| `demo-credits` | neither script produces it; untouched, and its provenance is unrecorded |
+
+So the one image that was deleted from the README for being stale was the only one that was not.
+It is back, from `docs/images/` rather than from a GitHub attachment URL, because a clone should
+carry its own front page.
+
+**Two things these captures understate, and neither is a regression.** The regress build packs
+**200 icons, not 3,894**, so the appearance picker reads `PAGE 1 / 1` with 27 faces in Animals --
+the old capture had four. And the detail sheet says `Not supported for this ROM` where the script
+expects `3 of 5 enabled`: the demo ROMs are synthetic, so the engine finds no preamble to hook.
+That is correct behaviour on an invented ROM, it was equally true of the 7 Aug captures, and the
+script's comment has been corrected to say so rather than left claiming otherwise.
+
+---
 ## 2. Findings
 
 ### 2.1 The two-prefix toolchain split silently links the wrong libdragon
