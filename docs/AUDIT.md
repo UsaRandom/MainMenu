@@ -2423,7 +2423,7 @@ and `art_path` returned false at its first line. No file placed anywhere on the 
 changed that. The SD card prepared for the M64 carries three SNES ROMs and no N64 ROMs, so it was
 a card on which nothing could ever display art.
 
-**Upstream's own documented fallbacks were not implemented.** `docs/19_gamepak_boxart.md`
+**Upstream's own documented fallbacks were not implemented.** `docs/attic/upstream/19_gamepak_boxart.md`
 describes a 3-character region-agnostic path and a homebrew-by-title path; neither existed here.
 
 Art is now found five ways, ordered so the free lookups come first:

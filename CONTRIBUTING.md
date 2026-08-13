@@ -1,11 +1,14 @@
-# Contributing to N64FlashcartMenu
+# Contributing
 
-This document is for people wanting to contribute to the implementation of N64FlashcartMenu.
-This involves interacting with implementation changes that are proposed using [GitHub](https://github.com/) [pull requests](https://docs.github.com/pull-requests) to the [N64FlashcartMenu](https://github.com/Polprzewodnikowy/N64FlashcartMenu/) repository (which you're in right now).
+This is a fork of [N64FlashcartMenu](https://github.com/Polprzewodnikowy/N64FlashcartMenu). The
+boot and flashcart plumbing is still theirs. The grid, library, players, and the rest of the
+presentation layer are not — send those changes here, not upstream.
 
-As such, a GitHub account is recommended, which you can sign up for [here](https://github.com/signup).
+House style is in [CLAUDE.md](CLAUDE.md): measure rather than assert, check that a test can fail
+before trusting a green one, and keep ruled-out hypotheses in [docs/AUDIT.md](docs/AUDIT.md).
 
-Additionally this document assumes that you already know how to use GitHub and Git.
-If that's not the case, we recommend learning about it first [here](https://docs.github.com/en/get-started/quickstart/hello-world).
+Commits are imperative, plain English, describing the effect. No conventional-commits prefixes,
+no ticket IDs, no emoji.
 
-**Help us by creating a PR.**
+Do not run `tools/regress.sh` or `tools/suite.sh` unless you were asked. The host tests
+(`tools/hosttest/run.sh`) are a few seconds and need no emulator.

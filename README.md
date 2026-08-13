@@ -10,11 +10,11 @@ Put `sc64menu.n64` in the root of an SD card and your games anywhere on it. The 
 
 Both pictures are of invented games: [`tools/mkdemo.py`](tools/mkdemo.py) draws the art, so this page ships nobody else's covers. The faces come from [game-icons.net](https://game-icons.net) and are credited in [CREDITS.md](docs/CREDITS.md).
 
-- **Setting up a card:** [CARD.md](docs/CARD.md)
-- **Building it:** [BUILDING.md](docs/BUILDING.md)
+- **Setting up a card:** [CARD.md](docs/CARD.md) — start here
+- **Building from source:** [BUILDING.md](docs/BUILDING.md)
 - Also [CREDITS.md](docs/CREDITS.md), [DESIGN.md](docs/DESIGN.md), [AUDIT.md](docs/AUDIT.md)
 
-Forked from [N64FlashcartMenu](https://github.com/Polprzewodnikowy/N64FlashcartMenu) @ `6407ab15`. The boot and flashcart plumbing is theirs; the presentation layer is not. The numbered guides under [`docs/`](docs/) describe upstream, some of it removed here.
+Forked from [N64FlashcartMenu](https://github.com/Polprzewodnikowy/N64FlashcartMenu) @ `6407ab15`. The boot and flashcart plumbing is theirs; the presentation layer is not. Their user guide is in [`docs/attic/upstream/`](docs/attic/upstream/) if you need it; it describes a menu this is not.
 
 # Licence
 

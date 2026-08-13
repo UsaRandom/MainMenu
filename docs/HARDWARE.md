@@ -1,4 +1,7 @@
-# First contact with the M64
+# Hardware bring-up log
+
+This is a lab notebook from the first M64 + EverGenesis64 cart, not a setup guide. To put the
+menu on a card, see [CARD.md](CARD.md).
 
 Everything in this repo has been measured against ares. **ares is not an N64 and the M64 is not
 an N64 either** — it is an FPGA reimplementation. Two layers of divergence sit between every

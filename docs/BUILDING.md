@@ -1,7 +1,9 @@
 # Building MainMenu
 
-Everything in here used to sit in the README. It moved because the README is for someone who
-wants to play a game, and none of this helps them do that.
+If you just want to play, you do not need this page. Get `sc64menu.n64` from a release and follow
+[CARD.md](CARD.md).
+
+Everything below is for compiling the menu yourself.
 
 ## Toolchain
 

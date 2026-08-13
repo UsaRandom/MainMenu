@@ -148,7 +148,7 @@ without a long blank screen.
 
 
 - **Documentation**
-	- Moved ED64 documentation to [98_flashcart_wip.md](./docs/98_flashcart_wip.md)
+	- Moved ED64 documentation to [98_flashcart_wip.md](./docs/attic/upstream/98_flashcart_wip.md)
 	- Other minor fixes.
 
 - **Refactor**
@@ -182,9 +182,9 @@ without a long blank screen.
 	- Added ability to reset the menu setting to default from the menu UI.
 	- Updated the UI font to Firple-Bold which supports more characters.
 	- Shows info message within the loading progress bar.
-	- Add the ability to display ESRB age ratings (see [documentation](./docs/65_experimental.md)).
-	- Add Beta Datel code GUI (see [documentation](./docs/13_datel_cheats.md)).
-	- Add ability to load boxart from ROMs that use the homebrew header (see [documentation](./docs/19_gamepak_boxart.md)).
+	- Add the ability to display ESRB age ratings (see [documentation](./docs/attic/upstream/65_experimental.md)).
+	- Add Beta Datel code GUI (see [documentation](./docs/attic/upstream/13_datel_cheats.md)).
+	- Add ability to load boxart from ROMs that use the homebrew header (see [documentation](./docs/attic/upstream/19_gamepak_boxart.md)).
 	- Add ability to extract files from ZIP archives (thanks [VicesOfTheMind](https://github.com/VicesOfTheMind)).
 	- Add Alpha FEATURE_PATCHER_GUI_ENABLED (build flag to enable it).
 	- Add Controller Pak manager (thanks [LuEnCam](https://github.com/LuEnCam))
@@ -214,7 +214,7 @@ without a long blank screen.
 
 ### Breaking changes
 * Deprecated "Autoload ROM" function was removed from menu (use `FEATURE_AUTOLOAD_ROM_ENABLED` as a build flag to re-enable it).
-* Deprecated Boxart image handler was removed (see [documentation](./docs/19_gamepak_boxart.md) for new boxart link).
+* Deprecated Boxart image handler was removed (see [documentation](./docs/attic/upstream/19_gamepak_boxart.md) for new boxart link).
 * ROM's that used custom CIC, TV and/or Save type set from the menu will need to re-set them, now uses "custom_boot" header within the ini file.
 
 

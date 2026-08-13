@@ -1,3 +1,6 @@
-[Return to main website](https://menu.summercart64.dev)
-## N64FlashcartMenu source
-This folder contains the project's source code. Use the navigation to traverse it.
+# Source
+
+The menu itself. Boot and flashcart code under `boot/` and `flashcart/` is kept close to
+upstream; everything else is this fork.
+
+To build it, see [docs/BUILDING.md](../docs/BUILDING.md).
