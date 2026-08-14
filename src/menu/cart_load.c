@@ -227,13 +227,20 @@ cart_load_err_t cart_load_emulator (app_t *app, cart_load_emu_type_t emu_type, f
         case CART_LOAD_EMU_TYPE_SNES:
             save_type = FLASHCART_SAVE_TYPE_SRAM_256KBIT;
             break;
+        /* Banked SRAM (96 KB), not FLASHRAM -- and the cores on the card are stamped
+         * SaveTypeSRAM3X to match (gb64 SVID setting; tools/mkgb64sav.py sizes the .sav
+         * files to SAVE_SIZE[SRAM_BANKED]). With FLASHRAM, gb64's osFlash path read back
+         * nothing on the M64 + EverGenesis64 -- a correctly formatted save booted as if
+         * absent, and in-game saves reported success and were gone on relaunch -- while
+         * SRAM is a plain PI DMA, the same access the SNES core's saves use. Upstream's
+         * TODO here suspected flash too ("less problematic by using the FAKE type"),
+         * naming a type this tree no longer carries. Whether the fault sits in the
+         * clone's flash emulation or the M64's PI is unmeasured; SRAM sidesteps both. */
         case CART_LOAD_EMU_TYPE_GAMEBOY:
-            // TODO: Saves might be less problematic by using the FAKE type.
-            save_type = FLASHCART_SAVE_TYPE_FLASHRAM_1MBIT; //FLASHCART_SAVE_TYPE_FLASHRAM_FAKE;
+            save_type = FLASHCART_SAVE_TYPE_SRAM_BANKED;
             break;
         case CART_LOAD_EMU_TYPE_GAMEBOY_COLOR:
-            // TODO: Saves might be less problematic by using the FAKE type.
-            save_type = FLASHCART_SAVE_TYPE_FLASHRAM_1MBIT; //FLASHCART_SAVE_TYPE_FLASHRAM_FAKE;
+            save_type = FLASHCART_SAVE_TYPE_SRAM_BANKED;
             break;
         case CART_LOAD_EMU_TYPE_SEGA_GENERIC_8BIT:
             save_type = FLASHCART_SAVE_TYPE_NONE;
