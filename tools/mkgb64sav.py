@@ -10,9 +10,9 @@ would find no 'GB64' header at offset 0 and treat the flash as empty.
 Layout produced here, derived from gb64-next @ a5ce8da and checked against the
 loaders rather than the savers:
 
-  0x00  struct GameboySettings (56 bytes, big-endian, MIPS o32):
+  0x00  struct GameboySettings (64 bytes, big-endian, MIPS o32):
         header      u32  = 0x47423634 'GB64'         (gameboy.h GB_SETTINGS_HEADER)
-        version     u32  = 2                          (GB_SETTINGS_CURRENT_VERSION)
+        version     u32  = 3                          (GB_SETTINGS_CURRENT_VERSION)
         flags       u16  = 0
         bgpIndex    u16  = 0
         obp0Index   u16  = 0
@@ -29,7 +29,11 @@ loaders rather than the savers:
         compressedSize u32 = 0                        (uncompressed: loadRAM() then
                                                        reads RAM from the offset
                                                        below instead of inflating)
-  0x80  cart RAM, verbatim from the input file. ALIGN_FLASH_OFFSET(56) == 128
+        wallAtSave  u64  = 0                          (v3: SC64 wall clock at
+                                                       save; 0 = none, so the
+                                                       first load applies no
+                                                       off-time delta)
+  0x80  cart RAM, verbatim from the input file. ALIGN_FLASH_OFFSET(64) == 128
         (save.c: offsets round up to the 0x80 flash block).
   ....  0xFF to 128 KB, the erased state the menu itself fills fresh saves with.
 
@@ -60,9 +64,9 @@ DEFAULT_INPUT = bytes([8, 9, 11, 10, 15, 14, 13, 12, 2, 3, 1, 0])
 
 def settings_block(stored_type=1, compressed_size=0, timer=0):
     return struct.pack(
-        ">IIHHHH12sI I 4x Q I I".replace(" ", ""),
+        ">IIHHHH12sI I 4x Q I I Q".replace(" ", ""),
         0x47423634,          # header 'GB64'
-        2,                   # version
+        3,                   # version
         0, 0, 0, 0,          # flags, bgpIndex, obp0Index, obp1Index
         DEFAULT_INPUT,
         0,                   # inputMapping.reserved2
@@ -70,6 +74,7 @@ def settings_block(stored_type=1, compressed_size=0, timer=0):
         timer,
         stored_type,
         compressed_size,
+        0,                   # wallAtSave: no clock reading behind a converted save
     )
 
 
@@ -78,7 +83,7 @@ def convert(raw: bytes, total_size: int = FLASH_SIZE) -> bytes:
         raise SystemExit(f"input is {len(raw)} bytes; too large for {total_size}")
     out = bytearray(b"\xFF" * total_size)
     settings = settings_block()
-    assert len(settings) == 56, len(settings)
+    assert len(settings) == 64, len(settings)
     out[0:len(settings)] = settings
     out[RAM_OFFSET:RAM_OFFSET + len(raw)] = raw
     return bytes(out)
