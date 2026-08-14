@@ -136,7 +136,7 @@ measurement before and after, the cost, and any residual distrust.
 ```
 src/boot/         bootloader, CIC, Datel cheat engine     — keep verbatim
 src/flashcart/    SC64 driver behind a vtable             — keep verbatim
-src/menu/         rom_info (450-game DB), cart_load, ini_parser, path, settings
+src/menu/         rom_info (game DB), cart_load, ini_parser, path, settings
 src/app.c         main loop, app_t, screen_t
 src/ui/           draw, input, theme, tween, icon (svg64 cache)
 src/library/      library (index + scan), thumbcache

@@ -15,7 +15,7 @@ Currently written for whoever is going to build it. It should be written for who
 use it.
 
 - Much less technical throughout.
-- **No references to commercial products.** The box-art section uses `Super Mario 64.jpg` as its
+- **No references to commercial products.** The box-art section uses a real game title as its
   worked example; invent a name instead, the same way `mkdemo.py` does.
 - **Delete `## Screenshots`** (line 176) — the reproduction recipe is developer material.
 - **Delete `## House rules`** (line 210).
@@ -44,7 +44,7 @@ works. Today the scan is rooted at `/roms` and the cores and database are at fix
 
 - The scan root becomes `/`, with an exclusion list: `/mainmenu`, `saves`, and the platform
   litter — `.Spotlight-V100`, `.Trashes`, `.fseventsd`, `System Volume Information`, and anything
-  starting `._` (AppleDouble files share the real file's extension, so `._Banjo-Kazooie.z64`
+  starting `._` (AppleDouble files share the real file's extension, so `._SomeGame.z64`
   would otherwise index as a second copy — `mksdmirror.py` already learned this).
 - Cores and `cheats.db` are cheaper as a short probe list than as scanner coupling: try
   `/mainmenu/<x>`, then `/<x>`, then the old `/menu/<x>` for anyone with an existing card. Three

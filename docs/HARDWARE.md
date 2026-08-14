@@ -113,7 +113,7 @@ What is on it, and why each thing rather than the alternative:
 | `/menu/emulators/gb.v64`, `gbc.v64` | Game Boy / Color, gb64 | `d59a9031…`, identical files |
 | `/menu/emulators/smsPlus64.z64` | SMS / GG, smsPlus64 **v0.7** | `8dc11807…` |
 | `/menu/emulators/Press-F.z64` | Fairchild Channel F, Press-F-Ultra **r5** | `46b903d0…` |
-| `/roms/snes/` | DKC (U) V1.2, Zelda ALTTP (USA), Super Mario World (U) | from `lithium64/reference/roms` |
+| `/roms/snes/` | three gameplay ROMs — the heavy, mid and baseline test titles | from `lithium64/reference/roms` |
 | `/menu/{metadata,64ddipl}`, `/roms/n64`, `/roms/*/saves` | empty, structure only | — |
 
 All six cores verified as big-endian N64 images (`80371240`) and checksum-matched against their
@@ -190,7 +190,7 @@ converter's offset, every SNES title would have failed to boot from the menu whi
 perfectly under `tools/run.sh`, which splices at the first.
 
 Copier headers are handled: `cart_load.c:225` strips 512 bytes when `size & 0x3FF == 0x200`. Of
-the three ROMs on the card only Super Mario World (524,800 B) has one.
+the three ROMs on the card only the baseline title (524,800 B) has one.
 
 **Firmware is not yet flashed.** `sc64deployer list` reports *No SC64 devices found* — the cart
 was not connected over USB when the card was prepared, and firmware update is a USB-only

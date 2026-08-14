@@ -73,7 +73,7 @@ DFS → `rom:/` prefix → `find_rom_in_database` → boxart directory probe →
 the tile can be read against the title beside it; a mis-mapped index is visible rather than
 plausible.
 
-## 2aa. The engine was right and the addresses were not: one cheat entry for six Ocarinas
+## 2aa. The engine was right and the addresses were not: one cheat entry for six Game As
 
 The first menu-driven launch came back "it booted, cheats did nothing", and every check the
 console can make had passed: engine written, read back, checksum agreeing, `cheats FIT 4 line(s)
@@ -87,7 +87,7 @@ segment and chained. So the engine executes, the chain executes, the stores exec
 were writing to addresses that mean nothing in this binary. That also retires the last unproven
 piece of 2z: control really does jump 0x8000043c → 0x8000357c and come back through the tail.
 
-The database entry the menu loaded was `CZL?`, version 255, **553 groups** -- every Ocarina
+The database entry the menu loaded was `CZL?`, version 255, **553 groups** -- every Game A
 revision and region merged into one:
 
 | | database | the V1.2 file that gave 20 hearts |
@@ -99,7 +99,7 @@ revision and region merged into one:
 2x's inline stub was aimed at 0x8011B99C, taken from this same entry -- the wrong revision's
 Infinite Rupees. Even had it executed, nothing would have happened.
 
-The cause is a granularity mismatch two tools apart. `rom_info.c`'s Ocarina row is a `MATCH_ID`,
+The cause is a granularity mismatch two tools apart. `rom_info.c`'s Game A row is a `MATCH_ID`,
 which matches any region and any revision **on purpose** -- that is right for choosing a save type
 and wrong for choosing cheat addresses. mkcheatkeys.py carried that straight through, so all three
 USA revisions keyed to `CZL? / ANY`; mkcheatdb.py merges on `(check_code, game_code, version)` and
@@ -111,7 +111,7 @@ database row's version. Lettered revisions are deliberately not decoded -- "Rev 
 convention, not a fact, and a wrong one here is silently wrong cheats. An unmarked filename stays
 ANY rather than being guessed at 0, which is what keeps the wildcard row alive as a fallback.
 
-**73 of 1039 keyed corpus files gained a concrete revision**, and Ocarina splits into six entries:
+**73 of 1039 keyed corpus files gained a concrete revision**, and Game A splits into six entries:
 
     CZL? v0    34 groups   Max Heart Containers 8111A5FE
     CZL? v1   245 groups                        8111A7BE
@@ -120,12 +120,12 @@ ANY rather than being guessed at 0, which is what keeps the wildcard row alive a
     NZL? v0/v1/v255                             the PAL builds, split the same way
 
 Simulating `find_row()` over the fifteen-ROM shelf: every game resolves the same as before or
-better, and Ocarina moves from the merged wildcard to `CZL? v2`. All seven ticked names exist in
+better, and Game A moves from the merged wildcard to `CZL? v2`. All seven ticked names exist in
 it with the V1.2 addresses, so `cheatstate.dat` -- keyed on the name hash, not the index -- carries
 the user's selection across the rebuild.
 
 **And the host suite caught a second bug, pre-existing, that the split made visible.** Five checks
-went red on `NSMJ`: Super Mario 64 carries both a wildcard `NSM?` row and a Japan-specific `NSMJ`
+went red on `NSMJ`: Game I carries both a wildcard `NSM?` row and a Japan-specific `NSMJ`
 one, both match a Japanese cartridge, and `find_row()` returned whichever sat earlier in the
 index -- the merged all-regions row. That was true before this change and simply unobservable.
 `find_row()` now ranks by specificity rather than taking the first hit: exact four-character code
@@ -139,14 +139,14 @@ three instructions.
 
 ## 2z. The menu does it now, and the gap rule turned on one instruction
 
-Both pre-patched Ocarina images booted on the M64 and did what they were built to do -- the marker
+Both pre-patched Game A images booted on the M64 and did what they were built to do -- the marker
 stretched the title screen 2×, the cheat build gave 20 hearts, 9 bombs and 9 arrows off the user's
 own save. So the ROM edit is confirmed on hardware and the remaining work was to move it from a
 file a PC writes to three PI writes the menu makes at launch, which is the same three edits into
 cartridge SDRAM that 2m already proved this console accepts and reads back.
 
-**Capacity forced one design decision.** A single padding run holds about six cheats -- Ocarina's
-is 108 bytes, 27 words, less four for guards and four for the tail -- and Ocarina's "Infinite Big
+**Capacity forced one design decision.** A single padding run holds about six cheats -- Game A's
+is 108 bytes, 27 words, less four for guards and four for the tail -- and Game A's "Infinite Big
 Key, Small Keys, Compass & Map" is nineteen lines on its own. So the engine is allowed to be
 discontiguous, each segment ending with `j` into the next and its delay slot, two words a hop.
 
@@ -155,14 +155,14 @@ black-screened; 19 and 28-word engines over two runs boot and run. The ten-run v
 into runs at 0x800067e0 and 0x80006804, and dumping their neighbourhoods says why:
 
     good, ram 80005004 (DK64)      27bd0028  03e00008  <- jr $ra, run swallowed the nop delay slot
-    good, ram 80003574 (Ocarina)   03e00008  a02b902f  <- jr $ra, then the delay slot, then padding
-    bad,  ram 800067e0 (Ocarina)   80006d30  00000008  <- a {pointer, length} record
-    bad,  ram 80006804 (Ocarina)   00000000  00000001  <- more of the same table
+    good, ram 80003574 (Game A)   03e00008  a02b902f  <- jr $ra, then the delay slot, then padding
+    bad,  ram 800067e0 (Game A)   80006d30  00000008  <- a {pointer, length} record
+    bad,  ram 80006804 (Game A)   00000000  00000001  <- more of the same table
 
 "A run of zeros bounded by non-zeros" cannot tell padding from a zero-valued field. What can is
 what precedes it: real padding follows a function's last instruction, so a `jr`/`j` sits one or two
 words back. Over the fifteen-ROM shelf that rule keeps every run that has ever booted -- on
-hardware or in ares -- and drops 37 of Ocarina's 39 candidates, including all four the failing
+hardware or in ares -- and drops 37 of Game A's 39 candidates, including all four the failing
 chain used.
 
 **One instruction decides it.** 0x00000008 is a well-formed `jr $zero`; no compiler emits one and
@@ -191,11 +191,11 @@ The limits are real and reported rather than worked around. Unconditional 8/16-b
 (0x80/0x81/0xA0/0xA1, GS-button bit clear) because the engine emits no branches; a selection
 containing anything else is refused **whole**, never filtered, because a `D0` and the write it
 guards are one indivisible thing (2.2). At most four segments and 128 words. Per-game capacity
-from the shelf sweep: Ocarina 8 cheats, Banjo-Kazooie 5, Tony Hawk 9, GoldenEye 3, Shadows of the
-Empire 2, 1080 7, Donkey Kong 64 42, Mario Party 269.
+from the shelf sweep: Game A 8 cheats, Game D 5, Game X 9, Game B 3, Game E 2, Game C 7,
+Game G 42, Game H 269.
 
-Still open: the gap is *chosen* by a heuristic and only *proved* by booting the game. Ocarina and
-Donkey Kong 64 are proved. The rest are argued from a rule that has never yet kept a bad run --
+Still open: the gap is *chosen* by a heuristic and only *proved* by booting the game. Game A and
+Game G are proved. The rest are argued from a rule that has never yet kept a bad run --
 which is not the same claim.
 
 ## 2y. The engine runs. It arrives in the ROM file, and ares can see it in one second
@@ -222,15 +222,15 @@ with exactly the register state it had before -- the thing 2x got wrong. `tools/
 a ROM and screenshots it, which turns the round trip from a day into about thirty seconds.
 
 **The gap rule is reversed, and that is what 2w actually died of.** `rompatch.c` took the *last*
-long-enough zero run, on the reasoning that padding collects at the tail. It does not: on Ocarina
+long-enough zero run, on the reasoning that padding collects at the tail. It does not: on Game A
 that picks ROM 0x04125c, 9,204 bytes of zeros inside compressed asset data at RDRAM 0x8004065c --
 which both corrupts an asset and lands in RAM the game reuses within a second. The rule here takes
 the *lowest* run that fits, caps it at 1,024 bytes so a data void cannot qualify, and leaves two
-zero words as guard either side. On Ocarina that is ROM 0x004174: 108 bytes between a function
+zero words as guard either side. On Game A that is ROM 0x004174: 108 bytes between a function
 ending `03e00008 jr $ra` and one beginning `40846000 mtc0`, at RDRAM 0x80003574, inside resident
 boot code and below the 0x4a20 bytes at 0x80006d60 that the entry stub clears.
 
-Three ares runs, all on Ocarina (U) 1.2, CIC 6105, entry 0x80000400, preamble at ROM 0x0031f0 /
+Three ares runs, all on Game A (U) 1.2, CIC 6105, entry 0x80000400, preamble at ROM 0x0031f0 /
 RDRAM 0x800025f0 → 0x80002600:
 
 | image | engine | result |
@@ -252,12 +252,12 @@ nothing to defeat and the `nop486` coupling that broke in both directions across
 matters, because nothing has to survive the handoff.
 
 Shelf sweep, 15 ROMs: **10 patch under the strict rule**, gap sizes 44 to 112 bytes. Of the five
-refused, three carry a preamble the strict rule rejects, and two of those -- 1080 Snowboarding and
-Harvest Moon 64 -- put `__osException` at **+212 rather than +16, the same number in two unrelated
+refused, three carry a preamble the strict rule rejects, and two of those -- Game C and
+Game P -- put `__osException` at **+212 rather than +16, the same number in two unrelated
 games**, which is a different libultra build rather than a coincidence. `--accept-odd` takes any
-forward target inside 4 KB; it still refuses GoldenEye's 0x700101A0, which is not a KSEG0 address
-and therefore not an address. Shadows of the Empire has nothing preamble-shaped in the megabyte at
-all, and Pokemon Stadium is refused by the pre-existing gate, its header having disagreed with its
+forward target inside 4 KB; it still refuses Game B's 0x700101A0, which is not a KSEG0 address
+and therefore not an address. Game E has nothing preamble-shaped in the megabyte at
+all, and Game F is refused by the pre-existing gate, its header having disagreed with its
 own contents before anyone touched it. **12 of 15 patchable, and the three failures are loud.**
 
 The heuristic is not trusted, it is booted. Five marker builds run in ares, and the stretch is
@@ -265,18 +265,18 @@ visible in every one:
 
 | game | cic | engine | result |
 |---|---|---|---|
-| Ocarina of Time | 6105 | 0x8000043c | title screen, 59 VPS, 2× stretch |
-| Donkey Kong 64 | 6105 | 0x8000500c | DK Rap intro, 59 VPS, text clipped off the right edge |
-| Banjo-Kazooie | 6102 | 0x80002ff8 | attract, 61 VPS, stretch confirmed against an unpatched baseline |
-| 1080 Snowboarding | 6103 | 0x80003170 | title, 60 VPS, `SNOWBOARDING` clipped -- `--accept-odd` |
-| Harvest Moon 64 | 6102 | 0x800ff454 | attract, 60 VPS, 2× stretch -- `--accept-odd` |
+| Game A | 6105 | 0x8000043c | title screen, 59 VPS, 2× stretch |
+| Game G | 6105 | 0x8000500c | intro, 59 VPS, text clipped off the right edge |
+| Game D | 6102 | 0x80002ff8 | attract, 61 VPS, stretch confirmed against an unpatched baseline |
+| Game C | 6103 | 0x80003170 | title, 60 VPS, title text clipped -- `--accept-odd` |
+| Game P | 6102 | 0x800ff454 | attract, 60 VPS, 2× stretch -- `--accept-odd` |
 
 Five games, four CIC variants, two preamble layouts, gaps from 44 to 108 bytes and RDRAM
-addresses from 0x80000434 to 0x800ff454. Banjo is the one that needed a control: at 2× a
+addresses from 0x80000434 to 0x800ff454. Game D is the one that needed a control: at 2× a
 waterfall is not obviously wrong until an unpatched shot of the same frame is beside it.
 
 Open, and the reason the hardware round is a file and not a menu change: ares is not an M64. Two
-pre-patched Ocarina images are on the card -- a marker build and one carrying max hearts, infinite
+pre-patched Game A images are on the card -- a marker build and one carrying max hearts, infinite
 energy, bombs and arrows (16 words at RDRAM 0x8000357c) -- plus the DK64 marker, because launching
 a file tests the ROM edit with no menu code in the path at all. What that cannot test is the
 menu-side version of the same three writes, which is where this has to end up: a 32 MB file copy
@@ -287,7 +287,7 @@ them back (2m).
 
 Two measurements ended the placement hunt. First, running find_zero_run()'s logic over all 15
 shelf ROMs: **14 of them have no zero run of 64+ words anywhere within ±32 KB of their preamble**
-(only Donkey Kong 64 does). There is no in-image home for an engine, in general or for Ocarina.
+(only Game G does). There is no in-image home for an engine, in general or for Game A.
 Second, re-reading the pre-August behaviour against the code: launches booted with cheats inert,
 which means the patcher's own preamble scan -- which WOULD have hooked correctly -- never ran, so
 the IPL3 DMEM patch does not take on this console. Combine that with menu-context RDRAM writes
@@ -338,10 +338,10 @@ ticked. The 6105 fix is a real fix for a real bug and remains UNPROVEN, because 
 carrying it was independently broken, which a measurement off the ROM file settles without
 hardware.
 
-Running find_zero_run()'s exact logic over Ocarina on the host: the last qualifying run starts at
+Running find_zero_run()'s exact logic over Game A on the host: the last qualifying run starts at
 ROM 0x04125c, so the trampoline went to ROM 0x04129c, RAM 0x8004069c. The bytes bracketing that
 run are `ff71b102 1308fe81 f303f2fa ffff0000` before and `d320d532 d75ef7a0 0031a100` after --
-high-entropy compressed content, not padding. So the write corrupted Ocarina's own data, and the
+high-entropy compressed content, not padding. So the write corrupted Game A's own data, and the
 RAM address sits far past the resident boot segment in memory the game reuses within its first
 frames. "Padding collects at the tail" was asserted, not measured, and is false for this ROM.
 Both failure modes are consequences of that one wrong assumption; the probe tested neither
@@ -384,7 +384,7 @@ The actual mechanism was in the tree the whole time, at cheats.c:374, in a comme
 IPL3 performs a **runtime game-code verification** beyond CRC1/CRC2, and every cheat engine since
 Datel disables it by writing a nop over DMEM word 486. That write lives inside
 cheats_patch_ipl3(), reached only from cheats_install(), which returns at its first line when
-there is no cheat list. Ocarina is 6105. So:
+there is no cheat list. Game A is 6105. So:
 
 | run | boot segment edited | nop written | result |
 |---|---|---|---|
@@ -457,7 +457,7 @@ why the boot died, and it is not cart execution.
 
 ROM-trampoline mode hands boot() a NULL cheat list so cheats_install() returns at its first line
 -- no IPL3 patch, so no I_NOP into DMEM word 486 -- while the header was computed with
-nop486=true, i.e. for a bootcode window containing that nop. Ocarina is CIC 6105, the only CIC
+nop486=true, i.e. for a bootcode window containing that nop. Game A is CIC 6105, the only CIC
 that mixes 256 bytes of its own bootcode (offset 0x750) into the checksum, and byte 0x798 is
 inside it. Console computes one number, header carries another, IPL3 refuses the image. Black,
 for a checksum reason, with the execution question never reached. The invariant broken here is
@@ -602,7 +602,7 @@ rom-hook mode permanently rather than debugged, same policy as §2n.
 
 ## 2n. The first true engagement goes black, so the unproven link is amputated
 
-Build 7F6AF3, the first with the gate open: Ocarina, cheat ticked, Start -- fade, then black,
+Build 7F6AF3, the first with the gate open: Game A, cheat ticked, Start -- fade, then black,
 held twenty seconds. Persistence still works. And the record reframes itself: the Aug 4 "black
 screen" carried the same full cheat path (blamed on the flash hold at the time), and every run
 where games visibly ran with cheats ticked was the era when the runtime scan silently missed
@@ -633,7 +633,7 @@ all, next probe is a trampoline-only tail.
 
 ## 2m. All corners green: every stage proven on hardware, and the gate goes back to opt-in
 
-Build 2E690A, Ocarina, Infinite Rupees ticked, Start. The user reports "all colors, all
+Build 2E690A, Game A, Infinite Rupees ticked, Start. The user reports "all colors, all
 corners green" and the photographed page reads: `beacon 1  writable yes  log open`,
 `re-probe ok`, `groups 553  ticked 1  emitted 2 words`, `crc ok 1  found 1  written 1  read
 back 1  agrees 1`, `site rom+0031f0 ram 800025f0 -> 80002600`, `displaced 3c1a8000 275a2600
@@ -666,9 +666,9 @@ The diagnostic page rendered on hardware for the first time -- photographed, pla
 the page itself -- and one session answered three investigations at once.
 
 **The reset is rompatch_dump(), specifically, and not SD writes in general.** Same card, same
-boot, minutes apart: 1080 Snowboarding with no cheats ran the whole film (WHITE, YELLOW red
+boot, minutes apart: Game C with no cheats ran the whole film (WHITE, YELLOW red
 corner, CYAN red corner, ORANGE, MAGENTA) to the page, whose own lines read `writable yes`,
-`log open`, `re-probe ok` -- small console-side writes succeeding end to end. Ocarina with a
+`log open`, `re-probe ok` -- small console-side writes succeeding end to end. Game A with a
 cheat ticked, entering the one branch that dumps, cut at CYAN and "booted": a warm reset with
 the loaded ROM mapped (film two's shifted-pixels signature). A megabyte of PI reads interleaved
 with FatFs writes is what kills the M64; the io_write install is exonerated by the Aug 4 log,
@@ -686,7 +686,7 @@ detail sheet's back-out -- with deinit's saves kept as a second chance. The user
 arent flushing" was the right neighbourhood: not an unflushed write, an unreached one.
 
 **Open, with discriminators queued:** (1) whether stdio writes actually reach the medium --
-log_launch() ran and closed the log before the 1080 page, so `launch.log` with tonight's banner
+log_launch() ran and closed the log before the Game C page, so `launch.log` with tonight's banner
 is either on that card or a firmware-side write cache exists and the SummerCart64 firmware
 sources get read next; the deploy script now prints the watched files on every mount. (2) Which
 card ran: the user reports the ORIGINAL card, which never received 157AAA -- if the card that
@@ -732,7 +732,7 @@ if instead the cut precedes GREEN, the SD write command itself is the trigger.
 The §2i experiment ran clean and returned the strongest negative result of the investigation:
 boot plate read 0A0043 (confirmed aloud), fresh single-partition FAT32 on a healthy 64 GB card,
 every byte verified after writing, Infinite Rupees ticked, Start pressed on the detail sheet --
-and Ocarina booted with no diagnostic page, and neither the tick nor the play survived a
+and Game A booted with no diagnostic page, and neither the tick nor the play survived a
 restart. Media is now exonerated twice over, and the format confounds (FAT16, partition-type
 mismatch, leftover multi-partition layout -- the "new" card turned out to be one small FAT16
 volume on a repurposed 64 GB Pi card) are all gone.
@@ -762,7 +762,7 @@ of managing menu copies itself.
 The original card came back mountable one more time and gave a clean damage map: the root
 directory's entries unreadable to readdir but resolvable by name, `mainmenu/` reduced to
 null-character garbage entries, and exactly four casualties among the files -- `sc64menu.n64`,
-`cheats.db`'s chain (the §2h FR_INT_ERR), the old `Zelda - Ocarina of Time.z64` (chain truncated
+`cheats.db`'s chain (the §2h FR_INT_ERR), the old `Game-A.z64` (chain truncated
 mid-file), and everything in `mainmenu/` -- which is precisely the set of most-recently-written
 and most-recently-read regions. Everything else salvaged in one clean pass: 15 N64 ROMs, all of
 which verify against their own bootcode checksums via tools/romcrc.py (Pokémon Stadium's CRC2
@@ -771,7 +771,7 @@ and the mystery `sc64menu.n64.main`/`.prev` pair, hashes recorded in the backup.
 
 Then the card convicted itself with no console in the room: freshly erased (whole-disk MBR +
 FAT32) and restored from the Mac, the write-then-read verify came back with **684,275 wrong
-bytes in `1080 Snowboarding.z64`**, a contiguous ~668 KB region starting ~1 MB in. A rewrite of
+bytes in `Game C.z64`**, a contiguous ~668 KB region starting ~1 MB in. A rewrite of
 the same file verified. A card that silently corrupts a bulk write on a fresh filesystem is
 failing physical media; the months of history -- writes dying quietly since early August, then
 structural rot in the hottest sectors -- is what that failure mode looks like from software.
@@ -793,7 +793,7 @@ no-diagnostic-page run had an unverified boot plate -- gets its answer.
 ## 2h. The card's filesystem was failing the whole time, and it finally said so out loud
 
 Minutes after §2g was written, the 0A0043 run answered the writer mystery before Start was ever
-pressed. Opening Ocarina's detail sheet -- `detail_background()` → `load_cheats_now()` →
+pressed. Opening Game A's detail sheet -- `detail_background()` → `load_cheats_now()` →
 `cheatdb_load()` → `fseek()` -- ended in libdragon's Inspector: `ASSERTION FAILED: FatFS
 assertion error`, `err != FR_INT_ERR`, backtrace `__fat_lseek (fat.c:279)` →
 `__fresult_set_errno (fat.c:111)` → `cheatdb_load (cheatdb.c:270)`. FR_INT_ERR is FatFs finding
@@ -1474,13 +1474,12 @@ ESRB rating) and joined it to the 432 `MATCH_*` rows in `rom_info.c` on normalis
 same bridge `mkcheatkeys.py` uses. Result: **327 of 432 matched, 323 with a date, 189 with a
 rating, 6,572 bytes packed.** Two harness facts worth keeping:
 
-- **`FILTER(lang(?title) = "en")` silently dropped 22 of 474 items**, including Yoshi's Story,
-  Mega Man 64, Ridge Racer 64 and StarCraft 64. Wikidata migrated titles spelled the same in
+- **`FILTER(lang(?title) = "en")` silently dropped 22 of 474 items**, including several major titles. Wikidata migrated titles spelled the same in
   every language to the `mul` language code. The join reported 288 hits and looked healthy; the
   losses were indistinguishable from the Japan-only titles that genuinely do not match. Accepting
   `mul` and `en-gb` took it to 324. This is the same failure shape as the harness traps in 1u and
   1c — a green result from a setup that was measuring less than it claimed.
-- **Ocarina of Time came back rated E10+**, a category ESRB did not introduce until March 2005.
+- **Game A came back rated E10+**, a category ESRB did not introduce until March 2005.
   Wikidata was reporting a re-release's rating for a 1998 cartridge. Detectable only because the
   anachronism is on its face; a game quietly re-rated T to M would have been invisible.
 
@@ -1555,7 +1554,7 @@ types, a play history and a small cheat database of invented codes. `make DEMO=1
 place of the fixture.
 
 **It is not a fixture substitute, and the Makefile comment says so.** Every title in it misses the
-450-game database by construction — `game_code_for()` checks each invented code against the
+harvested game database by construction — `game_code_for()` checks each invented code against the
 harvested set and refuses a collision, because a demo ROM that collided would inherit that game's
 save type and feature mask and the detail sheet would then show accessories for a game that does
 not exist. A scan measured against this tree measures the miss path.
@@ -1829,8 +1828,8 @@ dumped three frames, hashed them, and reported success, because a screenshot tes
 that the screenshot is of the wrong thing.
 
 Now generated by the `dfsroot` rule, so it cannot go missing again. The names passed to it must
-exist in the tree mkfixture.py generates: the first attempt used `Super Mario World.smc` and
-`Donkey Kong Country.smc`, which are not fixture titles, and logged `3 records, 1 matched the
+exist in the tree mkfixture.py generates: the first attempt used two real-game
+filenames, which are not fixture titles, and logged `3 records, 1 matched the
 library` — a line that looks like partial success and means the fixture and the test disagree
 about what is on the card. `3 records, 3 matched` and `GRID opening on RECENT` is the pass.
 
@@ -1854,7 +1853,7 @@ was established, because two of the seven were found by reading and five by maki
 game's sheet found `group_count` non-zero and **skipped the load entirely**.
 
 Proven, not argued. [`tools/inputs/cheat-leak.txt`](../tools/inputs/cheat-leak.txt) opens
-GoldenEye's sheet, launches it, comes back, and opens 1080 Snowboarding's:
+Game B's sheet, launches it, comes back, and opens Game C's:
 
 | | game code | Cheats row |
 |---|---|---|
@@ -1862,17 +1861,17 @@ GoldenEye's sheet, launches it, comes back, and opens 1080 Snowboarding's:
 | frame 2 before the fix | `NTEA` | **byte-identical to frame 0** |
 | frame 2 after the fix | `NTEA` | `0 of 22 enabled` |
 
-(The dumps are quarter-scale, so GoldenEye's exact count is not legible off them and is not
-claimed here. Three digits against 1080's two is enough, and the byte-identity below settles it
+(The dumps are quarter-scale, so Game B's exact count is not legible off them and is not
+claimed here. Three digits against Game C's two is enough, and the byte-identity below settles it
 without needing to read either.)
 
 The two sheets' cheat rows compared equal byte for byte across two different games while the
 code row differed — a coincidence that number cannot be. After the fix, frame 2 differs from its
-own previous self on **exactly rows 55–59**, the count line, and GoldenEye's sheet is unchanged
+own previous self on **exactly rows 55–59**, the count line, and Game B's sheet is unchanged
 on every row. A five-row diff on the one line that was wrong.
 
 The second half is worse than the display. `cheatstate_capture()` is keyed on group *name* hash,
-so backing out of that sheet wrote GoldenEye's cheat names to the card **under 1080's key** — a
+so backing out of that sheet wrote Game B's cheat names to the card **under Game C's key** — a
 selection the user never made, persisted against a game it does not belong to, restored on every
 future visit. Under ares this fires on every launch, because a dummy launch always returns to the
 grid. On hardware it needs a launch that returns, which today only the fault path does.
@@ -2142,8 +2141,8 @@ to mean.
 
 ### And a second priority inversion, arriving by a different route
 
-With decoding switched on during the plate, the tile under the cursor at boot — 1080
-Snowboarding, first in the N64 tab — was still the *last* one to get art. Its path was not even
+With decoding switched on during the plate, the tile under the cursor at boot — Game C,
+first in the N64 tab — was still the *last* one to get art. Its path was not even
 resolved until log line 10,246, long after the rest of the grid had filled in.
 
 `thumbcache_run()` serves `wanted[]` in order, and `wanted[]` is built by `thumbcache_get()` calls
@@ -2393,7 +2392,7 @@ stage. Roughly two and a half times faster per pixel, on files an order of magni
 That does not retire the on-disk cache argument in 1h -- it moves it.
 
 Correctness was checked by looking, not by absence of errors: tile 0 cropped out of the frame
-dump and enlarged shows the 1080 logo, the red board, the rider and the Nintendo 64 banner,
+dump and enlarged shows the Game C logo, the red board, the rider and the Nintendo 64 banner,
 matching the source. Right colours also rule out the chroma shift above.
 
 **The reduce path was written before it could be tested, and that was caught.** No file in the
@@ -3177,7 +3176,7 @@ Reproducibility gate: **PASS**, two runs byte-identical across six frames.
 
 Library scan of the 40-stub fixture: **48 titles in 984,685 µs = 20,514 µs/ROM.** Extrapolated
 (and stated as an extrapolation) that is ~10 s for a 500-title card. Each ROM costs one 4 KB
-header read plus the ~450-entry database walk. This is measured through ares' DFS, which is
+header read plus the full database walk. This is measured through ares' DFS, which is
 *faster* than FatFs over SC64, so treat 20.5 ms as a floor, not a prediction. Worth attacking
 before it becomes a 500-title boot cost — the directory-signature cache in the plan exists
 precisely so this runs once rather than every boot.
@@ -3523,7 +3522,7 @@ a ROM's first 4 KB. Its first run reported that both tested games would fail -- 
 control as `jr $t1 = 0x20000240`, which is not a MIPS instruction. `vr4300_asm.h` builds
 instructions through a **bitfield union**, and C does not specify bitfield packing: correct for
 mips64-elf, garbage on x86. Hand-encoding the constant (`9 << 21 | 8` = `0x01200008`) reversed the
-answer completely. Across 23 retail ROMs, 22 hook correctly; only Star Fox 64 (CIC 6101,
+answer completely. Across 23 retail ROMs, 22 hook correctly; only Game J (CIC 6101,
 `word[466] = 1509fffe`) takes the broken path. **Both games actually tested hook fine, so the cause
 of the reported failure is still unknown.** Recorded as open rather than closed.
 
@@ -3561,7 +3560,7 @@ that were never going to run.
 
 The RTC has never been set: every timestamp on the card is 5 December 2024, so `last_played` is
 fiction and the Recent tab sorts on it. And `cheats.db` matched both games through the `?` region
-wildcard -- 87 groups for Episode I Racer, 37 for Spider-Man -- with all codes type `80`/`81`,
+wildcard -- 87 groups for one game, 37 for another -- with all codes type `80`/`81`,
 masking to valid addresses. The database, the wildcard, the group model and the emitter are all
 working; **324 of its 325 entries carry `check_code = 0`**, so every lookup reaches the game-code
 fallback rather than the primary key. That is the converter's doing and is not itself a fault, but
@@ -3682,7 +3681,7 @@ Format **2** puts each game's names in its own blob, after its group rows and co
 |---|---|
 | format 1 | 769,488 + group rows + codes |
 | format 2, mean over 341 games | **5,106** |
-| format 2, worst (GoldenEye, 4,315 cheats) | 240,736 |
+| format 2, worst (Game B, 4,315 cheats) | 240,736 |
 
 ### The database was missing seven of the twenty-four games on the card
 
@@ -3693,15 +3692,15 @@ independent causes, both in the key table generator:
   `int(ver) if ver else 0`, but only `MATCH_ID_REGION_VERSION` names a version — the other two
   macros match every revision. The reader takes an exact match or the `0xFF` sentinel, so a stored
   0 matched revision 0 and nothing else. Cost five titles whose game code was sitting in the
-  database holding hundreds of cheats: Banjo-Kazooie (v1, 269), Star Fox 64 (v1, 279), Rogue
-  Squadron (v1, 219), Pokemon Stadium (v2, 626), Shadows of the Empire (v2, 388).
-* **Region collisions were refused outright.** Two game codes for one title — Ocarina of Time's
-  CZL and NZL, Mario Party's CLB and NLB — were dropped, on the correct reasoning that guessing
+  database holding hundreds of cheats: Game D (v1, 269), Game J (v1, 279), Rogue
+  Squadron (v1, 219), Game F (v2, 626), Game E (v2, 388).
+* **Region collisions were refused outright.** Two game codes for one title — Game A's
+  CZL and NZL, Game H's CLB and NLB — were dropped, on the correct reasoning that guessing
   between them applies one region's addresses to the other region's binary. It is not a guess,
   though: the corpus filename says which region it is, in the same notation the `rom_info.c`
   comments use. The join gained a second component instead of giving up, collapsed to three
   families (NTSC / PAL / Japan), and still refuses when the filename does not say. Cost the two
-  biggest games on the card — Ocarina of Time alone has 553 cheats.
+  biggest games on the card — Game A alone has 553 cheats.
 
 After: **24 of 24**, 341 games in the database (was 325), 1,039 of 1,345 corpus files keyed
 (was 996).
@@ -3737,7 +3736,7 @@ does.
 The first launch log is the whole problem in five lines:
 
 ```
-rom      sd://roms/n64/Zelda - Ocarina of Time.z64
+rom      sd://roms/n64/Game-A.z64
 groups   1 loaded, 1 ticked
 emitted  4 cheat words (2 lines)
 engine   will hook
@@ -3745,7 +3744,7 @@ detail   CIC 6105/7105 word[499]=01200008 ok
 ```
 
 `01200008` is `jr $t1`, the instruction the engine replaces, at the offset x105 expects. One group
-ticked — that was the user's hand-entered cheat, because Ocarina of Time was one of the seven the
+ticked — that was the user's hand-entered cheat, because Game A was one of the seven the
 database was missing. Two lines emitted, both plain 16-bit writes. Nothing here is wrong.
 
 Read and ruled out, none of it by measurement — all of it by reading against the VR4300 manual and
@@ -3935,8 +3934,8 @@ tools/hosttest/test_cheatinstall.c:
 
 ```
 sc64menu.n64          CIC 6102/7101 word[475]=27bd0050  != jr $t1 -> engine would NOT hook
-Super Mario 64.z64    CIC 6102/7101 word[475]=01200008  == jr $t1 -> engine WOULD hook
-Ocarina of Time.z64   CIC 6105/7105 word[499]=01200008  == jr $t1 -> engine WOULD hook
+Game I.z64    CIC 6102/7101 word[475]=01200008  == jr $t1 -> engine WOULD hook
+Game A.z64   CIC 6105/7105 word[499]=01200008  == jr $t1 -> engine WOULD hook
 ```
 
 `27bd0050` is `addiu $sp, $sp, 0x50`. libdragon's IPL3 is brute-force signed to pass as CIC 6102
@@ -5308,7 +5307,7 @@ unarmed, and control still reaching the fake `__osException` with `$k0` exact. 2
 
 ### The first hardware run, and why its answer was worthless
 
-Deployed, `cheat_beacon = true`, Ocarina of Time with Infinite Rupees ticked. The log confirms the
+Deployed, `cheat_beacon = true`, Game A with Infinite Rupees ticked. The log confirms the
 instrument was armed and the mechanism reached:
 
 ```
@@ -5369,7 +5368,7 @@ Sizes: text 635,704 against main's 634,232. Host suite 4,001 checks, no failures
 
 ---
 
-## 1ap. The scan hits on Ocarina. Something after it does not.
+## 1ap. The scan hits on Game A. Something after it does not.
 
 The beacon's self-test came back **PAINTED** on the console -- VI_ORIGIN sane, an uncached store
 64,000 bytes into it landing and reading back -- so the instrument works here, and the launch that
@@ -5393,7 +5392,7 @@ card:
 | **BOGUS** -- target is not an address at all | 2 |
 | **MISS** -- nothing preamble-shaped in the first megabyte | 2 |
 
-**Ocarina of Time is `real`**: CIC 6105, preamble at `0x800025f0`, `__osException` at `0x80002600`,
+**Game A is `real`**: CIC 6105, preamble at `0x800025f0`, `__osException` at `0x80002600`,
 exactly sixteen bytes on. The scan is not missing. So it is the second shape -- the patch lands and
 the game does not route exceptions through the bytes we patched -- and that is a different and
 much more interesting problem than the one we thought we had.
@@ -5409,8 +5408,8 @@ everything here.
 
 ### And then it found a live bug
 
-Two of the twenty-four match a run of data whose reconstructed target is `0x100071e0` (Conker's Bad
-Fur Day) and `0x700101a0` (GoldenEye 007). Neither is RDRAM. Neither is a preamble.
+Two of the twenty-four match a run of data whose reconstructed target is `0x100071e0` (Game K's Bad
+Fur Day) and `0x700101a0` (Game B). Neither is RDRAM. Neither is a preamble.
 
 **The patcher takes the first match and rewrites two words of live game code at it.** On those two
 ROMs it was about to corrupt something arbitrary and hand the result to the game -- one in twelve,
@@ -5421,7 +5420,7 @@ over a megabyte.
 The emitted scan now checks that `%hi` of the target is `0x80..`, which covers every KSEG0 address
 an 8 MB machine has and rejects both. It costs nothing in the common case: the check sits after
 the four word compares, so a miss branches away before reaching it and the full-window scan still
-measures 53.3 ms. `hooktest` gained a scenario that plants Conker's target and requires the scan
+measures 53.3 ms. `hooktest` gained a scenario that plants Game K's target and requires the scan
 to walk past it; mutating the check away turns exactly two of its checks red.
 
 ### Where the pattern is pinned, and the two homes that did not work
@@ -5438,7 +5437,7 @@ scan. 32/32 under ares.
 
 ### What is still open
 
-Why Ocarina does not route through the preamble we patched. The likeliest answer is that its
+Why Game A does not route through the preamble we patched. The likeliest answer is that its
 runtime libultra is not the copy IPL3 loaded -- OoT's `code` segment is loaded and decompressed
 later from ROM, and if `osInitialize` runs from that copy then the boot-segment preamble we
 rewrote is never used. Nothing here can see which, because the branch the patcher took happens
@@ -5465,7 +5464,7 @@ programs the VI to display it, holds it, and only then jumps into the game.
 Plus twenty-four blocks across the middle: bits 23..0 of `(where the scan stopped - game entry)`,
 white for one, black for zero, six hex digits read left to right. On a hit that is where in the
 loaded megabyte the preamble was, checkable against `preamblescan.py`, which predicts `0x0021f0`
-for Ocarina of Time. On a miss the scan pointer has walked the whole window, so it reads
+for Game A. On a miss the scan pointer has walked the whole window, so it reads
 `0x100000` -- the number that means "looked everywhere".
 
 The colour comes from the same `BEACON_STATE_ADDRESS` word the found/notfound paths already
@@ -5526,7 +5525,7 @@ combination -- a correct answer with fabricated evidence next to it.
 
 ### Hardware said "no flash", and that answer could not be read
 
-Ocarina of Time, Infinite Rupees ticked, `cheat_beacon = true`, self-test PAINTED. **No flash, and
+Game A, Infinite Rupees ticked, `cheat_beacon = true`, self-test PAINTED. **No flash, and
 no change to the rupees.**
 
 Which settles nothing, because "no flash" is what a patcher that never executed looks like *and*
@@ -5620,7 +5619,7 @@ exactly that black screen. So it is checked three ways:
 
 1. **Against real games.** `tools/romcrc.py` over the 24 N64 ROMs on the reference card:
    **23 reproduce their stored checksum exactly**, across CIC 6101, 6102, 6103 and 6105. The
-   twenty-fourth is Pokemon Stadium, whose CRC1 matches and whose CRC2 does not -- a header that
+   twenty-fourth is Game F, whose CRC1 matches and whose CRC2 does not -- a header that
    disagreed with its own contents before anyone here touched it.
 2. **C against Python.** `tools/hosttest/test_romcrc.c` pins `src/menu/romcrc.c` to
    `tools/romcrc.py` over a synthetic LCG image, 17 checks. Arbitrary words rather than a real ROM
@@ -5628,7 +5627,7 @@ exactly that black screen. So it is checked three ways:
    increments on sparse data.
 3. **Per launch, at runtime.** `romcrc_verify()` recomputes the checksum of the *unmodified*
    cartridge and compares it with the header. **If they disagree, nothing is patched.** That is
-   what makes this safe to ship without knowing every ROM in the world: Pokemon Stadium simply
+   what makes this safe to ship without knowing every ROM in the world: Game F simply
    does not get cheats, and says so in the log.
 
 ### The finder is the dangerous part, and ares cannot reach it
@@ -5642,11 +5641,11 @@ target above RDRAM, a bogus match followed by a real one, all four straddles of 
 and the last four words of the window.
 
 Run over the reference card's 24 ROMs, the C agrees with `tools/preamblescan.py` and finds
-**18 sites**. Ocarina of Time: `rom+0031f0`, RAM `0x800025f0`, `__osException` `0x80002600` --
+**18 sites**. Game A: `rom+0031f0`, RAM `0x800025f0`, `__osException` `0x80002600` --
 the address the Python predicted, from the other side.
 
 It finds three more than the Python reported because it keeps scanning past a rejected candidate
-rather than stopping at the first thing shaped like a match. Banjo-Kazooie, Mario Party 3 and Star
+rather than stopping at the first thing shaped like a match. Game D, Game H and Star
 Fox 64 each have one bogus candidate ahead of a real one.
 
 Mutating the address test away turns 8 of the 26 checks red.
@@ -5755,12 +5754,12 @@ the space the engine actually has, `--list-gaps` over each image:
 
 | game | usable words | game | usable words |
 |------|-----|------|-----|
-| Star Wars: Shadows of the Empire | 11 | Donkey Kong 64 | 133 |
-| GoldenEye 007 | 17 | Mario Kart 64 | 137 |
-| Banjo-Kazooie | 20 | AeroFighters Assault | 151 |
-| 1080 Snowboarding | 28 | Pokemon Stadium | 238 |
-| Ocarina of Time | 30 | Harvest Moon 64 | 279 |
-| Tony Hawk's Pro Skater 2 | 35 | Mario Party | 825 |
+| Game E | 11 | Game G | 133 |
+| Game B | 17 | Game M | 137 |
+| Game D | 20 | AeroFighters Assault | 151 |
+| Game C | 28 | Game F | 238 |
+| Game A | 30 | Game P | 279 |
+| Game X's Pro Skater 2 | 35 | Game H | 825 |
 
 (Guard words deducted, which is what `tools/cheatshelf.py` reports and what placement actually
 has. An earlier draft of this table gave the raw run lengths and called them usable, which
@@ -5836,7 +5835,7 @@ or a stacked conditional in its engine.
 
 ## 1av. Going through the shelf game by game, and the two lookups that were wrong
 
-Prompted by a report that Star Wars Episode I: Racer's "Infinite Money" did nothing. It did
+Prompted by a report that Game N's "Infinite Money" did nothing. It did
 exactly what it was told; it was told the wrong address.
 
 ### The region wildcard put four binaries in one row
@@ -5844,21 +5843,21 @@ exactly what it was told; it was told the wrong address.
 `rom_info.c`'s rows are `MATCH_ID`, which matches any region on purpose -- that is the right
 granularity for a save type and the wrong one for a cheat address. `mkcheatkeys.py` carried the
 wildcard through, so 1,029 of the 1,043 key rows ended in `?` and every regional corpus file for a
-game merged into one row. Racer's USA, Europe, Japan and (E) files all became `NEP?`.
+game merged into one row. Game N's USA, Europe, Japan and (E) files all became `NEP?`.
 
 The result on a USA cartridge was two entries in the list:
 
 | name | address | from |
 |---|---|---|
-| Infinite Money | `8111CB1A` / `8111CB18` | Racer (Europe) |
-| Infinite Trugets (Money) | `81113E7A` / `81113E78` | Racer (USA) |
+| Infinite Money | `8111CB1A` / `8111CB18` | Game N (Europe) |
+| Infinite Currency (Money) | `81113E7A` / `81113E78` | Game N (USA) |
 
 0x8CA0 apart. The obvious-sounding one is the European one.
 
-Racer got off lightly, because the two names differ. **183 of the 394 keys are fed by more than
+Game N got off lightly, because the two names differ. **183 of the 394 keys are fed by more than
 one region, and the merge deduplicates by name keeping the first file alphabetically -- so `(E)`,
 `(Europe)` and `(F)` beat `(USA)`. Measured: 11,162 USA cheats across 136 games were being
-replaced outright by a same-named foreign one.** Tetrisphere lost 7,183, Turok 640, GoldenEye 390.
+replaced outright by a same-named foreign one.** Game O lost 7,183, Turok 640, Game B 390.
 
 Fixed by deriving the header's region byte from the corpus filename and emitting a *second*,
 narrower row -- `NEPE` from the USA files alone -- beside the wildcard one, which is left holding
@@ -5874,15 +5873,15 @@ the target sitting exactly sixteen bytes on. Measured over the shelf:
 
 | game | candidates | what the old rule did |
 |---|---|---|
-| 1080 Snowboarding | 1, at +212 | refused; no cheat could ever run |
-| Harvest Moon 64 | 1, at +212 | refused; same |
-| Mario Party 3 | 3: +212, +16, bogus | **took the +16 one, which is a dispatcher stub** |
-| Banjo-Kazooie | 2: +32, +16 | took +16, correctly |
+| Game C | 1, at +212 | refused; no cheat could ever run |
+| Game P | 1, at +212 | refused; same |
+| Game H | 3: +212, +16, bogus | **took the +16 one, which is a dispatcher stub** |
+| Game D | 2: +32, +16 | took +16, correctly |
 | the other eleven | 1, at +16 | correct |
 
 +212 is the same number in two unrelated games, so it is a build variant and not a coincidence:
 disassembly shows a second preamble-shaped stub and an exception dispatcher linked in between.
-Mario Party 3 is the bad one -- its +16 target begins `sw $k0,-16($sp)` / `sw $k1,-8($sp)` /
+Game H is the bad one -- its +16 target begins `sw $k0,-16($sp)` / `sw $k1,-8($sp)` /
 `mfc0 $k0,$13`, a dispatcher, not `__osException`, and not what `osInitialize` copies to
 0x80000180. Its cheats were being written into a stub nothing executes.
 
@@ -5891,14 +5890,14 @@ points at and checks them against libultra's prologue -- `lui $k0` / `addiu $k0`
 / `mfc0 $k1,$12`, two of the four exact. It matched the target of all fourteen real candidates
 across the shelf and none of the three false ones. Distance survives only as a tie-break, ranked
 2 (`__osException` at +16) > 1 (`__osException` anywhere) > 0 (+16, unidentified), so no game that
-already worked can change and Banjo-Kazooie's two back-to-back preambles still resolve the way
+already worked can change and Game D's two back-to-back preambles still resolve the way
 they always have.
 
 Shelf result: **13 of 15 games can hook, up from 10.**
 
 ### The two that still cannot, and why
 
-**GoldenEye 007** has exactly one preamble in twelve megabytes, at rom+0x010D90, and
+**Game B** has exactly one preamble in twelve megabytes, at rom+0x010D90, and
 `__osException` sits at rom+0x010DA0 -- sixteen bytes on, exactly where it should be. But the
 preamble reads `lui $k0, 0x7001` where the handler is at `0x800101A0`: it names an address
 0x10000000 below its own exception handler. The word is inside the checksummed window and the
@@ -5906,11 +5905,11 @@ header CRC agrees with it, so it is the intended content of the ROM and not a ba
 here explains it and the honest move is to change nothing: replaying those two words in the engine
 tail would `jr` to 0x700101A0. 2,268 cheats unreachable. **Open.**
 
-**Star Wars: Shadows of the Empire** has no preamble-shaped block and no `__osException` prologue
+**Game E** has no preamble-shaped block and no `__osException` prologue
 anywhere in the file, so it is either not using libultra's exception path or keeps it compressed.
 It also has 11 words of padding, which would hold two cheats. Refused. **Open.**
 
-**Pokemon Stadium** still fails the CRC gate, as it has since that gate existed: its header
+**Game F** still fails the CRC gate, as it has since that gate existed: its header
 disagreed with its own contents before this project touched it.
 
 ### What the audit is
@@ -5950,14 +5949,14 @@ what the word survived is for.
 
 **63.5% of carryable groups never reach the database**, and not for any reason above: 99,618 of
 156,807 are dropped because another group in the same file has the same name. They are not
-duplicates. GoldenEye has 36 cheats called "Clip Size", one per weapon; Turok has 160 called
-"Pur-Lin #1", one per enemy slot; Racer has 35 called "Anti Skid". The corpus genuinely fails to
+duplicates. Game B has 36 cheats called "Clip Size", one per weapon; Turok has 160 called
+"Pur-Lin #1", one per enemy slot; Game N has 35 called "Anti Skid". The corpus genuinely fails to
 name them apart, and the dedup that exists to collapse the same cheat arriving from three regional
 files eats them too.
 
 Not fixed here, because none of the three options is obviously right: keeping them all makes a
 menu with 160 identical-looking rows, merging them into one group is wrong wherever the copies are
-alternatives rather than a set (GoldenEye's "Number Of Shots Fired Modifier" has 78 copies, two of
+alternatives rather than a set (Game B's "Number Of Shots Fired Modifier" has 78 copies, two of
 which write the same address), and numbering them is honest but unusable. Recorded as the largest
 remaining loss.
 
@@ -6467,12 +6466,12 @@ true, so they cannot be ticked. An 8 MB console, including this M64, still sees 
 | hookable, some groups too big for the padding | 11 |
 | hookable, nothing fits | 0 |
 
-The 29 that cannot hook include the two already on the books -- GoldenEye (Europe), Shadows of
-the Empire (Europe) -- plus Perfect Dark (Europe) and Extreme-G, which have no padding the gap
+The 29 that cannot hook include the two already on the books -- Game B (Europe), Shadows of
+the Empire (Europe) -- plus Game L (Europe) and Extreme-G, which have no padding the gap
 rule will accept, and a handful with candidates the preamble scan will not take (Armorines,
-Conker, Re-Volt, the Turok Europe set). The 11 that only partly fit are padding-poor rather
-than unhookable: Banjo-Kazooie Europe 97/99 in 20 words, Mortal Kombat Mythologies 99/113 in
-58, Tony Hawk 3 42/43 in 35.
+Game K, Re-Volt, the Turok Europe set). The 11 that only partly fit are padding-poor rather
+than unhookable: Game D Europe 97/99 in 20 words, Mortal Kombat Mythologies 99/113 in
+58, Game X 3 42/43 in 35.
 
 A group in the 4 MB band, on a hookable ROM, that fits the padding, is the strongest claim this
 audit can make. It is still not a playtest. The name on the cheat is the corpus's, not a
@@ -6581,7 +6580,7 @@ watch arming, the IPL3 patch offsets, the x106 descrambling, the handoff registe
    reported as patched, the jump was never written, and `cheats_install()` went on to return true
    and have `boot.c` set `skip_rdram_reset` on the strength of it. Engine assembled, never hooked,
    cheats silently dead. We return `true` (abort). Of 23 retail ROMs measured with
-   `test_cheatinstall.c`, **22 take the identical path either way**; only Star Fox 64 (CIC 6101)
+   `test_cheatinstall.c`, **22 take the identical path either way**; only Game J (CIC 6101)
    differs, and there upstream's behaviour is the broken one.
 
 **The feed is equivalent, not identical.** Upstream's `generate_enabled_cheats_array()` walks a

@@ -55,7 +55,7 @@ switching `FIXTURE` or `DEV_HARNESS` cannot link objects from the other configur
 ## Fixtures, and which one to use
 
 **`tools/mkfixture.py` is the one for measurements.** It harvests real game codes and titles out
-of `rom_info.c`, so a scan exercises the real 450-game database and real save-type detection.
+of `rom_info.c`, so a scan exercises the real harvested game database and real save-type detection.
 Every number in AUDIT.md was taken against it.
 
 **`tools/mkdemo.py` is the one for pictures.** It invents every title, code and cheat and draws
