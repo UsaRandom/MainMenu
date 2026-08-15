@@ -292,22 +292,15 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     hooktest_run();
     mem_report("hooktest");
 
-    /* The full profile starts the song HERE, with no bank in front of it: three hardware boots
-     * logged worst feeding gaps of 239-253 ms against the 316 ms the plain eight-buffer queue
-     * holds, so the ticked boot walks alone keep the song fed. (A 32-buffer prefill bank was
-     * tried on top and removed -- its depth estimate drifted against the real DAC and CAUSED a
-     * pause; sound.c's NUM_BUFFERS comment has the story.) After hooktest_run(), not before:
-     * that call spends a second with interrupts off, and the AI can only chain to its next
-     * queued buffer through an interrupt, so a song started before it would play ~80 ms and
-     * then repeat a stale buffer for the rest of the second.
-     *
-     * The small profile keeps the deferral: its boot gaps have never been measured on a real
-     * card, so its song starts at the plate's lift, from the main loop, where nothing can
-     * starve it. */
-    if (!mem_small()) {
-        music_resume();
-    }
-    mem_report("music-go");
+    /* No song starts here any more, on either profile. Playing through the boot was tried three
+     * ways -- naive, with the walks ticking the mixer, and with a prefilled bank -- and the
+     * console paused the music near the start of every one of them, including the build whose
+     * own log showed worst feeding gaps of 239-253 ms against 316 ms of buffer. Whatever is
+     * stalling that first second is not an honest polling gap, and it is not worth a fourth
+     * theory: the song now starts at the plate's lift for everyone, from the main loop, where
+     * the boot's blocking work is over and there is provably nothing left to starve it. The
+     * oscillator tables are still built at boot (music_prepare, above), so the lift-time start
+     * is a song load and nothing else. */
 
     mem_report("pre-fonts");
     fonts_init(NULL);
@@ -584,12 +577,11 @@ void app_run (boot_params_t *boot_params) {
         }
         app->spin_us += TIMER_MICROS(TICKS_SINCE(spin_start));
 
-        /* The small profile's song, started at the moment the plate has finished lifting -- see
-         * music_prepare() in app_init for why not a second earlier. On the full profile the song
-         * began at boot behind the prefill bank and music_resume() no-ops on a playing song, so
-         * this is that path's dead letter. One shot, not a standing call: music_resume() retries
-         * a failed load, so calling it every frame would turn one unreadable file into a
-         * per-frame reload attempt for the rest of the session. */
+        /* The song, started at the moment the plate has finished lifting -- both profiles, see
+         * the retired experiments where music_prepare() runs in app_init. One shot, not a
+         * standing call: music_resume() retries a failed load, so calling it every frame would
+         * turn one unreadable file into a per-frame reload attempt for the rest of the
+         * session. */
         static bool music_started;
         if (!music_started && boot_plate_done()) {
             music_started = true;

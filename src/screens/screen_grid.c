@@ -559,24 +559,24 @@ static void draw_footer (app_t *app) {
      * product hold the no-marquee rule: 608 px is about 52 characters at 20 px. */
     if (view_count > 0) {
         const lib_record_t *rec = &app->lib->records[view[cursor]];
-        ui_text(SAFE_X, FOOTER_Y + 26, SAFE_W, ALIGN_CENTER, STL_DEFAULT,
+        ui_text(SAFE_X, FOOTER_Y + 22, SAFE_W, ALIGN_CENTER, STL_DEFAULT,
                 rec->title ? rec->title : "?");
         snprintf(buf, sizeof(buf), "%d / %d", cursor + 1, view_count);
     } else {
-        ui_text(SAFE_X, FOOTER_Y + 26, SAFE_W, ALIGN_CENTER, STL_GRAY, "NO TITLES IN THIS TAB");
+        ui_text(SAFE_X, FOOTER_Y + 22, SAFE_W, ALIGN_CENTER, STL_GRAY, "NO TITLES IN THIS TAB");
         buf[0] = '\0';
     }
 
     /* L and R are dropped: the rail is on screen with the current tab underlined, so the tabs
      * advertise themselves and the shoulder buttons are the only thing they could mean. */
     int hx = SAFE_X;
-    hx = ui_hint(hx, FOOTER_Y + 32, "A", BTN_A_COLOR, UI_BTN_DISC, "Details");
+    hx = ui_hint(hx, FOOTER_Y + 30, "A", BTN_A_COLOR, UI_BTN_DISC, "Details");
     /* Fav is C-right: a yellow disc carrying the arrow that is printed on the pad itself, so the
      * hint names the key by its shape rather than by a letter nobody calls it. Labelled "Fav"
      * rather than "Favourite" because the same hint has to fit the detail sheet's footer beside
      * Play and Cheats. */
-    hx = ui_hint(hx, FOOTER_Y + 32, ">", BTN_C_COLOR, UI_BTN_DISC, "Fav");
-    hx = ui_hint(hx, FOOTER_Y + 32, "S", BTN_START_COLOR, UI_BTN_DISC, "Settings");
+    hx = ui_hint(hx, FOOTER_Y + 30, ">", BTN_C_COLOR, UI_BTN_DISC, "Fav");
+    hx = ui_hint(hx, FOOTER_Y + 30, "S", BTN_START_COLOR, UI_BTN_DISC, "Settings");
 
     /* The shortcut to the picker, and only when there is more than one player. It used to be
      * labelled with the active player's name, because the name had nowhere else to live -- the
@@ -590,10 +590,10 @@ static void draw_footer (app_t *app) {
      * with the binding. A disc labelled Z, or a trigger labelled B, would each be telling the
      * hand to go to the wrong place. */
     if (profile_count() > 1) {
-        (void)ui_hint(hx, FOOTER_Y + 32, "B", BTN_B_COLOR, UI_BTN_DISC, "Players");
+        (void)ui_hint(hx, FOOTER_Y + 30, "B", BTN_B_COLOR, UI_BTN_DISC, "Players");
     }
     if (buf[0]) {
-        ui_text(SAFE_X, FOOTER_Y + 48, SAFE_W, ALIGN_RIGHT, STL_ORANGE, buf);
+        ui_text(SAFE_X, FOOTER_Y + 46, SAFE_W, ALIGN_RIGHT, STL_ORANGE, buf);
     }
 }
 
