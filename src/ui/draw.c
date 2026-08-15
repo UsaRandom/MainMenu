@@ -295,9 +295,17 @@ static const btn_style_t *btn_style_for (const char *glyph) {
 }
 
 static void btn_spans (const btn_span_t *spans, int n, int x, int y, uint16_t c) {
+    /* One mode-set for the whole layer, not one per span. Drawing every span through ui_fill()
+     * re-issued the fill mode ~18 times per button -- roughly twice the attribute churn of the
+     * discs these replaced -- and the template this is adapted from batches by colour for a
+     * reason: rapid fill-colour changes are exactly the RDP attribute hazard its docs record on
+     * real hardware, and the M64's reimplemented RDP is the strictest one this menu runs on.
+     * Three mode-sets per button (shell, face, glyph) is fewer than the eleven the old disc
+     * spent. */
+    rdpq_set_mode_fill(color_from_packed16(c));
     for (int i = 0; i < n; i++) {
-        ui_fill(x + spans[i].x0 * 2, y + spans[i].y0 * 2,
-                (spans[i].x1 - spans[i].x0 + 1) * 2, (spans[i].y1 - spans[i].y0 + 1) * 2, c);
+        rdpq_fill_rectangle(x + spans[i].x0 * 2, y + spans[i].y0 * 2,
+                            x + (spans[i].x1 + 1) * 2, y + (spans[i].y1 + 1) * 2);
     }
 }
 
