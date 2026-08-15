@@ -36,6 +36,35 @@
 ### Deprecation notices
 - None.
 
+## Release Notes 2026-08-15 - Tagged 1.2.0
+
+Two themes: the console stopped stalling the music, and what the hardware taught went into the
+audit instead of into folklore.
+
+- **Sound**
+	- **Music now starts as the boot screen lifts**, on every console. Playing it through the boot was implemented three ways -- including one whose own log showed 60 ms of feeding headroom -- and real hardware audibly paused all three; the full story and the measurements are AUDIT.md 1bi.
+	- **Deleting a profile no longer stops the music or freezes the screen.** The save-erase walk feeds the mixer between card operations and draws a progress card with its own frames; the confirmation dialog appears instantly because it no longer counts save files before asking (the count cost the same card walk as the deletion itself).
+	- Boot-time file walks now feed the audio queue on every callback rather than at paint rate.
+
+- **Game Boy emulator**
+	- **Saves survive on clone consoles.** As FLASHRAM, save reads returned nothing on the ModRetro M64 -- a valid save booted as absent, and in-game saves vanished on relaunch. Game Boy cores now launch with banked SRAM (96 KB), which is a plain PI DMA and works on the same hardware. Offered upstream as N64FlashcartMenu#390.
+	- `tools/mkgb64sav.py` converts raw cart-RAM dumps into the emulator's version-3 save container, and round-trips them back out byte-identical.
+
+- **Recent tab**
+	- **A fresh play always sorts to the top.** Play stamps are now monotonic: on a console whose real-time clock does not answer (the M64's is a clone unknown), the old fallback timestamp sank new plays to the bottom of Recent, under everything stamped when a clock existed. A dead clock now yields a play counter and the order stays exact.
+
+- **Appearance**
+	- **Footer hints are drawn as the controller's own buttons** -- three-layer pixel sprites adapted from n64-game-template (MIT, credited), with the shoulders shaped like shoulders. Batched per colour layer and bottom-aligned to the layout cell, both lessons paid for on hardware (AUDIT.md 1bj).
+	- The grid footer gained breathing room: title and hint rows separated, with clear floor under the buttons.
+
+- **Diagnostics**
+	- **A System Info page** shows what the boot measured -- index result, revalidation time, audio worst-gap against buffer, memory profile -- the numbers that turned the sound work from guessing into engineering.
+	- Boot banners in `launch.log` carry the same measurements.
+
+- **Documentation**
+	- The audit gained entries 1bh-1bj: the profile-screen stalls and their fixes, the three failed boot-music approaches with measurements, and the button sprites' hardware lessons.
+	- Commercial titles are no longer named in the docs; test subjects are referred to by role.
+
 ## Release Notes 2026-08-11 - Tagged 1.1.0
 
 Two themes: the cheat engine now runs most of the database it ships with, and a large card boots
