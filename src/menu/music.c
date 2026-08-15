@@ -188,29 +188,48 @@ static bool begin (int index) {
     return true;
 }
 
+/** Build the oscillator tables if they are not built. Returns false out of memory. */
+static bool ensure_tables (void) {
+    if (tables_ready) return true;
+
+    /* Timed because this is the one cost music adds to boot and nobody has a hardware number
+     * for it. In ares it is 614 ms. It cannot be spread over several frames -- the build is a
+     * single pass over 35 wavetables -- so the only two places it can go are boot, behind the
+     * boot plate where the library scan already lives, or on the first keypress, where a
+     * half-second freeze would read as a crash. If the hardware number turns out to be
+     * unacceptable, midi64's docs/PERF.md notes the tables are a pure function of (shape,
+     * level, sample rate) and could be baked into the ROM as 71,680 bytes. */
+    uint32_t t0 = TICKS_READ();
+    if (midi64_synth_prepare(SOUND_FREQUENCY) != MIDI64_OK) {
+        debugf("[MUSIC] out of memory building oscillator tables\n");
+        return false;
+    }
+    debugf("[MUSIC] tables built in %lu us\n",
+           (unsigned long)TIMER_MICROS(TICKS_SINCE(t0)));
+    tables_ready = true;
+    return true;
+}
+
+void music_prepare (int track, int vol) {
+    selected = (track < 0 || track >= TRACK_COUNT) ? MUSIC_TRACK_SHUFFLE : track;
+    volume   = vol < 0 ? 0 : (vol > MUSIC_VOLUME_MAX ? MUSIC_VOLUME_MAX : vol);
+
+    if (volume == 0) return;
+
+    if (!ensure_tables()) {
+        volume = 0;
+    }
+}
+
 void music_start (int track, int vol) {
     selected = (track < 0 || track >= TRACK_COUNT) ? MUSIC_TRACK_SHUFFLE : track;
     volume   = vol < 0 ? 0 : (vol > MUSIC_VOLUME_MAX ? MUSIC_VOLUME_MAX : vol);
 
     if (volume == 0) return;
 
-    if (!tables_ready) {
-        /* Timed because this is the one cost music adds to boot and nobody has a hardware number
-         * for it. In ares it is 614 ms. It cannot be spread over several frames -- the build is a
-         * single pass over 35 wavetables -- so the only two places it can go are here, behind the
-         * boot plate where the library scan already lives, or on the first keypress, where a
-         * half-second freeze would read as a crash. If the hardware number turns out to be
-         * unacceptable, midi64's docs/PERF.md notes the tables are a pure function of (shape,
-         * level, sample rate) and could be baked into the ROM as 71,680 bytes. */
-        uint32_t t0 = TICKS_READ();
-        if (midi64_synth_prepare(SOUND_FREQUENCY) != MIDI64_OK) {
-            debugf("[MUSIC] out of memory building oscillator tables\n");
-            volume = 0;
-            return;
-        }
-        debugf("[MUSIC] tables built in %lu us\n",
-               (unsigned long)TIMER_MICROS(TICKS_SINCE(t0)));
-        tables_ready = true;
+    if (!ensure_tables()) {
+        volume = 0;
+        return;
     }
 
     /* Random from the first note, not just between songs. Starting shuffle on track 1 every time

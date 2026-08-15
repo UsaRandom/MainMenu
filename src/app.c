@@ -233,9 +233,13 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * turning sound effects off in settings changed a bool and nothing else. */
     sound_set_sfx_volume(app->settings.sfx_volume);
 
-    /* Music starts here, before the library scan, and deliberately: building the oscillator
+    /* Music is PREPARED here, before the library scan, and deliberately: building the oscillator
      * tables is the one unchunkable cost in the whole boot, so it goes next to the other fixed
-     * boot costs rather than landing on a keypress later.
+     * boot costs rather than landing on a keypress later. Playback does not start here any more:
+     * a song begun under the plate skipped through its whole first second on the console -- the
+     * scan and the icon pump starve the mixer exactly then, and no diagnosis ever pinned which
+     * feeder was short -- so the main loop starts the song at the moment the plate finishes
+     * lifting instead, which sidesteps the contention rather than winning it.
      *
      * A scripted run plays too, rather than being silenced, because the cost of music is a frame
      * cost and silencing it would make the one harness that can measure that cost the one place
@@ -248,8 +252,8 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
      * Overridable so the shuffle itself can be exercised, which is otherwise unreachable from any
      * harness -- `make TUNE='-DSCRIPT_MUSIC_TRACK=-1'` restores it for a run whose frames are not
      * being compared. Without that knob "does the seed actually vary" has no way of being asked. */
-    music_start(inputscript_active() ? SCRIPT_MUSIC_TRACK : app->settings.music_track,
-                app->settings.music_volume);
+    music_prepare(inputscript_active() ? SCRIPT_MUSIC_TRACK : app->settings.music_track,
+                  app->settings.music_volume);
     mem_report("music");
 
     /* The theme belongs to the person, not the console, so it comes off the active profile. Until
@@ -286,9 +290,9 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     mem_report("post-fonts");
     /* The first feed of the whole program, and deliberately not one line earlier.
      *
-     * music_start() ran well above, but starting a song only attaches a waveform to a mixer
-     * channel -- nothing reaches the DAC until somebody polls, so nothing can stutter before the
-     * first poll either. Feeding at display_init() instead was measured and was worse: it filled
+     * music_prepare() ran well above, and nothing is playing yet -- the song waits for the boot
+     * plate to lift -- so nothing reaches the DAC until somebody polls, and nothing can stutter
+     * before the first poll either. Feeding at display_init() instead was measured and was worse: it filled
      * 316 ms of buffers that then drained through the font load, which is 286,953 us under ares
      * and left 29 ms of margin. Feeding after the fonts costs a silence nobody can perceive --
      * there is nothing playing to compare it against -- and buys the whole buffer back.
@@ -555,6 +559,16 @@ void app_run (boot_params_t *boot_params) {
             continue;
         }
         app->spin_us += TIMER_MICROS(TICKS_SINCE(spin_start));
+
+        /* The song boot prepared, started at the moment the plate has finished lifting -- see
+         * music_prepare() in app_init for why not a second earlier. One shot, not a standing
+         * call: music_resume() retries a failed load, so calling it every frame would turn one
+         * unreadable file into a per-frame reload attempt for the rest of the session. */
+        static bool music_started;
+        if (!music_started && boot_plate_done()) {
+            music_started = true;
+            music_resume();
+        }
 
         uint32_t now_ticks = TICKS_READ();
         uint32_t raw_us = TIMER_MICROS(TICKS_DISTANCE(prev_ticks, now_ticks));

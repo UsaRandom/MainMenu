@@ -40,12 +40,19 @@ int music_track_count (void);
 const char *music_track_name (int track);
 
 /**
- * @brief Start music, building the oscillator tables if this is the first call.
+ * @brief Store the selection and build the oscillator tables, without starting playback.
  *
- * The build is a few hundred milliseconds and cannot be chunked, so this belongs at boot behind
- * the boot plate, never on a keypress. It is a no-op when @p volume is 0, which is what keeps
- * that cost off a console whose owner does not want music.
+ * The build is a few hundred milliseconds and cannot be chunked, so it belongs at boot behind
+ * the boot plate, never on a keypress. Playback is a separate matter: on hardware the first
+ * second of a song started under the plate skipped audibly, because the library scan and the
+ * icon pump starve the mixer exactly then -- so boot prepares here and music_resume() starts
+ * the song once the plate has lifted, when the console has nothing better to do than play it.
+ * A no-op when @p volume is 0, which is what keeps the build cost off a console whose owner
+ * does not want music.
  */
+void music_prepare (int track, int volume);
+
+/** @brief Start music, building the oscillator tables if this is the first call. */
 void music_start (int track, int volume);
 
 /** @brief Stop playback and release the player. The tables are kept; see music_shutdown(). */
