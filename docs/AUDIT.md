@@ -6765,3 +6765,86 @@ scripted run resumes its pinned track rather than silently unpinning itself -- a
 return in `do_load()` is its only caller. Verified under ares with an ad-hoc launch-and-return
 script: `[MUSIC] playing` appears twice, either side of `LAUNCH would boot`. On hardware the
 path cannot run; a real launch boots the game before any resume could.
+
+## 1bh. The profile screens stalled the music, and the popup was pricing a deletion nobody had asked for
+
+Reported from the console, twice in one screen: pressing C-left to remove a profile stalled with
+the music stopped until the Keep/Delete dialog appeared, and answering Delete stalled again, with
+no feedback at all, until the deletion finished. Both were the same disease. The dialog's save
+count ran `profile_erase_saves()` in dry-run mode -- one FatFs probe per library record, 289 of
+them on this card, serially, over the SC64 -- purely to phrase the confirmation, and the real
+deletion ran the same walk again with the writes added. Neither fed the mixer, and the 316 ms the
+audio queue holds does not survive seconds of card round-trips.
+
+The dry run is deleted, not ticked: pricing a deletion costs the deletion, and the person answers
+"Keep" most of the time. The dialog now warns unconditionally. The walk itself takes a tick
+callback fired between round-trips -- `directory_erase()` too, per entry -- and the host suite
+counts the ticks, so a refactor that drops the callback goes red on a desk instead of resurfacing
+as a music dropout on a console.
+
+Two lessons were paid for on the way in. First, the walk originally ran from the update handler
+and painted nothing: the main loop acquires a framebuffer BEFORE update(), so a blocking walk
+there holds a buffer that is never shown and `display_try_get()` finds nothing free -- exactly
+what launch_update()'s comment warned about, re-proven on hardware as a frozen dialog with
+"Deleting..." never drawn once. The walk now runs from render() after the first progress frame is
+shown, the same shape as the loading screen. Second, the host-suite shim's private `utils/fs.h`
+still declared the old `bool` parameter after the real header changed; profile.c compiled against
+the shim's copy, the tick pointer arrived as `true`, and the fresh implementation jumped to
+address 1 -- a bus error three layers from its cause. The shim header now says it must match
+`src/utils/fs.h` and why.
+
+Verified on the console: the dialog opens immediately, the deletion shows its card with clock-
+driven dots, and the music plays through the whole walk.
+
+## 1bi. Boot music was tried three ways, every one of them paused, and the plate's lift ended it
+
+The goal was the intro song playing from power-on. Three implementations went to hardware:
+
+1. **Naive**: start the song at boot and let the boot walks feed the mixer as they already did.
+   Paused.
+2. **Aggressive ticks**: `sound_poll()` moved above `boot_tick()`'s paint throttle so every
+   callback feeds, plus the index revalidation and scan already ticking per entry. The card's own
+   log then recorded worst feeding gaps of 239,123-252,921 us across three boots against 316,059
+   us of buffer -- 60 ms of honest headroom -- and the console still played a few notes, paused
+   noticeably, and resumed.
+3. **A prefill bank**: audio buffers raised to 32 (libdragon's ceiling -- `buf_full` is an int
+   bitmask; asking for 128 measured a 1,236 ms prefill, not the 5 s asked for), filled at boot,
+   with sound_poll() throttled to a software depth estimate so the bank drains back to 316 ms.
+   Same audible pause. The estimate -- samples written minus clock-times-rate -- has no way to ask
+   the AI where it really is, and a drift against the real DAC makes polls refuse to fill a queue
+   that is actually running dry, which is a pause the machinery itself causes. Removed whole.
+
+The open question is written down rather than theorised at a fourth time: something stalls the
+first second of hardware playback that is NOT a gap between sound_poll() calls, because the gap
+metric had 60 ms of margin while the ear heard a stall. The standing suspicion is the class of
+thing that blocks the AI's interrupt handling rather than the polling -- the same class hooktest's
+interrupts-off stretch demonstrates deliberately -- which no between-polls metric can see.
+
+What shipped: the song starts at the plate's lift, on both profiles, from the main loop, where
+boot's blocking work is over and the start is provably clean. The oscillator tables (614 ms,
+unchunkable) still build at boot behind the plate, so the lift-time start is a song load and
+nothing else. If first-note latency ever matters more than this, midi64's PERF notes say the
+tables are a pure function of (shape, level, rate) and could ship in the ROM as 71,680 bytes --
+that is the recorded next move, not another feeding scheme.
+
+## 1bj. Controller-button sprites, and what two card trips taught about drawing them
+
+The footer's flat letter-discs were replaced with three-layer pixel sprites -- shell, face, glyph
+-- adapted at 2x from garfbargle/n64-game-template (MIT, credited in CREDITS.md), drawn as span
+tables through ui_fill()'s successor. Two hardware lessons:
+
+- **Batch the fill colour per layer, not per span.** The first port set the fill mode per
+  rectangle, ~18 attribute changes per button against the ~11 the old discs spent. The template
+  batches by colour and documents why; the port now does the same -- three mode-sets per button --
+  and the frames are hash-identical under ares, so the change was pure command traffic.
+- **Bottom-align to the layout cell.** The 26 px sprites centred on the 20 px cell pushed 3 px
+  below the old glyphs' bottom line, which in the grid footer is 3 px past the bottom of a 480-line
+  screen. The cell's bottom edge is the one line every call site already keeps visible; the extra
+  height goes upward.
+
+One observation stays open rather than explained: the first card trip with these sprites (with
+batching, without bottom-alignment) came back "so glitchy" alongside a frozen picker, and the same
+drawing code on every later trip rendered cleanly. Nothing in the tree accounts for the
+difference; the freeze of that build was later traced to the audio bank's machinery, and the
+glitch may have been the same wreckage, but that is an inference, not a finding. Recorded so the
+next person who sees sprite corruption knows it has been seen once before.
