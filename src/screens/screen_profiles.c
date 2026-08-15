@@ -368,6 +368,7 @@ static void update_edit (app_t *app) {
  * walk is one blocking call and the main loop is suspended above it, so either the tick draws or
  * nothing does. */
 static app_t *erase_app;
+static bool   delete_pending;   /**< set by the confirm, consumed by render(); see run_delete() */
 static void profiles_render (app_t *app, surface_t *fb);
 
 /**
@@ -419,13 +420,21 @@ static void update_confirm (app_t *app) {
         return;
     }
 
-    /* The dialog leaves, the progress card arrives, and the walk paints its own frames through
-     * erase_tick() -- this call blocks the main loop for its whole duration, which on a full
-     * card is seconds of serial SD probes. The first tick paints immediately, so "Deleting..."
-     * is on screen before the first slow probe rather than after it. */
+    /* Only the MODE changes here. The walk itself runs from render(), after a frame has been
+     * attached and shown -- NOT from this update handler, for the reason launch_update()
+     * documents: the main loop calls display_try_get() BEFORE update(), so a blocking walk here
+     * holds a framebuffer that is never attached or shown, and every paint erase_tick() attempts
+     * finds no buffer free. That is not a theory: the first version of this blocked right here,
+     * and the console showed a frozen confirm dialog for the whole walk with "Deleting..."
+     * never drawn once. */
     mode = MODE_DELETING;
+    delete_pending = true;
+    sound_play_effect(SFX_ENTER);
+}
+
+/** The walk, run from render() after the "Deleting..." frame is already on screen. */
+static void run_delete (app_t *app) {
     erase_app = app;
-    erase_tick();
 
     /* The saves first, then the profile. That order matters: profile_erase_saves() needs the slot
      * to still exist to name its folder, and profile_remove() clears it. */
@@ -435,7 +444,6 @@ static void update_confirm (app_t *app) {
     erase_tick();
     if (profile_remove(cursor)) {
         debugf("PROFILE removed slot %d, %d save file(s) deleted\n", cursor + 1, gone);
-        sound_play_effect(SFX_ENTER);
         /* If the deleted profile was the active one, profile_remove() moved it back to slot 0, so
          * the library in memory belongs to somebody else now and is re-keyed rather than left
          * showing the removed player's favourites. Nobody else moved -- that is the point of
@@ -801,6 +809,17 @@ static void profiles_render (app_t *app, surface_t *fb) {
     boot_plate_draw(MENU_VERSION, app->lib != NULL ? app->lib->count : 0);
 
     rdpq_detach_show();
+
+    /* The delete runs HERE, after the frame above -- which is the first "Deleting..." card -- has
+     * been shown and its buffer released. screen_launch.c's do_load() has the same shape for the
+     * same reason: blocking work belongs after a detach_show, where erase_tick() can win a
+     * framebuffer for its progress frames. Guarded on delete_pending rather than on the mode,
+     * because erase_tick() re-enters this render for every frame it paints and must not start a
+     * second walk from inside the first. */
+    if (delete_pending) {
+        delete_pending = false;
+        run_delete(app);
+    }
 }
 
 const screen_t SCREEN_PROFILES_DEF = {
