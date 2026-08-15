@@ -292,22 +292,22 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     hooktest_run();
     mem_report("hooktest");
 
-    /* The full profile starts the song HERE and banks the whole audio allocation -- ~1.26 s at
-     * 16 kHz for 80,896 bytes, libdragon's 32-buffer ceiling rather than the 5 s first asked
-     * for (see mem_audio_buffers()) -- so the music plays through the plate while the fonts and
-     * the scan block, and the first second stops skipping on hardware. The bank has to be filled after
-     * hooktest_run(): that call spends a second with interrupts off, and the AI can only chain
-     * to its next queued buffer through an interrupt, so anything banked before it would play
-     * ~80 ms and then repeat a stale buffer for the rest of the second.
+    /* The full profile starts the song HERE, with no bank in front of it: three hardware boots
+     * logged worst feeding gaps of 239-253 ms against the 316 ms the plain eight-buffer queue
+     * holds, so the ticked boot walks alone keep the song fed. (A 32-buffer prefill bank was
+     * tried on top and removed -- its depth estimate drifted against the real DAC and CAUSED a
+     * pause; sound.c's NUM_BUFFERS comment has the story.) After hooktest_run(), not before:
+     * that call spends a second with interrupts off, and the AI can only chain to its next
+     * queued buffer through an interrupt, so a song started before it would play ~80 ms and
+     * then repeat a stale buffer for the rest of the second.
      *
-     * The small profile keeps the deferral: its queue IS the working depth, there is nothing to
-     * bank, and a song started here would skip exactly the way this exists to prevent. Its song
-     * starts at the plate's lift, from the main loop. */
+     * The small profile keeps the deferral: its boot gaps have never been measured on a real
+     * card, so its song starts at the plate's lift, from the main loop, where nothing can
+     * starve it. */
     if (!mem_small()) {
         music_resume();
-        sound_prefill();
     }
-    mem_report("prefill");
+    mem_report("music-go");
 
     mem_report("pre-fonts");
     fonts_init(NULL);

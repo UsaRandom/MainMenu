@@ -7,24 +7,24 @@
 #include <stdbool.h>
 #include <libdragon.h>
 #include "sound.h"
-#include "menu/memprofile.h"
 
-/** Audio buffers the mixer keeps QUEUED ahead of the DAC, as opposed to allocated.
+/** Audio buffers held ahead of the DAC.
  *
  * Eight, not the four this shipped with. The synth is not the bottleneck -- `snd_us` says
- * the mixer costs about 1 ms of a 16.7 ms frame, 6% of wall clock -- but that work is
+ * mixer_try_play() costs about 1 ms of a 16.7 ms frame, 6% of wall clock -- but that work is
  * delivered in bursts, and the menu's frame time is not: a third of frames take two fields with
  * music on, and art decoding in background() can hold the loop for longer still. Four buffers is
  * roughly 67 ms of slack, which a run of long frames eats, and the result is audible as
  * choppiness even though the CPU has plenty of headroom left.
  *
- * Latency rises with the depth, and the sound effects are what cares: an effect is mixed into
- * the next buffer rendered, so it reaches the ear after everything already queued. Eight
- * buffers is ~316 ms at 16 kHz, which nothing is triggered tightly enough to notice. This is
- * why the ALLOCATED count (mem_audio_buffers(), up to 128 on the full profile) is a separate
- * number: capacity beyond eight exists only for sound_prefill() at boot, and sound_poll()
- * lets it drain back to this depth rather than keeping it full. */
-#define QUEUE_TARGET        (8)
+ * Eight is also ENOUGH, and that is measured, not asserted: with the boot walks ticking the
+ * mixer between card round-trips, three hardware boots logged worst gaps of 239-253 ms against
+ * the 316 ms these eight buffers hold. A 32-buffer boot bank with a software depth throttle was
+ * tried on top of this and REMOVED: its depth estimate (samples written minus clock-times-rate)
+ * drifted against the real DAC on the M64, so polls refused to top up a queue that was actually
+ * running dry, and the console played a few notes, paused, and resumed -- a stall the gap log
+ * proved no honest feeding gap could have caused. The simple queue has no estimate to drift. */
+#define NUM_BUFFERS         (8)
 
 /** Mixer channels. Three are used: 0 is effects, 1 and 2 are music's stereo pair.
  *
@@ -58,51 +58,6 @@ static uint32_t worst_gap_us;
 static bool sfx_enabled = false;
 static float sfx_volume = SFX_VOLUME_UNIT;
 
-/** The queue's depth, estimated: samples written minus samples the DAC has had time to play.
- *
- * libdragon says whether ONE buffer is free (audio_can_write()) and nothing else, so the depth
- * is accounted here: every fill adds to `samples_written`, and consumption is elapsed time
- * times the sample rate, which is exact on the console -- the AI and the CPU counter run off
- * the same crystal. The estimate self-corrects at both rails: a full queue refuses the next
- * write (depth is then capacity by definition), and the clamp below stops a long-starved
- * queue from going negative. */
-static uint64_t samples_written;
-static uint32_t consume_base_ticks;     /* when the DAC started draining, i.e. first write */
-static uint64_t consumed_us_hi;         /* whole-second carry, so the microsecond math never overflows */
-
-static int64_t queue_depth_samples (void) {
-    if (samples_written == 0) {
-        return 0;
-    }
-    uint32_t elapsed = TIMER_MICROS(TICKS_SINCE(consume_base_ticks));
-    /* Fold whole seconds out of the tick distance before it wraps: TICKS_SINCE is only good for
-     * about 91 seconds, and this program runs for hours. */
-    while (elapsed >= 1000000) {
-        elapsed -= 1000000;
-        consumed_us_hi += 1000000;
-        consume_base_ticks += TICKS_FROM_MS(1000);
-    }
-    uint64_t consumed = (consumed_us_hi + elapsed) * (uint64_t)audio_get_frequency() / 1000000ull;
-    int64_t depth = (int64_t)samples_written - (int64_t)consumed;
-    return depth > 0 ? depth : 0;
-}
-
-/** Render and queue buffers until the depth reaches @p target_buffers or the queue is full. */
-static void fill_to (int target_buffers) {
-    int len = audio_get_buffer_length();
-    int64_t target = (int64_t)target_buffers * len;
-
-    while (queue_depth_samples() < target && audio_can_write()) {
-        short *out = audio_write_begin();
-        mixer_poll(out, len);
-        audio_write_end();
-        if (samples_written == 0) {
-            consume_base_ticks = TICKS_READ();
-        }
-        samples_written += len;
-    }
-}
-
 /**
  * @brief Reconfigure the sound system with the specified frequency.
  * 
@@ -113,14 +68,7 @@ static void sound_reconfigure (int frequency) {
         
         sound_deinit();
 
-        /* A new queue knows nothing of the old one's accounting. Without this reset a
-         * reconfigure mid-session would carry samples_written across, the depth estimate would
-         * read as seconds of phantom backlog, and sound_poll() would refuse to feed a queue
-         * that is actually empty. */
-        samples_written = 0;
-        consumed_us_hi = 0;
-
-        audio_init(frequency, mem_audio_buffers());
+        audio_init(frequency, NUM_BUFFERS);
         mixer_init(NUM_CHANNELS);
 
         // Attempt to initialize wav64 compression level 1
@@ -246,29 +194,10 @@ void sound_poll (void) {
         }
         last_poll_ticks = now;
 
-        /* Top the queue up to the working depth and no further. On the small profile the queue
-         * IS the working depth and this behaves exactly like the mixer_try_play() it replaced;
-         * on the full profile it is what lets the boot prefill drain back down instead of being
-         * topped up to five seconds forever -- which would delay every sound effect by the whole
-         * queue, since an effect is mixed into the next buffer rendered, not into the ones
-         * already waiting. */
-        fill_to(QUEUE_TARGET);
+        // Check whether one audio buffer is ready, otherwise wait for next
+        // frame to perform mixing.
+        mixer_try_play();
     }
-}
-
-void sound_prefill (void) {
-    if (!sound_initialized) {
-        return;
-    }
-    /* Fill the whole allocation, not the working depth: this is the one caller allowed past
-     * QUEUE_TARGET. On the small profile the two are the same and this is a cheap no-op-ish
-     * top-up. Timed because it is boot cost on the boot path -- the synth renders the whole
-     * bank here, and nobody has a hardware number for that yet. */
-    uint32_t t0 = TICKS_READ();
-    fill_to(mem_audio_buffers());
-    debugf("[SOUND] prefill to %lld ms took %lu us\n",
-           (long long)(queue_depth_samples() * 1000 / audio_get_frequency()),
-           (unsigned long)TIMER_MICROS(TICKS_SINCE(t0)));
 }
 
 unsigned sound_worst_gap_us (void) {
@@ -285,9 +214,6 @@ unsigned sound_slack_us (void) {
     if (freq <= 0) {
         return 0;
     }
-    /* The WORKING depth, not the allocation: this number is read against worst-gap to say
-     * whether ordinary polling can starve, and ordinary polling never holds more than the
-     * target. The prefill bank above it is boot's business and boot logs it separately. */
-    return (unsigned)((uint64_t)audio_get_buffer_length() * QUEUE_TARGET * 1000000ull /
+    return (unsigned)((uint64_t)audio_get_buffer_length() * NUM_BUFFERS * 1000000ull /
                       (uint64_t)freq);
 }

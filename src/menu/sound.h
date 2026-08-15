@@ -109,18 +109,6 @@ void sound_deinit(void);
  */
 void sound_poll(void);
 
-/**
- * @brief Render music until the audio queue's full ALLOCATION is banked. Boot only.
- *
- * sound_poll() tops the queue up to a ~316 ms working depth and never past it; this is the one
- * call allowed to fill the rest. On the full profile that is ~1.26 s of audio
- * (mem_audio_buffers(), at libdragon's 32-buffer ceiling), banked once behind the boot plate so
- * the song plays through the blocking boot stages that starve ordinary polling -- the first
- * second of music skipped on the console every boot until the bank existed. The small profile has no bank (capacity is the working depth), so this is
- * nearly a no-op there and boot starts the song after the plate instead; see app.c. The bank
- * drains back to the working depth on its own, because sound_poll() refuses to top it up.
- */
-void sound_prefill(void);
 
 /**
  * @brief The longest gap between two sound_poll() calls since this was last asked, in us. Resets.
