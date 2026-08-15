@@ -559,6 +559,15 @@ static void test_default_names (void) {
     check(longest == 9, "the longest default name is nine characters");
 }
 
+/* The walk promises to call back between card round-trips -- on the console that is what keeps
+ * the mixer fed through a few hundred serial FatFs probes. Counted rather than trusted, so a
+ * refactor that quietly drops the callback goes red here instead of resurfacing as a music
+ * dropout on hardware. */
+static int erase_ticks;
+static void count_erase_tick (void) {
+    erase_ticks++;
+}
+
 static void test_save_erasure (void) {
     printf("\ndeleting a profile's saves\n");
     fresh_storage();
@@ -595,11 +604,13 @@ static void test_save_erasure (void) {
     recs[1].path = p1;
     library_t lib = { .records = recs, .count = 2 };
 
-    check(profile_erase_saves(1, &lib, true) == 3, "the dry run counts three saves");
+    /* There is no dry run any more: counting cost the same walk as deleting, so the popup
+     * stopped asking (see profile.h). The erase reports what it removed, and the tick fires at
+     * least once per record -- twice here -- plus once per file found. */
+    erase_ticks = 0;
     snprintf(d, sizeof(d), "%sroms/n64/saves/p2/One.sav", root);
-    check(access(d, F_OK) == 0, "and the dry run deleted nothing");
-
-    check(profile_erase_saves(1, &lib, false) == 3, "the real run reports three");
+    check(profile_erase_saves(1, &lib, count_erase_tick) == 3, "the real run reports three");
+    check(erase_ticks >= 2, "and ticked at least once per record");
     check(access(d, F_OK) != 0, "the save is gone");
     snprintf(d, sizeof(d), "%sroms/snes/saves/p2/Three.srm", root);
     check(access(d, F_OK) != 0, "including the one in the other directory");
@@ -614,9 +625,8 @@ static void test_save_erasure (void) {
      * `saves/p1/`. That matters for how this is tested: relaxing the guard alone leaves the mutant
      * passing, because it then looks in a directory that does not exist. The mutation in
      * tools/hosttest/run.sh therefore also makes the path agree with profile_save_subdir(), which
-     * is the bug somebody would really write -- and with both edits these three checks go red. */
-    check(profile_erase_saves(0, &lib, true) == 0, "profile 1's saves cannot be counted");
-    check(profile_erase_saves(0, &lib, false) == 0, "or erased");
+     * is the bug somebody would really write -- and with both edits these two checks go red. */
+    check(profile_erase_saves(0, &lib, NULL) == 0, "profile 1's saves cannot be erased");
     check(access(d, F_OK) == 0, "and are still there afterwards");
 }
 

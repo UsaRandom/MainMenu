@@ -30,7 +30,7 @@ bool directory_exists (char *path) {
 #include <stdio.h>
 #include <string.h>
 
-int directory_erase (const char *path, bool dry_run) {
+int directory_erase (const char *path, void (*tick)(void)) {
     DIR *d = opendir(path);
     if (d == NULL) {
         return 0;
@@ -38,14 +38,15 @@ int directory_erase (const char *path, bool dry_run) {
     int removed = 0;
     struct dirent *e;
     while ((e = readdir(d)) != NULL) {
+        if (tick != NULL) {
+            tick();
+        }
         if (e->d_name[0] == '.') {
             continue;
         }
         char file[512];
         snprintf(file, sizeof(file), "%s/%s", path, e->d_name);
-        if (dry_run) {
-            removed++;
-        } else if (remove(file) == 0) {
+        if (remove(file) == 0) {
             removed++;
         }
     }

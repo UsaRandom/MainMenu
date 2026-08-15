@@ -140,6 +140,14 @@ static void boot_tick (int found) {
         last_found = found;
     }
 
+    /* The mixer is fed on EVERY call, above the paint throttle, not inside it. The throttle
+     * exists because painting costs more than the scan step it interrupts; sound_poll() costs
+     * next to nothing when the queue is topped up, and the 33 ms it was skipped for is a tenth
+     * of the whole audio slack. Feeding at callback rate is what "the scan cannot starve the
+     * mixer" actually requires -- the throttled version only promised it at 30 Hz, and a slow
+     * card stretched the gaps between paints past what the buffers held. */
+    sound_poll();
+
     uint32_t now = TICKS_READ();
     uint32_t dt_us = (last_ticks != 0) ? TIMER_MICROS(TICKS_SINCE(last_ticks)) : SCAN_TICK_US;
     if (last_ticks != 0 && dt_us < SCAN_TICK_US) {
@@ -147,7 +155,6 @@ static void boot_tick (int found) {
     }
     last_ticks = now;
 
-    sound_poll();
     boot_plate_hold((float)dt_us / 1000000.0f);
 
     /* Nothing to paint before the plate is armed, and painting anyway would be worse than nothing:

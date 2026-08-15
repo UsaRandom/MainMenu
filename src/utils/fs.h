@@ -122,9 +122,12 @@ bool directory_create(char *path);
  * slot needs, and cart_load.c would recreate it on their first launch regardless.
  *
  * @param path      the directory
- * @param dry_run   count what would go without removing anything
- * @return how many files were removed, or would be
+ * @param tick      called once per entry, or NULL. On the console this is what keeps the mixer
+ *                  fed: each remove() is a FatFs round-trip over the SC64, and a folder of them
+ *                  with no poll in between is an audible music dropout -- the profile-delete
+ *                  spike was exactly this.
+ * @return how many files were removed
  */
-int directory_erase(const char *path, bool dry_run);
+int directory_erase(const char *path, void (*tick)(void));
 
 #endif // UTILS_FS_H__

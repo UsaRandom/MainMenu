@@ -233,7 +233,7 @@ bool directory_create(char *path) {
     return error;
 }
 
-int directory_erase (const char *path, bool dry_run) {
+int directory_erase (const char *path, void (*tick)(void)) {
     /* libdragon's dir_findfirst/dir_findnext, not opendir/readdir: <dirent.h> on this toolchain
      * is a header that #errors out, and the rest of this program walks directories the same way
      * -- see library.c's scan. */
@@ -247,6 +247,11 @@ int directory_erase (const char *path, bool dry_run) {
 
     int removed = 0;
     do {
+        /* Every entry, before any of the work: the remove() below is the slow half, but the
+         * findnext that got us here already cost a card round-trip too. */
+        if (tick != NULL) {
+            tick();
+        }
         if (info.d_name[0] == '.') {
             continue;
         }
@@ -261,9 +266,7 @@ int directory_erase (const char *path, bool dry_run) {
         if (snprintf(file, sizeof(file), "%s/%s", path, info.d_name) >= (int)sizeof(file)) {
             continue;
         }
-        if (dry_run) {
-            removed++;
-        } else if (remove(file) == 0) {
+        if (remove(file) == 0) {
             removed++;
         }
     } while (dir_findnext(path, &info) == 0);

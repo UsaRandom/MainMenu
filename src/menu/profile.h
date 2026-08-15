@@ -262,11 +262,18 @@ bool profile_remove (int index);
  * Profile 1 is refused. Its saves are the unsuffixed `saves/`, which on a card that predates
  * profiles is every save on it.
  *
- * @param dry_run count what would go, without removing anything -- this is what the confirmation
- *                screen puts in front of the user before they answer.
- * @return files removed, or that would be
+ * There is no dry-run mode any more. It existed to put a save count in the confirmation dialog,
+ * and pricing that number honestly killed it: the count is this same walk -- one FatFs probe per
+ * library record over the SC64 -- so the dialog was paying the whole cost of the deletion just to
+ * describe it, as a music-stopping stall between the press and the popup. The dialog now warns
+ * unconditionally and the walk runs once, when the person has actually said delete.
+ *
+ * @param tick  called once per record and once per file inside each folder, or NULL. This walk is
+ *              hundreds of serial card round-trips; the caller's tick is what keeps the mixer fed
+ *              and the "Deleting..." frame moving through them.
+ * @return files removed
  */
-int profile_erase_saves (int index, const library_t *lib, bool dry_run);
+int profile_erase_saves (int index, const library_t *lib, void (*tick)(void));
 
 /**
  * @brief Switch to @p index: reloads playstate and cheat selections for the new profile.

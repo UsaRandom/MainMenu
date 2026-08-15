@@ -472,7 +472,7 @@ bool profile_remove (int index) {
     return true;
 }
 
-int profile_erase_saves (int index, const library_t *lib, bool dry_run) {
+int profile_erase_saves (int index, const library_t *lib, void (*tick)(void)) {
     if (index <= 0 || index >= PROFILE_MAX || lib == NULL) {
         return 0;
     }
@@ -482,6 +482,11 @@ int profile_erase_saves (int index, const library_t *lib, bool dry_run) {
 
     int removed = 0;
     for (int i = 0; i < lib->count; i++) {
+        /* Once per record, before the probe: most records cost exactly one failed
+         * dir_findfirst(), and on the console that lone miss is still a card round-trip. */
+        if (tick != NULL) {
+            tick();
+        }
         const char *path = lib->records[i].path;
         if (path == NULL) {
             continue;
@@ -510,7 +515,7 @@ int profile_erase_saves (int index, const library_t *lib, bool dry_run) {
         /* Deduplicated by trying the same folder twice being harmless: the second attempt finds
          * nothing to delete and adds nothing to the count. Ten games in one directory means ten
          * attempts at one folder, which is cheaper than the set that would avoid them. */
-        removed += directory_erase(folder, dry_run);
+        removed += directory_erase(folder, tick);
     }
     return removed;
 }

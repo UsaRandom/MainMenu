@@ -55,6 +55,7 @@
 
 #include "app.h"
 #include "menu/fonts.h"
+#include "menu/music.h"
 #include "menu/profile.h"
 #include "menu/sound.h"
 #include "screens.h"
@@ -118,6 +119,7 @@ typedef enum {
     MODE_GRID = 0,
     MODE_EDIT,
     MODE_CONFIRM_REMOVE,
+    MODE_DELETING,              /**< the walk is running; drawn by erase_tick(), not the loop */
 } pmode_t;
 
 enum { EDIT_NAME = 0, EDIT_LOOK, EDIT_ROWS };
@@ -126,7 +128,6 @@ static bool    picking;         /**< entered at boot, so B has nowhere to go bac
 static pmode_t mode;
 static int     cursor;          /**< slot 0..PROFILE_MAX-1 */
 static int     confirm_keep;    /**< 1 = cursor on Keep, which is where it starts */
-static int     confirm_saves;   /**< how many save files the confirmation is offering to destroy */
 static int     edit_row;        /**< #EDIT_NAME or #EDIT_LOOK */
 
 /** Where a name typed on the keyboard lands, and which slot asked for it. */
@@ -317,7 +318,10 @@ static void update_grid (app_t *app) {
             sound_play_effect(SFX_ERROR);
             return;
         }
-        confirm_saves = profile_erase_saves(cursor, app->lib, true);
+        /* No save count any more, and so no dry-run walk here. Counting was this same
+         * one-probe-per-library-record walk over the card, run before the popup could appear --
+         * a music-stopping stall spent pricing a deletion the user usually answers "Keep" to.
+         * The dialog warns unconditionally instead, and the card is only walked by a Delete. */
         confirm_keep = 1;
         mode = MODE_CONFIRM_REMOVE;
         sound_play_effect(SFX_SETTING);
@@ -360,6 +364,40 @@ static void update_edit (app_t *app) {
     }
 }
 
+/* The app whose frame erase_tick() paints -- same pattern as screen_launch's progress_app: the
+ * walk is one blocking call and the main loop is suspended above it, so either the tick draws or
+ * nothing does. */
+static app_t *erase_app;
+static void profiles_render (app_t *app, surface_t *fb);
+
+/**
+ * Called from inside profile_erase_saves(), between card round-trips.
+ *
+ * The mixer first and EVERY time: the whole reason the callback exists is that a few hundred
+ * serial FatFs probes outlast the 316 ms the audio queue holds, and sound_poll() is cheap when
+ * there is nothing to top up. The paint is throttled the way boot_tick() throttles -- a probe is
+ * a few milliseconds and painting each one would cost more than the walk -- and skips rather
+ * than blocks when no framebuffer is free, because a dropped frame of "Deleting..." is invisible
+ * and a stalled walk is not.
+ */
+static void erase_tick (void) {
+    static uint32_t last_paint;
+
+    sound_poll();
+    music_poll();
+
+    uint32_t now = TICKS_READ();
+    if (last_paint != 0 && TIMER_MICROS(TICKS_DISTANCE(last_paint, now)) < 33000) {
+        return;
+    }
+    surface_t *fb = display_try_get();
+    if (fb == NULL) {
+        return;
+    }
+    last_paint = now;
+    profiles_render(erase_app, fb);
+}
+
 static void update_confirm (app_t *app) {
     const input_t *in = &app->input;
 
@@ -381,9 +419,20 @@ static void update_confirm (app_t *app) {
         return;
     }
 
+    /* The dialog leaves, the progress card arrives, and the walk paints its own frames through
+     * erase_tick() -- this call blocks the main loop for its whole duration, which on a full
+     * card is seconds of serial SD probes. The first tick paints immediately, so "Deleting..."
+     * is on screen before the first slow probe rather than after it. */
+    mode = MODE_DELETING;
+    erase_app = app;
+    erase_tick();
+
     /* The saves first, then the profile. That order matters: profile_erase_saves() needs the slot
      * to still exist to name its folder, and profile_remove() clears it. */
-    int gone = profile_erase_saves(cursor, app->lib, false);
+    int gone = profile_erase_saves(cursor, app->lib, erase_tick);
+    /* profile_remove() writes too -- two cache drops and the ini -- so keep the queue topped
+     * across it as well. */
+    erase_tick();
     if (profile_remove(cursor)) {
         debugf("PROFILE removed slot %d, %d save file(s) deleted\n", cursor + 1, gone);
         sound_play_effect(SFX_ENTER);
@@ -410,6 +459,8 @@ static void profiles_update (app_t *app, float dt) {
     switch (mode) {
         case MODE_EDIT:           update_edit(app);    break;
         case MODE_CONFIRM_REMOVE: update_confirm(app); break;
+        case MODE_DELETING:       /* unreachable: the walk blocks inside update_confirm() and
+                                   * leaves this mode before the loop runs again */ break;
         default:                  update_grid(app);    break;
     }
 }
@@ -669,17 +720,12 @@ static void draw_confirm (app_t *app) {
     snprintf(line, sizeof(line), "Remove %s?", profile_name(cursor));
     ui_text(X + 24, Y + 44, W - 48, ALIGN_CENTER, STL_DEFAULT, line);
 
-    /* The count, and it is the whole point of this dialog. "and 41 saved games" is a different
-     * decision from "and no saved games", and the person answering is the only one who can tell
-     * which of the two they are in. */
-    if (confirm_saves > 0) {
-        snprintf(line, sizeof(line), "This deletes %d saved game%s.",
-                 confirm_saves, confirm_saves == 1 ? "" : "s");
-    } else {
-        snprintf(line, sizeof(line), "They have no saved games on this card.");
-    }
-    ui_text(X + 24, Y + 86, W - 48, ALIGN_CENTER,
-            confirm_saves > 0 ? STL_ORANGE : STL_GRAY, line);
+    /* Unconditional, where a count used to be. The count was honest but it was priced in card
+     * time: producing it meant running the same per-record walk the deletion runs, before the
+     * popup could appear, and the stall stopped the music. A warning that is always true costs
+     * nothing and still tells the person the one thing they must know before answering. */
+    ui_text(X + 24, Y + 86, W - 48, ALIGN_CENTER, STL_ORANGE,
+            "Their saved games on this card go too.");
 
     /* Both buttons keep the same plate and the chosen one is outlined, for the same reason the
      * edit rows are: the selected one used to be a white fill with near-black text, which is the
@@ -699,6 +745,30 @@ static void draw_confirm (app_t *app) {
         ui_border(dx, BY, BW, BH, 3, th->text);
     }
     ui_text(dx, BY + 29, BW, ALIGN_CENTER, STL_ORANGE, "Delete");
+}
+
+/** The card shown while the walk runs. Drawn by erase_tick()'s frames, so the dots have to be a
+ *  pure function of the clock -- there is no update() running to animate them. */
+static void draw_deleting (app_t *app) {
+    const theme_t *th = app->theme;
+    char line[64];
+
+    const int W = 520, H = 176;
+    const int X = (SCREEN_W - W) / 2, Y = (SCREEN_H - H) / 2;
+    ui_fill(X, Y, W, H, th->panel);
+    ui_border(X, Y, W, H, 2, th->text_dim);
+
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+
+    snprintf(line, sizeof(line), "Removing %s", profile_name(cursor));
+    ui_text(X + 24, Y + 44, W - 48, ALIGN_CENTER, STL_DEFAULT, line);
+
+    /* One to four dots on a 300 ms clock. Left-aligned from the centre so the line does not
+     * shuffle sideways as the dots come and go. */
+    int dots = 1 + (int)((TICKS_READ() / TICKS_FROM_MS(300)) % 4);
+    snprintf(line, sizeof(line), "Deleting saves%.*s", dots, "....");
+    ui_text(X + W / 2 - 90, Y + 96, 200, ALIGN_LEFT, STL_ORANGE, line);
 }
 
 static void profiles_render (app_t *app, surface_t *fb) {
@@ -722,6 +792,8 @@ static void profiles_render (app_t *app, surface_t *fb) {
         draw_edit(app);
     } else if (mode == MODE_CONFIRM_REMOVE) {
         draw_confirm(app);
+    } else if (mode == MODE_DELETING) {
+        draw_deleting(app);
     }
 
     /* Last, and inside the attach: render() owns the framebuffer from attach to detach, so there
