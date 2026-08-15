@@ -41,6 +41,7 @@
 #include "library/cache.h"
 #include "library/library.h"
 #include "library/locks.h"
+#include "library/playstate.h"
 #include "menu/profile.h"
 
 /* ------------------------------------------------------------------ shims */
@@ -630,6 +631,26 @@ static void test_save_erasure (void) {
     check(access(d, F_OK) == 0, "and are still there afterwards");
 }
 
+static void test_played_monotonic (void) {
+    printf("\nRecent's order survives a dead or backwards clock\n");
+
+    /* The bug this pins: on the M64 the joybus RTC did not answer, every launch stamped the
+     * no-clock fallback (1), and a game played five minutes ago sat at the BOTTOM of Recent
+     * under timestamps from when a clock existed. playstate_played() now lifts any stamp that
+     * does not beat the newest one on the card. */
+    lib_record_t a = {0}, b = {0};
+
+    playstate_played(&a, 1);
+    playstate_played(&b, 1);
+    check(b.last_played > a.last_played, "two dead-clock plays still order");
+
+    playstate_played(&a, 2000000000u);
+    check(a.last_played == 2000000000u, "a sane clock flows through untouched");
+
+    playstate_played(&b, 1999999999u);
+    check(b.last_played > a.last_played, "a clock running backwards cannot demote a fresh play");
+}
+
 int main (void) {
     const char *dir = getenv("TESTDIR");
     snprintf(root, sizeof(root), "%s/", dir ? dir : "build/hosttest/profiledir");
@@ -645,6 +666,7 @@ int main (void) {
     test_ink_default();
     test_default_names();
     test_save_erasure();
+    test_played_monotonic();
     test_locks();
 
     printf("\n%d checks, %d failures\n", checks, failures);

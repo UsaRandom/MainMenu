@@ -51,6 +51,12 @@ _Static_assert(sizeof(ps_record_t) == 24, "playstate record must stay 24 bytes")
 
 static bool dirty;
 
+/** The largest last_played on the card, tracked so playstate_played() can promise monotonicity.
+ *  Seeded by the load's apply loop; 0 on a card with no history, so a clockless console's first
+ *  play stamps 1, its second 2, and so on -- a play counter wearing a timestamp's clothes, which
+ *  is all the Recent tab ever needed from this field. */
+static uint32_t newest_stamp;
+
 void playstate_touch (void) {
     dirty = true;
 }
@@ -99,6 +105,9 @@ void playstate_load (library_t *lib) {
             lib->records[i].last_played = recs[j].last_played;
             lib->records[i].play_count  = recs[j].play_count;
             lib->records[i].flags      |= (recs[j].flags & PS_ACCEPT_FLAGS);
+            if (recs[j].last_played > newest_stamp) {
+                newest_stamp = recs[j].last_played;
+            }
             applied++;
             break;
         }
@@ -161,6 +170,20 @@ bool playstate_save (const library_t *lib) {
 }
 
 void playstate_played (lib_record_t *rec, uint32_t now) {
+    /* Monotonic, whatever the clock said. Recent is an ORDER, not a diary: the tab sorts on this
+     * field and displays no date, so the one property that matters is that the game just played
+     * outranks everything played before it. The wall clock cannot promise that on this hardware
+     * -- the M64's joybus RTC is a clone unknown, and a launch stamped by the no-clock fallback
+     * (1, see play_timestamp()) sank to the BOTTOM of Recent under every archival timestamp,
+     * which is how a fresh play of a game came back from a reset sitting under games from weeks
+     * ago. So a stamp that does not beat the newest one on the card is lifted just past it: with
+     * a dead clock the stamps become a play counter and Recent stays exact; with a live clock
+     * that jumped backwards the same clamp holds; with a live, sane clock this is a no-op and
+     * real times flow through untouched. */
+    if (now <= newest_stamp) {
+        now = newest_stamp + 1;
+    }
+    newest_stamp = now;
     rec->last_played = now;
     rec->play_count++;
     dirty = true;
