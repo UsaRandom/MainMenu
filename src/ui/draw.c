@@ -319,12 +319,15 @@ void ui_button (int x, int y, const char *glyph, uint16_t colour, ui_btn_shape_t
     const btn_style_t *style = btn_style_for(glyph);
 
     if (style != NULL) {
-        /* Centred on the UI_BTN_D cell the call sites lay out with, so a 26 px disc overhangs a
-         * 20 px cell by 3 px each way and every existing footer keeps its arithmetic. Shoulders
-         * hang from x instead: they are 18 px wider than the cell, and centring them would push
-         * 9 px of sprite left into whatever the previous hint drew. */
+        /* Bottom-aligned to the UI_BTN_D cell, not centred: the grid footer lays its hints out
+         * against the bottom of a 480-line screen, and centring a 26 px sprite on the 20 px cell
+         * pushed 3 px of every button below the old glyph's bottom line -- which on the console
+         * was 3 px past the edge of the panel. The cell's bottom edge is the one line every call
+         * site already keeps on screen, so the sprite's extra height goes upward, where the
+         * footer has padding. Shoulders hang from x: they are 18 px wider than the cell, and
+         * centring them would push 9 px of sprite left into whatever the previous hint drew. */
         int sx = style->w == 13 ? x + (UI_BTN_D - 26) / 2 : x;
-        int sy = y + (UI_BTN_D - style->h * 2) / 2;
+        int sy = y + UI_BTN_D - style->h * 2;
 
         btn_spans(style->shell, style->shell_n, sx, sy, BTN_SHELL_COLOUR);
         btn_spans(style->face, style->face_n, sx, sy, style->face_colour);
