@@ -58,6 +58,17 @@ bool mem_small (void);
 unsigned mem_total_bytes (void);
 
 /**
+ * @brief Audio buffers to allocate: the queue's CAPACITY, not its working depth.
+ *
+ * 8 without a pak (~316 ms at 16 kHz), 32 with one (~1.26 s, 80,896 bytes -- libdragon's
+ * bitmask ceiling, not a budget; see memprofile.c). sound_poll() throttles filling to 8
+ * buffers on both profiles, so steady-state latency is identical; the capacity above that is
+ * spent once, by sound_prefill() at boot, so the music can play through the blocking stages
+ * behind the boot plate. See sound.c.
+ */
+int mem_audio_buffers (void);
+
+/**
  * @brief Framebuffers to allocate. 3 with a pak, 2 without.
  *
  * The third costs 614,400 bytes and buys the window background() runs in: with two,

@@ -45,6 +45,25 @@ int mem_fb_count (void) {
     return mem_small() ? 2 : 3;
 }
 
+int mem_audio_buffers (void) {
+    /* 8 buffers is ~316 ms of queue at 16 kHz, which is the working depth on both profiles --
+     * sound_poll() never tops up past it, so sound-effect latency does not change with this
+     * number. The extra capacity on the full profile exists for exactly one moment: boot
+     * prefills the whole queue so the music plays through the blocking stages behind the plate,
+     * and the first second of the song stops skipping on hardware.
+     *
+     * 32 is not a choice, it is libdragon's ceiling: audio.c tracks queued buffers in an int
+     * bitmask (buf_full), and audio_init() clamps anything larger -- asking for 128 produced a
+     * 1,236 ms prefill and a measurement, not 5 s. 32 buffers is ~1.26 s and 80,896 bytes, and
+     * the stretch that skipped on hardware is the ~1 s class (warm-index revalidation; see
+     * sound.c's worst-gap note), so the bank should cover it with margin rather than
+     * comfortably. If hardware says otherwise, the next step is baking bigger buffers into a
+     * libdragon patch, not asking this number for more. The small profile has 93,976 bytes of
+     * measured slack at the design load (memprofile.h), so it keeps 8 and starts the song after
+     * the plate instead. */
+    return mem_small() ? 8 : 32;
+}
+
 /** The largest tile a slot can be asked to hold: a wide cover at 140 x 162, RGBA16 -- divided by
  *  the profile's art divisor in both axes, because that is the size tiles are actually STORED at.
  *  Sizing the pool against the full figure while storing quarter-size tiles is how the first

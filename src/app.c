@@ -285,14 +285,31 @@ static void app_init (app_t *app, boot_params_t *boot_params) {
     hooktest_run();
     mem_report("hooktest");
 
+    /* The full profile starts the song HERE and banks the whole audio allocation -- ~1.26 s at
+     * 16 kHz for 80,896 bytes, libdragon's 32-buffer ceiling rather than the 5 s first asked
+     * for (see mem_audio_buffers()) -- so the music plays through the plate while the fonts and
+     * the scan block, and the first second stops skipping on hardware. The bank has to be filled after
+     * hooktest_run(): that call spends a second with interrupts off, and the AI can only chain
+     * to its next queued buffer through an interrupt, so anything banked before it would play
+     * ~80 ms and then repeat a stale buffer for the rest of the second.
+     *
+     * The small profile keeps the deferral: its queue IS the working depth, there is nothing to
+     * bank, and a song started here would skip exactly the way this exists to prevent. Its song
+     * starts at the plate's lift, from the main loop. */
+    if (!mem_small()) {
+        music_resume();
+        sound_prefill();
+    }
+    mem_report("prefill");
+
     mem_report("pre-fonts");
     fonts_init(NULL);
     mem_report("post-fonts");
-    /* The first feed of the whole program, and deliberately not one line earlier.
-     *
-     * music_prepare() ran well above, and nothing is playing yet -- the song waits for the boot
-     * plate to lift -- so nothing reaches the DAC until somebody polls, and nothing can stutter
-     * before the first poll either. Feeding at display_init() instead was measured and was worse: it filled
+    /* The first ORDINARY feed of the program; on the full profile the prefill above already
+     * banked the queue, and this cadence of boot_tick() feeds is what keeps topping the synth
+     * from here on. On the small profile nothing is playing yet -- the song waits for the boot
+     * plate to lift -- so nothing reaches the DAC until then, and nothing can stutter before
+     * it either. Feeding at display_init() instead was measured and was worse: it filled
      * 316 ms of buffers that then drained through the font load, which is 286,953 us under ares
      * and left 29 ms of margin. Feeding after the fonts costs a silence nobody can perceive --
      * there is nothing playing to compare it against -- and buys the whole buffer back.
@@ -560,10 +577,12 @@ void app_run (boot_params_t *boot_params) {
         }
         app->spin_us += TIMER_MICROS(TICKS_SINCE(spin_start));
 
-        /* The song boot prepared, started at the moment the plate has finished lifting -- see
-         * music_prepare() in app_init for why not a second earlier. One shot, not a standing
-         * call: music_resume() retries a failed load, so calling it every frame would turn one
-         * unreadable file into a per-frame reload attempt for the rest of the session. */
+        /* The small profile's song, started at the moment the plate has finished lifting -- see
+         * music_prepare() in app_init for why not a second earlier. On the full profile the song
+         * began at boot behind the prefill bank and music_resume() no-ops on a playing song, so
+         * this is that path's dead letter. One shot, not a standing call: music_resume() retries
+         * a failed load, so calling it every frame would turn one unreadable file into a
+         * per-frame reload attempt for the rest of the session. */
         static bool music_started;
         if (!music_started && boot_plate_done()) {
             music_started = true;
