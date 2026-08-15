@@ -95,16 +95,20 @@ typedef enum {
 } ui_btn_shape_t;
 
 /**
- * @brief A filled controller-button glyph with a letter in it.
+ * @brief A controller button drawn as the controller wears it.
+ *
+ * Shell, face and glyph as pixel-span sprites, adapted at 2x from garfbargle/n64-game-template
+ * (MIT) -- A blue, B green, START red, C buttons yellow with an arrow, and Z/R/L as the long
+ * grey shoulders they really are, which says "not a face button" faster than any colour could.
  *
  * The one place radius is allowed. docs/design/README.md sets radius 0 everywhere "except baked
- * button glyphs", and this is that exception -- the colours come from the hardware
- * (BTN_A_COLOR and friends) rather than from the theme, because a blue A is blue on every N64
- * regardless of what palette the menu is wearing.
+ * button glyphs", and this is that exception -- the colours are baked into the sprites rather
+ * than taken from the theme, because a blue A is blue on every N64 regardless of what palette
+ * the menu is wearing. @p colour and @p shape only matter to the fallback that draws a glyph
+ * the sprite table does not know; every glyph the screens currently pass is in the table.
  *
- * Shape carries the same information as colour and survives being looked at quickly: Z is under
- * the controller and shaped nothing like A, so drawing it as another coloured disc says "face
- * button" about something that is not one.
+ * A round sprite is 26 px on a #UI_BTN_D (20 px) layout cell and overhangs it 3 px each way;
+ * shoulders are 38 px wide and hang rightward from @p x. ui_hint() accounts for both.
  */
 void ui_button (int x, int y, const char *glyph, uint16_t colour, ui_btn_shape_t shape);
 

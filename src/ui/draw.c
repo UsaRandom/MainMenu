@@ -174,45 +174,168 @@ void ui_label (int x, int y, int w, rdpq_align_t align, int style, const char *s
     ui_text(x, y, w, align, style, s);
 }
 
-/* Half-widths of a 20 px disc, top half only; the bottom mirrors. Baked rather than computed
- * because it never changes and a sqrt per scanline per button per frame is silly.
+/* Controller buttons drawn as the controller wears them: A blue, B green, START red, the
+ * C buttons yellow with a dark arrow, and the shoulders long and grey with the letter cut in.
+ * Three layers each -- a shared near-black shell, a coloured face, a glyph -- from span tables
+ * adapted out of garfbargle/n64-game-template (MIT), engine/src/ui.c. The template draws them
+ * at 320x240; this canvas is 640x480, so every span is doubled, which keeps the pixel-art
+ * edges instead of the smear a fractional scale would make of a 13 px disc.
  *
- * Runs of equal half-width are drawn as one taller rectangle, which takes a disc from 20 fills
- * to 11. Four hints in a footer is then 44 small fills rather than 80.
- */
-static const uint8_t DISC_HW[UI_BTN_D / 2] = { 3, 5, 7, 8, 8, 9, 9, 10, 10, 10 };
+ * Spans are inclusive pixel runs at 1x: {x0, y0, x1, y1}. */
+typedef struct { uint8_t x0, y0, x1, y1; } btn_span_t;
 
-/* The Z trigger, as a tall rectangle: narrower than the face-button discs and the same height, so
- * it reads as taller than it is wide without needing to be bigger than anything around it. */
-#define TALL_W          14
+static const btn_span_t BTN_ROUND_SHELL[] = {
+    {4, 0, 8, 0}, {2, 1, 10, 1}, {1, 2, 11, 3}, {0, 4, 12, 8},
+    {1, 9, 11, 10}, {2, 11, 10, 11}, {4, 12, 8, 12}
+};
+static const btn_span_t BTN_ROUND_FACE[] = {
+    {4, 1, 8, 1}, {2, 2, 10, 3}, {1, 4, 11, 8}, {2, 9, 10, 10}, {4, 11, 8, 11}
+};
+static const btn_span_t BTN_WIDE_SHELL[] = {
+    {2, 0, 16, 0}, {1, 1, 17, 1}, {0, 2, 18, 8}, {1, 9, 17, 9}, {2, 10, 16, 10}
+};
+static const btn_span_t BTN_WIDE_FACE[] = {
+    {2, 1, 16, 1}, {1, 2, 17, 8}, {2, 9, 16, 9}
+};
+
+/* Five-by-seven letters, matching the template's own UI font proportions. */
+static const btn_span_t GLYPH_A[] = {
+    {1, 0, 3, 0}, {0, 1, 0, 2}, {4, 1, 4, 2}, {0, 3, 4, 3}, {0, 4, 0, 6}, {4, 4, 4, 6}
+};
+static const btn_span_t GLYPH_B[] = {
+    {0, 0, 3, 0}, {0, 1, 0, 2}, {4, 1, 4, 2}, {0, 3, 3, 3}, {0, 4, 0, 5}, {4, 4, 4, 5},
+    {0, 6, 3, 6}
+};
+static const btn_span_t GLYPH_S[] = {
+    {1, 0, 4, 0}, {0, 1, 0, 2}, {1, 3, 3, 3}, {4, 4, 4, 5}, {0, 6, 3, 6}
+};
+static const btn_span_t GLYPH_L[] = {
+    {0, 0, 0, 5}, {0, 6, 4, 6}
+};
+static const btn_span_t GLYPH_R[] = {
+    {0, 0, 3, 0}, {0, 1, 0, 2}, {4, 1, 4, 2}, {0, 3, 3, 3}, {0, 4, 0, 6}, {3, 4, 3, 4},
+    {4, 5, 4, 6}
+};
+static const btn_span_t GLYPH_Z[] = {
+    {0, 0, 4, 0}, {4, 1, 4, 1}, {3, 2, 3, 2}, {2, 3, 2, 3}, {1, 4, 1, 4}, {0, 5, 0, 5},
+    {0, 6, 4, 6}
+};
+
+/* Arrows with a two-row base, so they stay solid triangles rather than thin darts. */
+static const btn_span_t GLYPH_UP[] = {
+    {3, 0, 3, 0}, {2, 1, 4, 1}, {1, 2, 5, 2}, {0, 3, 6, 4}
+};
+static const btn_span_t GLYPH_DOWN[] = {
+    {0, 0, 6, 1}, {1, 2, 5, 2}, {2, 3, 4, 3}, {3, 4, 3, 4}
+};
+static const btn_span_t GLYPH_LEFT[] = {
+    {3, 0, 4, 0}, {2, 1, 4, 1}, {1, 2, 4, 2}, {0, 3, 4, 3}, {1, 4, 4, 4}, {2, 5, 4, 5},
+    {3, 6, 4, 6}
+};
+static const btn_span_t GLYPH_RIGHT[] = {
+    {0, 0, 1, 0}, {0, 1, 2, 1}, {0, 2, 3, 2}, {0, 3, 4, 3}, {0, 4, 3, 4}, {0, 5, 2, 5},
+    {0, 6, 1, 6}
+};
+
+typedef struct {
+    const btn_span_t *shell, *face, *glyph;
+    uint8_t shell_n, face_n, glyph_n;
+    uint8_t glyph_x, glyph_y;       /* at 1x, from the sprite's own corner */
+    uint8_t w, h;                   /* at 1x */
+    uint16_t face_colour, glyph_colour;
+} btn_style_t;
+
+/* One shell colour under every button, so a footer's row reads as one family. The faces are the
+ * controller's own colours, same as the BTN_*_COLOR constants these sprites replaced -- the
+ * theme never touches them, because a blue A is blue on every N64. */
+#define BTN_SHELL_COLOUR    RGBA5551(10, 10, 12)
+#define BTN_LETTER_WHITE    RGBA5551(238, 240, 245)
+#define BTN_ARROW_DARK      RGBA5551(38, 30, 6)
+#define BTN_SHOULDER_GREY   RGBA5551(168, 170, 175)
+#define BTN_SHOULDER_DARK   RGBA5551(32, 33, 36)
+
+#define ROUND(g, gx, gy, face_c, glyph_c) \
+    { BTN_ROUND_SHELL, BTN_ROUND_FACE, g, 7, 5, sizeof(g) / sizeof(btn_span_t), \
+      gx, gy, 13, 13, face_c, glyph_c }
+#define WIDE(g, face_c, glyph_c) \
+    { BTN_WIDE_SHELL, BTN_WIDE_FACE, g, 5, 3, sizeof(g) / sizeof(btn_span_t), \
+      7, 2, 19, 11, face_c, glyph_c }
+
+static const btn_style_t BTN_STYLE_A     = ROUND(GLYPH_A, 4, 3, RGBA5551(52, 104, 198), BTN_LETTER_WHITE);
+static const btn_style_t BTN_STYLE_B     = ROUND(GLYPH_B, 4, 3, RGBA5551(56, 158, 84), BTN_LETTER_WHITE);
+static const btn_style_t BTN_STYLE_START = ROUND(GLYPH_S, 4, 3, RGBA5551(198, 52, 48), BTN_LETTER_WHITE);
+static const btn_style_t BTN_STYLE_C_U   = ROUND(GLYPH_UP, 3, 4, BTN_C_COLOR, BTN_ARROW_DARK);
+static const btn_style_t BTN_STYLE_C_D   = ROUND(GLYPH_DOWN, 3, 4, BTN_C_COLOR, BTN_ARROW_DARK);
+static const btn_style_t BTN_STYLE_C_L   = ROUND(GLYPH_LEFT, 4, 3, BTN_C_COLOR, BTN_ARROW_DARK);
+static const btn_style_t BTN_STYLE_C_R   = ROUND(GLYPH_RIGHT, 4, 3, BTN_C_COLOR, BTN_ARROW_DARK);
+static const btn_style_t BTN_STYLE_L     = WIDE(GLYPH_L, BTN_SHOULDER_GREY, BTN_SHOULDER_DARK);
+static const btn_style_t BTN_STYLE_R     = WIDE(GLYPH_R, BTN_SHOULDER_GREY, BTN_SHOULDER_DARK);
+static const btn_style_t BTN_STYLE_Z     = WIDE(GLYPH_Z, BTN_SHOULDER_GREY, BTN_SHOULDER_DARK);
+
+/* Which sprite a call means, from the glyph the call sites already pass. The shape parameter
+ * stops mattering for anything the table knows: Z arrives as UI_BTN_TALL and comes out a
+ * shoulder, which is a better answer to the same question the tall rectangle was answering. */
+static const btn_style_t *btn_style_for (const char *glyph) {
+    if (glyph == NULL || glyph[0] == '\0' || glyph[1] != '\0') {
+        return NULL;
+    }
+    switch (glyph[0]) {
+        case 'A': return &BTN_STYLE_A;
+        case 'B': return &BTN_STYLE_B;
+        case 'S': return &BTN_STYLE_START;
+        case '^': return &BTN_STYLE_C_U;
+        case 'v': return &BTN_STYLE_C_D;
+        case '<': return &BTN_STYLE_C_L;
+        case '>': return &BTN_STYLE_C_R;
+        case 'L': return &BTN_STYLE_L;
+        case 'R': return &BTN_STYLE_R;
+        case 'Z': return &BTN_STYLE_Z;
+        default:  return NULL;
+    }
+}
+
+static void btn_spans (const btn_span_t *spans, int n, int x, int y, uint16_t c) {
+    for (int i = 0; i < n; i++) {
+        ui_fill(x + spans[i].x0 * 2, y + spans[i].y0 * 2,
+                (spans[i].x1 - spans[i].x0 + 1) * 2, (spans[i].y1 - spans[i].y0 + 1) * 2, c);
+    }
+}
+
+/* The sprite's drawn width: wider than the UI_BTN_D layout cell for the shoulders, which is the
+ * one case ui_hint has to move its label for. */
+static int btn_sprite_w (const btn_style_t *style) {
+    return style != NULL ? style->w * 2 : UI_BTN_D;
+}
 
 void ui_button (int x, int y, const char *glyph, uint16_t colour, ui_btn_shape_t shape) {
-    int cx = x + UI_BTN_D / 2;
+    const btn_style_t *style = btn_style_for(glyph);
 
-    if (shape == UI_BTN_TALL) {
-        ui_fill(cx - TALL_W / 2, y, TALL_W, UI_BTN_D, colour);
-    } else {
-        for (int i = 0; i < UI_BTN_D / 2; ) {
-            int hw = DISC_HW[i];
-            int run = 1;
-            while (i + run < UI_BTN_D / 2 && DISC_HW[i + run] == hw) {
-                run++;
-            }
-            /* Top half and its mirror in one pass, so the two stay symmetric by construction. */
-            ui_fill(cx - hw, y + i, hw * 2, run, colour);
-            ui_fill(cx - hw, y + UI_BTN_D - i - run, hw * 2, run, colour);
-            i += run;
-        }
+    if (style != NULL) {
+        /* Centred on the UI_BTN_D cell the call sites lay out with, so a 26 px disc overhangs a
+         * 20 px cell by 3 px each way and every existing footer keeps its arithmetic. Shoulders
+         * hang from x instead: they are 18 px wider than the cell, and centring them would push
+         * 9 px of sprite left into whatever the previous hint drew. */
+        int sx = style->w == 13 ? x + (UI_BTN_D - 26) / 2 : x;
+        int sy = y + (UI_BTN_D - style->h * 2) / 2;
+
+        btn_spans(style->shell, style->shell_n, sx, sy, BTN_SHELL_COLOUR);
+        btn_spans(style->face, style->face_n, sx, sy, style->face_colour);
+        btn_spans(style->glyph, style->glyph_n,
+                  sx + style->glyph_x * 2, sy + style->glyph_y * 2, style->glyph_colour);
+        return;
     }
 
-    /* Baseline sits low in the disc because the font's ascent is most of its box; centring on
-     * the geometric middle puts the letter visibly high.
-     *
-     * The caret is the exception and needs another 4 px. Every other glyph on a button is a
-     * capital or an arrow that fills the cap height downwards; `^` is the one whose ink sits
-     * entirely at the TOP of the cap box, so the baseline that centres a letter pushes it out
-     * through the top of the disc. It looked like a clipped sprite on the code pad, which is the
-     * only screen that draws one. */
+    /* No sprite for this glyph: the flat disc these sprites replaced, kept for the odd caller
+     * with a one-off character. Baseline sits low in the disc because the font's ascent is most
+     * of its box; the caret is the one glyph whose ink sits at the TOP of the cap box and needs
+     * pushing back down. */
+    if (shape == UI_BTN_TALL) {
+        ui_fill(x + UI_BTN_D / 2 - 7, y, 14, UI_BTN_D, colour);
+    } else {
+        ui_fill(x + 2, y + 2, UI_BTN_D - 4, UI_BTN_D - 4, colour);
+        ui_fill(x + 5, y, UI_BTN_D - 10, UI_BTN_D, colour);
+        ui_fill(x, y + 5, UI_BTN_D, UI_BTN_D - 10, colour);
+    }
     int baseline = y + UI_BTN_D - 5 + ((glyph != NULL && glyph[0] == '^') ? 4 : 0);
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
@@ -221,11 +344,18 @@ void ui_button (int x, int y, const char *glyph, uint16_t colour, ui_btn_shape_t
 
 int ui_hint (int x, int y, const char *glyph, uint16_t colour, ui_btn_shape_t shape,
              const char *label) {
+    int w = btn_sprite_w(btn_style_for(glyph));
+
+    /* Round sprites keep the 20 px cell's metrics: their 3 px overhang eats gap, not label.
+     * Shoulders really are wider, so their label and the next hint both move right with them. */
+    if (w < UI_BTN_D) {
+        w = UI_BTN_D;
+    }
     ui_button(x, y, glyph, colour, shape);
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
-    ui_text(x + UI_BTN_D + 6, y + UI_BTN_D - 5, 200, ALIGN_LEFT, STL_GRAY, label);
+    ui_text(x + w + 6, y + UI_BTN_D - 5, 200, ALIGN_LEFT, STL_GRAY, label);
     /* 12 px a glyph, matching the metric the detail sheet uses for its row wrapping. Both
      * follow the body font: at size 20 Firple-Bold is near enough monospace for layout. */
-    return x + UI_BTN_D + 6 + (int)strlen(label) * 12 + 20;
+    return x + w + 6 + (int)strlen(label) * 12 + 20;
 }

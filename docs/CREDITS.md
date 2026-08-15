@@ -170,6 +170,8 @@ They are MIDI, not recordings. The console holds the notes and plays them itself
 - midi64, for music synthesis. MIT.
 - acutest, for the host test suite. MIT. Not shipped in the cartridge.
 - svg64, for icon rasterisation. MIT.
+- n64-game-template, whose controller-button sprite tables the footer hints are adapted from. MIT.
+  https://github.com/garfbargle/n64-game-template
 
 Two more arrive inside libdragon and are linked into this cartridge, so they are named here even
 though this project did not choose them:
