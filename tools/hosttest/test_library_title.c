@@ -54,16 +54,16 @@ int main (void) {
     CHECK(fn != NULL && strcmp(fn, "no-dir") == 0, "basename only");
     free(fn);
 
-    /* The scan root is often "sd:/" with a trailing separator. "%s/%s" stacked another and the
-     * signature walk hashed a different string than the scan stored, so a warm boot looked like
-     * a card that had moved. */
+    /* The scan root is "sd:/". Child joins stack a slash, on purpose: that is the spelling
+     * already hashed into library.idx and thumbs.pak. Collapsing it is a card-wide cache miss.
+     * The two walks share this helper so they cannot disagree with each other either. */
     char joined[64];
     library_join_child(joined, sizeof(joined), "sd:/roms", "game.z64");
     CHECK(strcmp(joined, "sd:/roms/game.z64") == 0, "join without trailing slash");
     library_join_child(joined, sizeof(joined), "sd:/", "roms");
-    CHECK(strcmp(joined, "sd:/roms") == 0, "join with trailing slash does not stack");
+    CHECK(strcmp(joined, "sd://roms") == 0, "sd:/ plus child keeps the doubled slash");
     library_join_child(joined, sizeof(joined), "sd:/", "cover.png");
-    CHECK(strcmp(joined, "sd:/cover.png") == 0, "root file with trailing slash");
+    CHECK(strcmp(joined, "sd://cover.png") == 0, "root file keeps it too");
 
     library_t *lib = library_init();
     CHECK(lib != NULL, "init");

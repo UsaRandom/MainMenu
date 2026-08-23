@@ -415,12 +415,17 @@ static bool classify (const char *name, uint8_t *system) {
 }
 
 void library_join_child (char *out, size_t cap, const char *dir, const char *name) {
-    size_t dl = strlen(dir);
-    if (dl > 0 && dir[dl - 1] == '/') {
-        snprintf(out, cap, "%s%s", dir, name);
-    } else {
-        snprintf(out, cap, "%s/%s", dir, name);
-    }
+    /* Always insert a slash, even when dir already ends in one.
+     *
+     * The scan root is "sd:/" (library_join already folded the prefix). "%s/%s" then produces
+     * "sd://roms/...", and that is the string library.idx fingerprints and thumbs.pak hashes.
+     * Collapsing it to "sd:/roms/..." is prettier and FatFs would not care -- the card this
+     * shipped to had been launching those paths for weeks -- but every directory hash moves,
+     * the index looks at a whole tree that "changed", and every loose cover is a cache miss.
+     * One boot of PNG decode for a spelling change. The two walks share this helper so they
+     * cannot disagree with each other; they must also not disagree with the files already
+     * on people's cards. */
+    snprintf(out, cap, "%s/%s", dir, name);
 }
 
 /** @brief Filename without directory or extension, as a fallback display title. */
