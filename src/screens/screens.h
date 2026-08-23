@@ -77,6 +77,14 @@ void screens_register (const screen_t **table);
  */
 void screen_grid_draw_rail (app_t *app, bool chip_selected);
 
+/**
+ * @brief Put the grid cursor on @p rom_id the next time the grid is entered.
+ *
+ * A rename qsorts the library, so the view index the user left on is a different game. Applied
+ * on enter rather than immediately: the sheet is still up, and the grid's view is rebuilt there.
+ */
+void screen_grid_focus (int rom_id);
+
 bool screen_profiles_needed (void);
 
 /** @brief Mark the next entry to SCREEN_PROFILES as the boot question rather than the editor. */

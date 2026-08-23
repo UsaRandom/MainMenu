@@ -54,6 +54,17 @@ int main (void) {
     CHECK(fn != NULL && strcmp(fn, "no-dir") == 0, "basename only");
     free(fn);
 
+    /* The scan root is often "sd:/" with a trailing separator. "%s/%s" stacked another and the
+     * signature walk hashed a different string than the scan stored, so a warm boot looked like
+     * a card that had moved. */
+    char joined[64];
+    library_join_child(joined, sizeof(joined), "sd:/roms", "game.z64");
+    CHECK(strcmp(joined, "sd:/roms/game.z64") == 0, "join without trailing slash");
+    library_join_child(joined, sizeof(joined), "sd:/", "roms");
+    CHECK(strcmp(joined, "sd:/roms") == 0, "join with trailing slash does not stack");
+    library_join_child(joined, sizeof(joined), "sd:/", "cover.png");
+    CHECK(strcmp(joined, "sd:/cover.png") == 0, "root file with trailing slash");
+
     library_t *lib = library_init();
     CHECK(lib != NULL, "init");
 
@@ -102,6 +113,25 @@ int main (void) {
           "one leftover unique header stays the header");
     CHECK(strcmp(by_path(lib, "/b/Zelda - Named.z64")->title, "Master Quest") == 0,
           "custom still wins when it is the only other copy");
+
+    library_free(lib);
+    lib = library_init();
+
+    /* A rename qsorts. The index a caller was holding is then a different game -- look up by
+     * path, which is what screen_detail and the art pool have to do after C-up. */
+    add(lib, "/z.z64", "Zelda", 0);
+    add(lib, "/a.z64", "Mario", 0);
+    library_finish(lib);
+    CHECK(library_find_path(lib, "/a.z64") == 0, "sorted by title, A first");
+    CHECK(library_find_path(lib, "/z.z64") == 1, "Z after A");
+    int z = library_find_path(lib, "/z.z64");
+    free(lib->records[z].given);
+    lib->records[z].given = strdup("Alpha");
+    lib->records[z].flags |= LIBF_CUSTOM_TITLE;
+    library_finish(lib);
+    CHECK(library_find_path(lib, "/z.z64") == 0, "renamed game moved; look up by path");
+    CHECK(library_find_path(lib, "/a.z64") == 1, "the other game slid down");
+    CHECK(strcmp(lib->records[0].title, "Alpha") == 0, "display follows the new given");
 
     library_free(lib);
 

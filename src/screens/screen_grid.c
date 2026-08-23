@@ -43,6 +43,7 @@ static int view_count;
 
 static tab_t tab = TAB_N64;      /**< replaced at first entry; see pick_opening_tab() */
 static int cursor;              /**< index into view[] */
+static int focus_rom = -1;      /**< rom_id to land on at next enter, or -1 */
 
 static float scroll_y;          /**< pixels, content space; always rounded before use */
 static float scroll_target;
@@ -147,6 +148,10 @@ static void measure_cells (app_t *app) {
     /* Derived rather than stored beside the width, so the two can never disagree: whatever width
      * the tallest shape earned, this is how many of them fit. */
     cols = (GRID_W + TILE_GAP) / (cell_w + TILE_GAP);
+}
+
+void screen_grid_focus (int rom_id) {
+    focus_rom = rom_id;
 }
 
 static void rebuild_view (app_t *app) {
@@ -674,6 +679,16 @@ static void grid_enter (app_t *app) {
      * a scroll that animates from wherever it left off would play under a screen nobody can see
      * and arrive looking like a jump. */
     rebuild_view(app);
+    if (focus_rom >= 0) {
+        for (int i = 0; i < view_count; i++) {
+            if ((int)view[i] == focus_rom) {
+                cursor = i;
+                marquee_t = 0.0f;
+                break;
+            }
+        }
+        focus_rom = -1;
+    }
     retarget_scroll();
     scroll_y = scroll_target;
     tween_start(&grow, DUR_TILE_GROW);

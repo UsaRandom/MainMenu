@@ -211,7 +211,7 @@ static void sig_dir (sigwalk_t *w, const char *dir, int depth,
                 sig->size_sum += (uint64_t)(info.d_size > 0 ? info.d_size : 0);
                 if (w->detail && library_is_art_name(info.d_name)) {
                     char full[512];
-                    snprintf(full, sizeof(full), "%s/%s", dir, info.d_name);
+                    library_join_child(full, sizeof(full), dir, info.d_name);
                     sig_note_art(w, full);
                 }
             }
@@ -230,7 +230,7 @@ static void sig_dir (sigwalk_t *w, const char *dir, int depth,
 
     for (int i = 0; i < kid_count && !w->overflow; i++) {
         char child[512];
-        snprintf(child, sizeof(child), "%s/%s", dir, kids[i]);
+        library_join_child(child, sizeof(child), dir, kids[i]);
         sig_dir(w, child, depth + 1, on_tick);
     }
     free(kids);

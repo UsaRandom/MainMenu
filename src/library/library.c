@@ -414,6 +414,15 @@ static bool classify (const char *name, uint8_t *system) {
     return false;
 }
 
+void library_join_child (char *out, size_t cap, const char *dir, const char *name) {
+    size_t dl = strlen(dir);
+    if (dl > 0 && dir[dl - 1] == '/') {
+        snprintf(out, cap, "%s%s", dir, name);
+    } else {
+        snprintf(out, cap, "%s/%s", dir, name);
+    }
+}
+
 /** @brief Filename without directory or extension, as a fallback display title. */
 static char *title_from_filename (const char *name) {
     const char *dot = strrchr(name, '.');
@@ -625,7 +634,7 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
         }
 
         char child[512];
-        snprintf(child, sizeof(child), "%s/%s", dir, names[i]);
+        library_join_child(child, sizeof(child), dir, names[i]);
 
         if (skipped_file(names[i])) {
             /* Nothing at all: not a game, and not art either. */
@@ -669,7 +678,7 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
             continue;
         }
         char child[512];
-        snprintf(child, sizeof(child), "%s/%s", dir, names[i]);
+        library_join_child(child, sizeof(child), dir, names[i]);
         added += scan_dir(lib, child, depth + 1, on_progress, true);
     }
 

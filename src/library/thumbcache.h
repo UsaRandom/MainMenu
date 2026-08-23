@@ -147,6 +147,25 @@ bool thumbcache_fetch (thumbcache_t *tc, library_t *lib, uint32_t budget_us);
 void thumbcache_reshape (thumbcache_t *tc, library_t *lib);
 
 /**
+ * @brief Remember which resident tiles belong to which games, by path, before the records move.
+ *
+ * The RAM pool is keyed on rom_id -- an index into library.records. library_finish() qsorts that
+ * array when a display name changes, so every slot would then hold someone else's art (or, for
+ * any id that no longer matches a slot, ART_READY with no surface: a permanent blank, because
+ * the decoder only starts ART_PENDING records). Call this, then the sort, then #thumbcache_rebind.
+ */
+void thumbcache_prepare_shuffle (thumbcache_t *tc, const library_t *lib);
+
+/**
+ * @brief Point every resident slot at the record that still owns its pixels, after a sort.
+ *
+ * Also forget the per-index size memo and the wanted list, both of which are rom_id arrays,
+ * and drop any decode in flight (its callback holds a record pointer that qsort invalidates).
+ * Does not drop the atlas: thumbs.pak is keyed by source path, which did not move.
+ */
+void thumbcache_rebind (thumbcache_t *tc, library_t *lib);
+
+/**
  * @brief The tile shape @p rec's art is cut to: its own snapped shape, or its system's.
  *
  * The grid needs this for the row height and the detail sheet for its art panel, both of which

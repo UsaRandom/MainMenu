@@ -117,15 +117,22 @@ static void apply_pending_rename (app_t *app) {
         return;
     }
 
+    /* The RAM art pool is keyed on rom_id. library_set_title qsorts the records, so every
+     * slot would then hold the wrong game -- or ART_READY with no surface, which the decoder
+     * will not restart, which is a blank tile until the next boot. */
+    thumbcache_prepare_shuffle(app->thumbs, app->lib);
     if (!library_set_title(app->lib, &app->lib->records[id], pending_name)) {
         sound_play_effect(SFX_ERROR);
         return;
     }
+    thumbcache_rebind(app->thumbs, app->lib);
 
     /* library_finish sorts, so the index we opened this sheet with is stale. */
     int found = library_find_path(app->lib, pending_path);
     if (found >= 0) {
         app->launch.rom_id = found;
+        cheats_for_rom = found;
+        screen_grid_focus(found);
     }
 }
 

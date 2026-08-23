@@ -235,6 +235,9 @@ lib_record_t *library_push (library_t *lib);
  */
 void library_join (char *out, size_t cap, const char *storage_prefix, const char *root);
 
+/** @brief Join a directory and a name without stacking slashes. Shared with libindex.c. */
+void library_join_child (char *out, size_t cap, const char *dir, const char *name);
+
 /**
  * @brief Is @p name a directory the scan refuses to enter?
  *

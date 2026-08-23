@@ -115,6 +115,7 @@ struct thumbcache_s {
  * left alone deliberately: the job here is inherently serial and a decoder pool would add
  * concurrency to something bounded by CPU, not by latency. */
 static thumbcache_t *active;
+static int find_slot (thumbcache_t *tc, uint16_t rom_id);
 
 /** The library thumbcache_run() is working against. decode_done() is a callback from the image
  *  decoder and is handed only the record, but it needs the library to mark the index stale. */
@@ -161,6 +162,96 @@ void thumbcache_free (thumbcache_t *tc) {
         active = NULL;
     }
     free(tc);
+}
+
+static const char *shuffle_path[THUMB_SLOTS];
+static bool        shuffle_armed;
+
+void thumbcache_prepare_shuffle (thumbcache_t *tc, const library_t *lib) {
+    shuffle_armed = false;
+    if (tc == NULL || lib == NULL) {
+        return;
+    }
+    for (int i = 0; i < THUMB_SLOTS; i++) {
+        shuffle_path[i] = NULL;
+        if (tc->slots[i].used && tc->slots[i].rom_id < (uint16_t)lib->count) {
+            shuffle_path[i] = lib->records[tc->slots[i].rom_id].path;
+        }
+    }
+    shuffle_armed = true;
+}
+
+void thumbcache_rebind (thumbcache_t *tc, library_t *lib) {
+    if (tc == NULL || lib == NULL || !shuffle_armed) {
+        return;
+    }
+    shuffle_armed = false;
+
+    for (int i = 0; i < THUMB_SLOTS; i++) {
+        if (!tc->slots[i].used) {
+            continue;
+        }
+        int id = library_find_path(lib, shuffle_path[i]);
+        if (id >= 0) {
+            tc->slots[i].rom_id = (uint16_t)id;
+        } else {
+            if (tc->slots[i].art != NULL) {
+                surface_free(tc->slots[i].art);
+                free(tc->slots[i].art);
+                tc->slots[i].art = NULL;
+                tc->resident--;
+            }
+            tc->slots[i].used = false;
+            tc->slots[i].rom_id = 0xFFFF;
+        }
+    }
+
+    /* decode_done is handed a lib_record_t * and the in-flight slot has used=false, so the
+     * remap above never moved its rom_id. After qsort that pointer is a different game:
+     * keeping the decode would write ART_READY onto whoever landed in the old hole. Drop it;
+     * one PNG is cheaper than a wrong (or permanently blank) tile. Abort does not call back. */
+    if (tc->decoding_slot >= 0) {
+        image_decoder_abort();
+        int s = tc->decoding_slot;
+        if (tc->slots[s].art != NULL) {
+            surface_free(tc->slots[s].art);
+            free(tc->slots[s].art);
+            tc->slots[s].art = NULL;
+        }
+        tc->slots[s].used = false;
+        tc->slots[s].rom_id = 0xFFFF;
+        tc->decoding_slot = -1;
+    }
+
+    /* Per-index memo: after a sort it describes the previous occupant of that slot. */
+    for (int i = 0; i < tc->art_bytes_n; i++) {
+        tc->art_bytes[i] = -2;
+    }
+    tc->wanted_n = 0;
+    tc->idle = false;
+
+    /* ART_READY means "the pixels are in a RAM slot at this rom_id". Any record that still
+     * claims that without a slot is the blank-until-reboot case: get() queues it, run() skips
+     * it for not being PENDING. ART_DECODING without a decoder is the same trap for the one
+     * title that was in flight. */
+    for (int i = 0; i < lib->count; i++) {
+        if (lib->records[i].art_state == ART_DECODING) {
+            lib->records[i].art_state = ART_PENDING;
+        } else if (lib->records[i].art_state == ART_READY && find_slot(tc, (uint16_t)i) < 0) {
+            lib->records[i].art_state = ART_PENDING;
+        }
+    }
+
+    /* build_next is an index, and build_done's rec * is as stale as decode_done's. The atlas
+     * is keyed by path so restarting the walk only re-hits. */
+    if (!tc->build_complete) {
+        if (tc->build_active) {
+            image_decoder_abort();
+            tc->build_active = false;
+            tc->build_rec = NULL;
+        }
+        tc->build_next = 0;
+    }
 }
 
 void thumbcache_reshape (thumbcache_t *tc, library_t *lib) {

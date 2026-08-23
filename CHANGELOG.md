@@ -42,7 +42,7 @@ One theme: a library of hacks of the same cartridge used to be five copies of on
 
 - **Titles**
 	- **Games that share a cartridge header show their file names instead.** The 20-byte ROM title is unique for a retail dump and identical for every hack of it, so the grid could not tell them apart. After the library is assembled, a given name that appears more than once is replaced on screen by the filename -- region tags and `[!]` kept, extension dropped. A leftover unique header still shows the header.
-	- **C-up on a game's page names it.** The keyboard is seeded with the display title. The name is written as `display_name` under `[menu]` in a `.ini` next to the ROM, the same sidecar that already holds boot overrides, so it travels with the file. Empty plus Done reverts. Keyed by path, not game code, or two hacks of the same cart would share one name. A read-only card refuses the write and leaves the title alone.
+	- **C-up on a game's page names it.** The keyboard is seeded with the display title. The name is written as `display_name` under `[menu]` in a `.ini` next to the ROM, the same sidecar that already holds boot overrides, so it travels with the file. Empty plus Done reverts. Keyed by path, not game code, or two hacks of the same cart would share one name. A read-only card refuses the write and leaves the title alone. Renaming used to qsort the library under a RAM art pool keyed on array index, so every title that slid down the list went blank until reboot.
 	- **The game's page shows the file path**, at the bottom of the sheet, with the storage prefix (`rom:`, `sd:`) stripped. It appears only once the sheet has finished opening and is gone the instant close starts, so it does not ride the animation.
 
 - **Long strings**
