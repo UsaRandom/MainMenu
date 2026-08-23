@@ -84,6 +84,11 @@ $CC $CFLAGS tools/hosttest/test_libindex.c src/library/libindex.c src/library/li
 TESTDIR="$OUT/idxdir" "$OUT/test_libindex" 2>/dev/null
 
 echo
+echo "== display titles: collision, custom skip, tags kept"
+$CC $CFLAGS tools/hosttest/test_library_title.c src/library/library.c -o "$OUT/test_library_title"
+"$OUT/test_library_title"
+
+echo
 echo "== loose art: sorted, deduplicated, found by bsearch"
 rm -rf "$OUT/artdir"
 mkdir -p "$OUT/artdir"

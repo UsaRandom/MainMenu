@@ -36,6 +36,25 @@
 ### Deprecation notices
 - None.
 
+## Release Notes 2026-08-23 - Tagged 1.3.0
+
+One theme: a library of hacks of the same cartridge used to be five copies of one name.
+
+- **Titles**
+	- **Games that share a cartridge header show their file names instead.** The 20-byte ROM title is unique for a retail dump and identical for every hack of it, so the grid could not tell them apart. After the library is assembled, a given name that appears more than once is replaced on screen by the filename -- region tags and `[!]` kept, extension dropped. A leftover unique header still shows the header.
+	- **C-up on a game's page names it.** The keyboard is seeded with the display title. The name is written as `display_name` under `[menu]` in a `.ini` next to the ROM, the same sidecar that already holds boot overrides, so it travels with the file. Empty plus Done reverts. Keyed by path, not game code, or two hacks of the same cart would share one name. A read-only card refuses the write and leaves the title alone.
+	- **The game's page shows the file path**, at the bottom of the sheet, with the storage prefix (`rom:`, `sd:`) stripped. It appears only once the sheet has finished opening and is gone the instant close starts, so it does not ride the animation.
+
+- **Long strings**
+	- **Titles that do not fit scroll**, on the grid footer and on the sheet heading. The old no-marquee rule assumed 608 px was enough for a 20-character header; filenames are not that short. Tiles still do not marquee.
+	- **The keyboard field scrolls to keep the caret on screen.** It used to clip at about 24 characters and then hide the caret, so a long name was untypable past that point. The `n / 63` counter owns a strip on the right; the field starts scrolling before a glyph can land on it.
+	- **Up off the top row of keys puts the cursor in the box.** Left and Right walk an insertion point through the name; typing from the keys inserts there, so a one-letter fix is not a retype. Down lands on the key under the caret.
+
+- **Documentation**
+	- CARD.md covers C-up, collision titles, and the sidecar key.
+
+No index-format bump. An existing `library.idx` still loads; display titles are recomputed on every assembly. Old cards keep working.
+
 ## Release Notes 2026-08-15 - Tagged 1.2.0
 
 Two themes: the console stopped stalling the music, and what the hardware taught went into the

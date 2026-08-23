@@ -174,6 +174,11 @@ typedef struct {
         uint32_t age_rating;        /**< The minimum game age rating */
         char *short_description;    /**< The short game description */
     } meta;                         /**< The ROM metadata */
+
+    /** Typed display name from `<rom>.ini` `[menu] display_name`, or NULL. Owned; free with
+     *  rom_info_free_meta(). Distinct from meta.name, which is homebrew metadata and must not
+     *  be clobbered by a rename. */
+    char *display_name;
 } rom_info_t;
 
 /**
@@ -263,6 +268,14 @@ rom_tv_type_t rom_info_get_tv_type(rom_info_t *rom_info);
  * `@note` Only frees the meta struct fields, not the rom_info_t itself
  */
 void rom_info_free_meta(rom_info_t *rom_info);
+
+/**
+ * @brief Write or delete `[menu] display_name` in the ROM's `.ini` sidecar.
+ *
+ * Empty or NULL @p name deletes the key. The file is removed if that leaves it empty, same as
+ * the boot-override writers. ROM_ERR_SAVE_IO on a card that cannot be written.
+ */
+rom_err_t rom_config_set_display_name (path_t *path, const char *name);
 
 /**
  * @brief Override the TV type for the ROM.

@@ -49,6 +49,7 @@ static int checks = 0;
 path_t *path_create (const char *p) { (void)p; return NULL; }
 void path_free (path_t *p) { (void)p; }
 rom_err_t rom_config_load (path_t *p, rom_info_t *ri) { (void)p; (void)ri; return 0; }
+rom_err_t rom_config_set_display_name (path_t *p, const char *n) { (void)p; (void)n; return 0; }
 void rom_info_free_meta (rom_info_t *ri) { (void)ri; }
 rom_save_type_t rom_info_get_save_type (rom_info_t *ri) { (void)ri; return 0; }
 void rom_info_set_dir_listing (const char *const *n, int c) { (void)n; (void)c; }

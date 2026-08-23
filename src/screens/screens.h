@@ -36,14 +36,18 @@ typedef enum {
 /**
  * @brief Arm the keyboard, then `app_goto(app, SCREEN_KEYBOARD)`.
  *
- * @p out is written only when the user confirms with a non-empty field, so a cancelled edit
- * leaves the old value alone without the caller having to keep a copy.
+ * @p out is written only on confirm. A cancelled edit (B on an empty field) leaves it alone
+ * without the caller having to keep a copy. Empty confirm is refused unless @p allow_empty,
+ * which is how a display-name revert is spelled: DONE on nothing means "automatic again."
  *
  * @p initial may contain characters this charset cannot type -- a name written by the odometer
  * this replaced can hold digits. Those display and can be deleted; only input is restricted.
  */
 void screen_keyboard_ask (kb_charset_t set, const char *prompt, const char *initial,
-                          char *out, size_t cap, screen_id_t back);
+                          char *out, size_t cap, screen_id_t back, bool allow_empty);
+
+/** @brief True if the last visit confirmed rather than cancelled. */
+bool screen_keyboard_accepted (void);
 
 /** @brief Characters @p set accepts before it starts refusing. */
 int screen_keyboard_limit (kb_charset_t set);

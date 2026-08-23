@@ -1,0 +1,28 @@
+# Name a game from its sheet, and see the path that tells hacks apart.
+#
+# C-up on the detail sheet opens the keyboard, seeded with the display title. The path sits at
+# the bottom of the sheet, not under the heading. Under ares the sidecar cannot be written
+# (the fixture is a read-only DFS), so Done on a typed name must fail cleanly and leave the
+# title as it was -- that is the read-only-card path, not a skip.
+#
+# Frame 3 is the keyboard field after forty characters, which is past the ~24 that used to
+# clip and hide the caret. Extra presses after the 63-character cap are refused, not dropped
+# silently, so the caret stays put.
+
+wait 140
+press a             # first title's sheet
+wait 40
+fbdump              # 1: sheet up, path along the footer, Name hint next to Fav
+
+press cup           # -> the keyboard
+wait 30
+fbdump              # 2: field already holding the display title
+
+press a x40         # forty more characters, well past the field
+wait 20
+fbdump              # 3: the caret still on screen, the start of the name scrolled off
+
+press start         # Done -- write will fail on this card
+wait 30
+fbdump              # 4: back on the sheet, title unchanged
+exit

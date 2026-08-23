@@ -49,7 +49,10 @@ The menu creates a `mainmenu` folder on its own. You can ignore it.
 - **A** opens a game's page, **A** again starts it
 - **B** goes back
 - **C-right** is favourite
+- **C-up** on a game's page names it (empty name reverts)
 - **Start** is settings
+
+Games that share a cartridge title (Zelda hacks, two regions of the same game) show their **file names** instead. The full path is at the bottom of the game's page. A name you type is stored next to the ROM in a `.ini` file, so it travels with the game.
 
 ---
 
@@ -141,7 +144,13 @@ Deleting the whole `mainmenu` folder makes the menu forget settings, favourites,
 
 ## More detail
 
-Skip this unless you are placing a bulk art pack, editing `boxart.ini`, or chasing a cheat that does nothing in-game.
+Skip this unless you are placing a bulk art pack, editing `boxart.ini`, chasing a cheat that does nothing in-game, or renaming a game by hand.
+
+### Display names
+
+**C-up** on a game's page opens the keyboard. The name is written as `display_name` under `[menu]` in a `.ini` next to the ROM (the same sidecar that already holds boot overrides). Clearing the field and pressing Done removes it and the automatic name comes back — the header if it is unique, otherwise the file name.
+
+Do not strip region tags or `[!]` from file names; they are how hacks of the same cartridge are told apart.
 
 ### How covers are found
 

@@ -4,6 +4,7 @@
  * @ingroup ui
  */
 
+#include <math.h>
 #include <string.h>
 #include <libdragon.h>
 
@@ -172,6 +173,59 @@ void ui_label (int x, int y, int w, rdpq_align_t align, int style, const char *s
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
     ui_text(x, y, w, align, style, s);
+}
+
+#define MARQUEE_PAUSE    0.80f
+#define MARQUEE_PX_S     40.0f
+#define MARQUEE_ASCENT   22
+#define MARQUEE_DESCENT  8
+
+void ui_text_marquee (int x, int y, int w, rdpq_align_t fit_align, int style,
+                      const char *s, float clock) {
+    if (s == NULL || s[0] == '\0' || w <= 0) {
+        return;
+    }
+
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+
+    int tw = ui_text_width(FNT_DEFAULT, s);
+    if (tw <= w) {
+        ui_text(x, y, w, fit_align, style, s);
+        return;
+    }
+
+    float max_off = (float)(tw - w);
+    float travel = max_off / MARQUEE_PX_S;
+    float cycle = MARQUEE_PAUSE + travel + MARQUEE_PAUSE;
+    float t = fmodf(clock, cycle);
+    if (t < 0.0f) {
+        t += cycle;
+    }
+
+    int off;
+    if (t < MARQUEE_PAUSE) {
+        off = 0;
+    } else if (t < MARQUEE_PAUSE + travel) {
+        off = (int)((t - MARQUEE_PAUSE) * MARQUEE_PX_S);
+        if (off > (int)max_off) {
+            off = (int)max_off;
+        }
+    } else {
+        off = (int)max_off;
+    }
+
+    rdpq_set_scissor(x, y - MARQUEE_ASCENT, x + w, y + MARQUEE_DESCENT);
+    ui_text(x - off, y, tw + 8, ALIGN_LEFT, style, s);
+    rdpq_set_scissor(0, 0, SCREEN_W, SCREEN_H);
+}
+
+int ui_text_scroll_x (int box_x, int box_w, int caret_px, int caret_w) {
+    int need = caret_px + caret_w;
+    if (need <= box_w) {
+        return box_x;
+    }
+    return box_x - (need - box_w);
 }
 
 /* Controller buttons drawn as the controller wears them: A blue, B green, START red, the

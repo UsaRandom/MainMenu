@@ -76,6 +76,28 @@ int ui_text_width (menu_font_type_t font, const char *s);
 void ui_label (int x, int y, int w, rdpq_align_t align, int style, const char *s);
 
 /**
+ * @brief One line of text that scrolls if it does not fit @p w.
+ *
+ * If the string is narrower than @p w it is drawn with @p fit_align and does not move. If it is
+ * wider, it is scissored to the box and scrolls left: a pause, a 40 px/s crawl, a pause at the
+ * tail, then it jumps back. @p clock is seconds since this subject started; the caller resets it
+ * when the string changes (grid cursor, a different game's sheet).
+ *
+ * Body face only. Tiles do not use this -- the no-marquee rule still holds there.
+ */
+void ui_text_marquee (int x, int y, int w, rdpq_align_t fit_align, int style,
+                      const char *s, float clock);
+
+/**
+ * @brief Origin at which to draw a string so a caret at @p caret_px stays inside the box.
+ *
+ * Used by the keyboard field: ping-pong marquee fights the caret, so the field scrolls to keep
+ * the insertion point on screen instead. @p caret_w is the caret's own width, so the bar is not
+ * drawn half off the right edge.
+ */
+int ui_text_scroll_x (int box_x, int box_w, int caret_px, int caret_w);
+
+/**
  * @brief A padlock: a hollow shackle over a solid body.
  *
  * Drawn from primitives rather than carried as a sprite so it scales to both places it appears --

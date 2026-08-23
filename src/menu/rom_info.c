@@ -762,6 +762,8 @@ static void extract_rom_info (match_t *match, rom_header_t *rom_header, rom_info
         rom_info->features.expansion_pak = EXPANSION_PAK_NONE;
     }
 
+    rom_info->display_name = NULL;
+
     rom_info->meta.name = strdup("");
     rom_info->meta.author = strdup("Not specified");
     rom_info->meta.release_date = strdup("Not specified");
@@ -1145,6 +1147,11 @@ void rom_info_free_meta(rom_info_t *rom_info) {
     if (!rom_info) {
         return;
     }
+
+    if (rom_info->display_name) {
+        free(rom_info->display_name);
+        rom_info->display_name = NULL;
+    }
     
     if (rom_info->meta.name) {
         free(rom_info->meta.name);
@@ -1190,6 +1197,11 @@ static void load_rom_config_from_file (path_t *path, rom_info_t *rom_info) {
         // general
         rom_info->settings.cheats_enabled = ini_get_bool(rom_config_ini, "", "cheats_enabled", false);
         rom_info->settings.patches_enabled = ini_get_bool(rom_config_ini, "", "patches_enabled", false);
+
+        const char *dn = ini_get_string(rom_config_ini, "menu", "display_name", "");
+        if (dn != NULL && dn[0] != '\0') {
+            rom_info->display_name = strdup(dn);
+        }
         
         // overrides
         rom_info->boot_override.cic_type = ini_get_int(rom_config_ini, "custom_boot", "cic_type", ROM_CIC_TYPE_AUTOMATIC);
@@ -1252,6 +1264,42 @@ static rom_err_t save_rom_config_setting_to_file (path_t *path, const char *type
     path_free(rom_info_path);
 
     return ROM_OK;
+}
+
+rom_err_t rom_config_set_display_name (path_t *path, const char *name) {
+    path_t *rom_info_path = path_clone(path);
+    if (rom_info_path == NULL) {
+        return ROM_ERR_SAVE_IO;
+    }
+
+    path_ext_replace(rom_info_path, "ini");
+
+    ini_t *rom_config_ini = ini_try_load(path_get(rom_info_path));
+    if (rom_config_ini == NULL) {
+        path_free(rom_info_path);
+        return ROM_ERR_SAVE_IO;
+    }
+
+    if (name == NULL || name[0] == '\0') {
+        ini_delete_key(rom_config_ini, "menu", "display_name");
+    } else {
+        ini_set_string(rom_config_ini, "menu", "display_name", name);
+    }
+
+    bool empty = ini_is_empty(rom_config_ini);
+    rom_err_t err = ROM_OK;
+
+    if (!empty) {
+        if (!ini_save(rom_config_ini, path_get(rom_info_path))) {
+            err = ROM_ERR_SAVE_IO;
+        }
+    } else if (remove(path_get(rom_info_path)) && (errno != ENOENT)) {
+        err = ROM_ERR_SAVE_IO;
+    }
+
+    ini_free(rom_config_ini);
+    path_free(rom_info_path);
+    return err;
 }
 
 

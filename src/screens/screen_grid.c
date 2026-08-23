@@ -47,6 +47,7 @@ static int cursor;              /**< index into view[] */
 static float scroll_y;          /**< pixels, content space; always rounded before use */
 static float scroll_target;
 static float pulse_phase;
+static float marquee_t;
 static tween_t grow;
 
 /** Frames of stillness before the decode budget opens up. ~0.25 s at 60 Hz. */
@@ -555,15 +556,15 @@ static void draw_footer (app_t *app) {
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
 
-    /* Tile titles live here at full width rather than on the tile, which is what lets the
-     * product hold the no-marquee rule: 608 px is about 52 characters at 20 px. */
+    /* Tile titles live here at full width rather than on the tile. 608 px is about 52
+     * characters, enough for a ROM header, not enough for a hack's filename -- those scroll. */
     if (view_count > 0) {
         const lib_record_t *rec = &app->lib->records[view[cursor]];
-        ui_text(SAFE_X, FOOTER_Y + 22, SAFE_W, ALIGN_CENTER, STL_DEFAULT,
-                rec->title ? rec->title : "?");
+        ui_text_marquee(SAFE_X, FOOTER_Y + 20, SAFE_W, ALIGN_CENTER, STL_DEFAULT,
+                        rec->title ? rec->title : "?", marquee_t);
         snprintf(buf, sizeof(buf), "%d / %d", cursor + 1, view_count);
     } else {
-        ui_text(SAFE_X, FOOTER_Y + 22, SAFE_W, ALIGN_CENTER, STL_GRAY, "NO TITLES IN THIS TAB");
+        ui_text(SAFE_X, FOOTER_Y + 20, SAFE_W, ALIGN_CENTER, STL_GRAY, "NO TITLES IN THIS TAB");
         buf[0] = '\0';
     }
 
@@ -712,6 +713,8 @@ static bool grid_worth_revealing (app_t *app) {
 static void grid_update (app_t *app, float dt) {
     const input_t *in = &app->input;
 
+    marquee_t += dt;
+
     /* The plate swallows input while it is up, so a button pressed during boot does not land on
      * a grid the user cannot see yet. It does NOT stop the grid updating -- scrolling, decoding
      * and the selection tween all run underneath, which is what makes the reveal a reveal. */
@@ -719,6 +722,7 @@ static void grid_update (app_t *app, float dt) {
         return;
     }
     int prev = cursor;
+    tab_t prev_tab = tab;
 
     /* The rail runs left to right and stops at both ends: tabs 0..TAB_COUNT-1, then the chip.
      * It used to wrap with a modulo, which cannot survive the chip -- wrapping would make
@@ -772,8 +776,12 @@ static void grid_update (app_t *app, float dt) {
         sound_play_effect(SFX_CURSOR);
         tween_start(&grow, DUR_TILE_GROW);
         frames_since_move = 0;
+        marquee_t = 0.0f;
     } else {
         frames_since_move++;
+    }
+    if (tab != prev_tab) {
+        marquee_t = 0.0f;
     }
 
     if (view_count > 0 && input_pressed(in, BTN_A)) {

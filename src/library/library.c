@@ -88,6 +88,7 @@ void library_clear (library_t *lib) {
     }
     for (int i = 0; i < lib->count; i++) {
         free(lib->records[i].path);
+        free(lib->records[i].given);
         free(lib->records[i].title);
         free(lib->records[i].art_file);
     }
@@ -426,6 +427,15 @@ static char *title_from_filename (const char *name) {
     return t;
 }
 
+char *library_title_from_path (const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        return NULL;
+    }
+    const char *slash = strrchr(path, '/');
+    const char *name = (slash != NULL && slash[1] != '\0') ? slash + 1 : path;
+    return title_from_filename(name);
+}
+
 /** @brief Trim trailing spaces from a fixed-width ROM header title. */
 static char *title_from_header (const char *raw, size_t len) {
     while (len > 0 && (raw[len - 1] == ' ' || raw[len - 1] == '\0')) {
@@ -472,18 +482,29 @@ static void index_n64 (lib_record_t *rec, const char *full_path) {
         if (info.features.expansion_pak == EXPANSION_PAK_SUGGESTED) caps |= CAP_EXP_SUGG;
         rec->feat = caps;
 
-        /* Prefer the curated metadata name, then the 20-byte header title, then the filename.
-         * The header title is uppercase and often padded, so it is a poor display string, but
-         * it beats a filename that has been through a ROM renamer. */
-        if (info.meta.name != NULL && info.meta.name[0] != '\0') {
-            free(rec->title);
-            rec->title = strdup(info.meta.name);
+        /* Given name, in priority order. Display is library_finish()'s job: a header shared by
+         * five hacks is a collision, not a title, and that can only be seen once the whole
+         * library is in memory.
+         *
+         * A typed override is first because it is the user's, and it is flagged so a later
+         * collision pass will not steal it. Homebrew meta.name is next -- it is already a real
+         * display string. The 20-byte header is last: uppercase and padded, but it beats a
+         * filename that has been through a ROM renamer when the header is unique. */
+        rec->flags &= ~LIBF_CUSTOM_TITLE;
+        if (info.display_name != NULL && info.display_name[0] != '\0') {
+            free(rec->given);
+            rec->given = strdup(info.display_name);
+            rec->flags |= LIBF_CUSTOM_TITLE;
+        } else if (info.meta.name != NULL && info.meta.name[0] != '\0') {
+            free(rec->given);
+            rec->given = strdup(info.meta.name);
         } else {
             char *ht = title_from_header(info.title, sizeof(info.title));
             if (ht != NULL) {
-                free(rec->title);
-                rec->title = ht;
+                free(rec->given);
+                rec->given = ht;
             }
+            /* else the filename the scan already put in given stands */
         }
 
         if (rec->game_code[1] == 'E' && rec->game_code[2] == 'D') {
@@ -621,7 +642,7 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
                     memset(rec, 0, sizeof(*rec));
                     rec->system = system;
                     rec->path = strdup(child);
-                    rec->title = title_from_filename(names[i]);
+                    rec->given = title_from_filename(names[i]);
                     rec->art_state = ART_PENDING;
                     /* Not zero: zero is ART_PORTRAIT, and a record that has never been probed
                      * must be distinguishable from one whose cover really is portrait -- the
@@ -681,6 +702,86 @@ void library_sort (library_t *lib) {
     qsort(lib->records, lib->count, sizeof(lib_record_t), compare_title);
 }
 
+void library_finish (library_t *lib) {
+    if (lib == NULL) {
+        return;
+    }
+
+    for (int i = 0; i < lib->count; i++) {
+        lib_record_t *r = &lib->records[i];
+        bool collide = false;
+
+        if ((r->flags & LIBF_CUSTOM_TITLE) == 0 && r->given != NULL && r->given[0] != '\0') {
+            for (int j = 0; j < lib->count; j++) {
+                const lib_record_t *o = &lib->records[j];
+                if (j == i || (o->flags & LIBF_CUSTOM_TITLE) != 0) {
+                    continue;
+                }
+                if (o->given != NULL && strcasecmp(r->given, o->given) == 0) {
+                    collide = true;
+                    break;
+                }
+            }
+        }
+
+        free(r->title);
+        if (collide) {
+            r->title = library_title_from_path(r->path);
+        } else if (r->given != NULL) {
+            r->title = strdup(r->given);
+        } else {
+            r->title = library_title_from_path(r->path);
+        }
+    }
+
+    library_sort(lib);
+}
+
+int library_find_path (const library_t *lib, const char *path) {
+    if (lib == NULL || path == NULL) {
+        return -1;
+    }
+    for (int i = 0; i < lib->count; i++) {
+        if (lib->records[i].path != NULL && strcmp(lib->records[i].path, path) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool library_set_title (library_t *lib, lib_record_t *rec, const char *name) {
+    if (lib == NULL || rec == NULL || rec->path == NULL) {
+        return false;
+    }
+
+    path_t *p = path_create(rec->path);
+    if (p == NULL) {
+        return false;
+    }
+    rom_err_t err = rom_config_set_display_name(p, name);
+    path_free(p);
+    if (err != ROM_OK) {
+        return false;
+    }
+
+    if (name != NULL && name[0] != '\0') {
+        free(rec->given);
+        rec->given = strdup(name);
+        rec->flags |= LIBF_CUSTOM_TITLE;
+    } else {
+        rec->flags &= ~LIBF_CUSTOM_TITLE;
+        free(rec->given);
+        rec->given = library_title_from_path(rec->path);
+        if (rec->system == SYS_N64) {
+            index_n64(rec, rec->path);
+        }
+    }
+
+    library_touch(lib);
+    library_finish(lib);
+    return true;
+}
+
 void library_join (char *out, size_t cap, const char *storage_prefix, const char *root) {
     size_t plen = strlen(storage_prefix);
     bool prefix_slash = (plen > 0 && storage_prefix[plen - 1] == '/');
@@ -705,7 +806,7 @@ int library_scan (library_t *lib, const char *storage_prefix, const char *root,
     int added = scan_dir(lib, base, 0, on_progress, true);
     uint32_t us = TIMER_MICROS(TICKS_SINCE(t0));
 
-    library_sort(lib);
+    library_finish(lib);
 
     /* Reported per ROM as well as in total: the total is what a user waits, but the per-ROM
      * figure is the one that extrapolates to a 500-title card. */

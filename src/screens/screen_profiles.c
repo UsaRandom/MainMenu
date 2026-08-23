@@ -211,7 +211,7 @@ static void begin_rename (app_t *app, int slot, const char *prompt) {
      * as, not what it is called, and pre-filling the field with it would make every new player
      * start by deleting eight characters they never typed. */
     screen_keyboard_ask(KB_NAME, prompt, profile_name_raw(slot),
-                        pending_name, sizeof(pending_name), SCREEN_PROFILES);
+                        pending_name, sizeof(pending_name), SCREEN_PROFILES, false);
     app_goto(app, SCREEN_KEYBOARD);
 }
 

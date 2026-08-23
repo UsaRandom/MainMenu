@@ -61,6 +61,10 @@ typedef enum {
      *  for why locked rather than hidden. Persisted, because a lock that forgot itself on the
      *  next boot is worse than no lock at all: the parent would believe it was still there. */
     LIBF_LOCKED = (1 << 5),
+    /** Display name was typed by the user and lives in `<rom>.ini`. Collision must not overwrite
+     *  it, and clearing it reverts to header / meta / filename. Persisted in the index flags so a
+     *  warm boot does not need to re-open the sidecar to know the name is theirs. */
+    LIBF_CUSTOM_TITLE = (1 << 6),
 } lib_flags_t;
 
 /**
@@ -103,7 +107,11 @@ typedef struct {
     uint16_t flags;             /**< lib_flags_t */
 
     char    *path;              /**< full path, heap */
-    char    *title;             /**< display title, heap */
+    /** What the scan or the user assigned, before collisions are applied. Header, homebrew
+     *  meta.name, filename, or a typed override. This is what library.idx stores as title_off.
+     *  Display is @ref title, computed by library_finish(). */
+    char    *given;
+    char    *title;             /**< display title, heap; do not persist, recompute */
     /** Where this record's art was found, resolved once and remembered. NULL until the first
      *  resolve. Caching it is not an optimisation for its own sake: art can now be found five
      *  ways, and re-walking that list on every pass is exactly the mistake that once cost 180
@@ -299,6 +307,40 @@ void library_art_note (library_t *lib, const char *name, const char *full_path);
 /** @brief Sort records into display order. Both the scan and the index merge end with this. */
 void library_sort (library_t *lib);
 
+/**
+ * @brief Apply collision display titles, then sort.
+ *
+ * Among records without #LIBF_CUSTOM_TITLE, a given name that appears more than once is replaced
+ * on screen by the filename (region tags and all). Unique headers stay. Must run on the assembled
+ * library, not per directory: incremental repair only rescans the folder that moved.
+ *
+ * Call after a scan, an index load, an incremental merge, and a rename.
+ */
+void library_finish (library_t *lib);
+
+/**
+ * @brief Filename without directory or extension. Keeps `(U)`, `[!]` and the rest.
+ *
+ * NULL @p path or a trailing slash returns NULL. The caller owns the result.
+ */
+char *library_title_from_path (const char *path);
+
+/**
+ * @brief Index of the record whose path is @p path, or -1.
+ *
+ * library_finish() sorts, so a rom_id taken before a rename is stale. Look the game up again.
+ */
+int library_find_path (const library_t *lib, const char *path);
+
+/**
+ * @brief Set or clear a typed display name.
+ *
+ * Non-empty @p name writes `[menu] display_name` to `<rom>.ini` and sets #LIBF_CUSTOM_TITLE.
+ * Empty or NULL deletes the key and re-derives the given name from the header / meta / filename.
+ * Then library_finish(). False if the sidecar could not be written (read-only card).
+ */
+bool library_set_title (library_t *lib, lib_record_t *rec, const char *name);
+
 /** @brief Note that a record changed and the on-disk index is now behind. */
 void library_touch (library_t *lib);
 
@@ -335,7 +377,7 @@ int library_scan (library_t *lib, const char *storage_prefix, const char *root,
  * For incremental revalidation. The signature walk has already worked out which directories moved;
  * this indexes one of them without touching the children, whose records the index still holds and
  * whose signatures still match. Records land unsorted at the end of the library, so the caller
- * calls library_sort() once after merging rather than once per directory.
+ * calls library_finish() once after merging rather than once per directory.
  *
  * @return number of records added.
  */

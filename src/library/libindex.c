@@ -309,7 +309,7 @@ static bool record_load (library_t *lib, const idx_record_t *rec,
 
     const char *s;
     if ((s = str_at(strtab, strbytes, rec->path_off))  != NULL) r->path     = strdup(s);
-    if ((s = str_at(strtab, strbytes, rec->title_off)) != NULL) r->title    = strdup(s);
+    if ((s = str_at(strtab, strbytes, rec->title_off)) != NULL) r->given    = strdup(s);
     if ((s = str_at(strtab, strbytes, rec->art_off))   != NULL) r->art_file = strdup(s);
 
     /* Art state is rebuilt, never restored. ART_READY refers to a slot in a RAM pool that does
@@ -476,7 +476,7 @@ static bool merge_incremental (library_t *lib, const idx_payload_t *h, const voi
     /* Records loaded from the index already carry their art path; this is for the ones the rescan
      * just produced, and for any kept record whose cover has only now appeared somewhere else. */
     library_resolve_loose_art(lib);
-    library_sort(lib);
+    library_finish(lib);
 
     res->incremental = true;
     debugf("LIBINDEX incremental: kept %d, rescanned %d dirs for %d titles\n",
@@ -594,6 +594,7 @@ bool libindex_load (library_t *lib, const char *storage_prefix, const char *root
         }
     }
     res.records_kept = lib->count;
+    library_finish(lib);
 
     uint32_t total_us = TIMER_MICROS(TICKS_SINCE(t0));
     debugf("LIBINDEX loaded %d titles in %lu us (%lu us of that revalidating %d dirs)\n",
@@ -714,7 +715,7 @@ static bool save_with_sigs (const library_t *lib, const dirsig_t *sigs, int sig_
          * "happens to be" is not something to write an unaligned store against. */
         uint32_t path_off = STR_NONE, title_off = STR_NONE, art_off = STR_NONE;
         strings_ok = str_push(&strtab, &str_len, &str_cap, r->path,     &path_off)  &&
-                     str_push(&strtab, &str_len, &str_cap, r->title,    &title_off) &&
+                     str_push(&strtab, &str_len, &str_cap, r->given,    &title_off) &&
                      str_push(&strtab, &str_len, &str_cap, r->art_file, &art_off);
         recs[i].path_off  = path_off;
         recs[i].title_off = title_off;

@@ -44,6 +44,7 @@ void path_free (path_t *p) { (void)p; }
  * check below about art_count is measuring something else. */
 static int rom_calls = 0;
 rom_err_t rom_config_load (path_t *p, rom_info_t *ri) { (void)p; (void)ri; rom_calls++; return 0; }
+rom_err_t rom_config_set_display_name (path_t *p, const char *n) { (void)p; (void)n; return 0; }
 void rom_info_free_meta (rom_info_t *ri) { (void)ri; }
 rom_save_type_t rom_info_get_save_type (rom_info_t *ri) { (void)ri; rom_calls++; return 0; }
 

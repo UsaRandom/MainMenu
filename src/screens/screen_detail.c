@@ -98,8 +98,42 @@ static bool cheats_from_db;
 /** Whether the cheat engine can hook this game at all, decided alongside the load. */
 static cheatfit_t cheats_fit = CHEATFIT_OK;
 
+static float marquee_t;
+static bool  pending_rename;
+static char  pending_name[64];
+static char  pending_path[512];
+
+static void apply_pending_rename (app_t *app) {
+    if (!pending_rename) {
+        return;
+    }
+    pending_rename = false;
+    if (!screen_keyboard_accepted() || app->lib == NULL) {
+        return;
+    }
+
+    int id = library_find_path(app->lib, pending_path);
+    if (id < 0) {
+        return;
+    }
+
+    if (!library_set_title(app->lib, &app->lib->records[id], pending_name)) {
+        sound_play_effect(SFX_ERROR);
+        return;
+    }
+
+    /* library_finish sorts, so the index we opened this sheet with is stale. */
+    int found = library_find_path(app->lib, pending_path);
+    if (found >= 0) {
+        app->launch.rom_id = found;
+    }
+}
+
 static void detail_enter (app_t *app) {
+    apply_pending_rename(app);
+
     closing = false;
+    marquee_t = 0.0f;
     tween_start(&rise, DUR_SHEET_OPEN);
 
     /* Load once per game rather than once per visit: coming back from the cheats screen must not
@@ -168,6 +202,7 @@ static void detail_background (app_t *app, uint32_t budget_ticks) {
 static void detail_update (app_t *app, float dt) {
     const input_t *in = &app->input;
 
+    marquee_t += dt;
     tween_step(&rise, dt);
 
     if (closing) {
@@ -177,6 +212,22 @@ static void detail_update (app_t *app, float dt) {
         if (tween_t01(&rise) >= 1.0f) {
             app_goto(app, SCREEN_GRID);
         }
+        return;
+    }
+
+    /* Rename. C-up is the unused C button for "do something to this game"; Fav is C-right and
+     * lock is C-left. Seeded with the display title so a colliding Zelda opens on the filename,
+     * not THE LEGEND OF ZELDA. Empty confirm reverts. */
+    if (input_pressed(in, BTN_CUP) && app->launch.rom_id >= 0) {
+        const lib_record_t *r = &app->lib->records[app->launch.rom_id];
+        pending_rename = true;
+        pending_name[0] = '\0';
+        snprintf(pending_path, sizeof(pending_path), "%s", r->path ? r->path : "");
+        screen_keyboard_ask(KB_TEXT, "Name this game",
+                            r->title ? r->title : "",
+                            pending_name, sizeof(pending_name), SCREEN_DETAIL, true);
+        sound_play_effect(SFX_ENTER);
+        app_goto(app, SCREEN_KEYBOARD);
         return;
     }
 
@@ -341,8 +392,9 @@ static void detail_render (app_t *app, surface_t *fb) {
     }
 
     int y = art_y;
-    ui_label(INFO_X, y, INFO_W, ALIGN_LEFT, STL_DEFAULT,
-             (rec != NULL && rec->title != NULL) ? rec->title : ri->title);
+    ui_text_marquee(INFO_X, y, INFO_W, ALIGN_LEFT, STL_DEFAULT,
+                    (rec != NULL && rec->title != NULL) ? rec->title : ri->title,
+                    marquee_t);
     y += ROW_H + 8;
 
     char buf[64];
@@ -447,6 +499,23 @@ static void detail_render (app_t *app, surface_t *fb) {
         y += ROW_H;
     }
 
+    /* Path at the bottom of the sheet, not in the footer: regular use is play / cheats / fav,
+     * and the path is for telling hacks apart. Shown only while the sheet is at rest -- not
+     * during the rise, and gone the instant close starts, so it does not travel with the panel.
+     * The storage prefix (rom:/, sd:/) is the cartridge's mount, not a folder the user made. */
+    if (rec != NULL && rec->path != NULL && !closing && !rise.running) {
+        const char *shown = rec->path;
+        const char *colon = strchr(shown, ':');
+        if (colon != NULL) {
+            shown = colon + 1;
+            while (*shown == '/') {
+                shown++;
+            }
+        }
+        ui_text_marquee(SAFE_X + 8, FOOTER_Y - 12, SAFE_W - 8, ALIGN_LEFT, STL_GRAY,
+                        shown, marquee_t);
+    }
+
     /* Footer hints belong to the sheet while it is up, so the grid's own hints do not show
      * through and offer actions that are not available. */
     ui_fill(FOOTER_X, FOOTER_Y, FOOTER_W, FOOTER_H, th->panel_alt);
@@ -457,6 +526,7 @@ static void detail_render (app_t *app, surface_t *fb) {
      * menu; Start stays bound because nothing is gained by taking it away. */
     hx = ui_hint(hx, FOOTER_Y + 14, "A", BTN_A_COLOR, UI_BTN_DISC, "Play");
     hx = ui_hint(hx, FOOTER_Y + 14, ">", BTN_C_COLOR, UI_BTN_DISC, "Fav");
+    hx = ui_hint(hx, FOOTER_Y + 14, "^", BTN_C_COLOR, UI_BTN_DISC, "Name");
     /* Only when a code is set, because without one the button does nothing -- and a hint for a
      * button that does nothing is worse than no hint. This is also the only place the padlock is
      * advertised, so it appears exactly when it has become real. */

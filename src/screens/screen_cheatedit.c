@@ -257,7 +257,7 @@ static void cheatedit_update (app_t *app, float dt) {
     if (input_pressed(in, BTN_A) && cursor < name_cells) {
         pending_name_edit = true;
         screen_keyboard_ask(KB_TEXT, "Name this cheat", name,
-                            name, sizeof(name), SCREEN_CHEATEDIT);
+                            name, sizeof(name), SCREEN_CHEATEDIT, false);
         app_goto(app, SCREEN_KEYBOARD);
         return;
     }
