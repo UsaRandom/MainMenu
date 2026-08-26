@@ -153,6 +153,9 @@ void thumbcache_reshape (thumbcache_t *tc, library_t *lib);
  * array when a display name changes, so every slot would then hold someone else's art (or, for
  * any id that no longer matches a slot, ART_READY with no surface: a permanent blank, because
  * the decoder only starts ART_PENDING records). Call this, then the sort, then #thumbcache_rebind.
+ *
+ * Also drops any decode in flight, before the sort: decode_done holds a record pointer that
+ * qsort invalidates. #thumbcache_rebind still defends the same case after the sort.
  */
 void thumbcache_prepare_shuffle (thumbcache_t *tc, const library_t *lib);
 

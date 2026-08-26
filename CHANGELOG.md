@@ -4,6 +4,15 @@
 - For the 64Drive, use the `menu.bin` file in the root of your SD card.
 - For the ares emulator, use the `N64FlashcartMenu.n64` file.
 
+## Release Notes 2026-08-26 - Tagged 1.3.1
+
+Hotfix: naming games from the sheet no longer takes the menu down after a handful of renames.
+
+- **Bug Fixes**
+	- **Renaming a game no longer crashes the menu.** C-up wrote the new name and then freed and reallocated every display title in the library, including the ones that did not move. After a few of those the body font's atlas table was garbage, and the next paint -- the sheet heading as B closed the page, or the player chip on the grid -- died in libdragon's inspector with a read from an invalid address. A title whose string did not change now keeps its allocation; only the records the collision pass actually moved are replaced. An in-flight box-art decode is dropped before the sort, not after, so a completed PNG cannot write onto whoever landed in the hole.
+
+No index-format bump. Existing cards keep working.
+
 ## Release Notes 2026-Vnext
 
 - **New Features**

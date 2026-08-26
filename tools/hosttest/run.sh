@@ -85,7 +85,14 @@ TESTDIR="$OUT/idxdir" "$OUT/test_libindex" 2>/dev/null
 
 echo
 echo "== display titles: collision, custom skip, tags kept"
-$CC $CFLAGS tools/hosttest/test_library_title.c src/library/library.c -o "$OUT/test_library_title"
+# library.c is compiled against counted malloc/strdup so a second finish that still
+# allocates every title goes red. Pointer equality cannot see a free+strdup of the
+# same length: the heap hands the same address back.
+$CC $CFLAGS -Dmalloc=ht_malloc -Dfree=ht_free -Dstrdup=ht_strdup \
+    -include tools/hosttest/shim/ht_alloc.h \
+    -c src/library/library.c -o "$OUT/library_title.o"
+$CC $CFLAGS tools/hosttest/test_library_title.c "$OUT/library_title.o" \
+    -o "$OUT/test_library_title"
 "$OUT/test_library_title"
 
 echo
@@ -185,6 +192,31 @@ echo "== running the emitted engine against Datel's"
 python3 tools/rompatch.py --self-test
 
 if [ "${1:-}" = "--mutate" ]; then
+    echo
+    echo "== mutation: realloc every title on every finish, the title suite must go red"
+    # The 1.3.0 rename crash. finish used to free+strdup every record, including the ones
+    # that did not move, and a test that only compared pointers would stay green because a
+    # same-size strdup is handed the same address back. Forcing the skip off must make the
+    # allocation-count checks fail.
+    sed 's/if (title_is_current(r, collide)) {/if (0 \&\& title_is_current(r, collide)) {/' \
+        src/library/library.c > "$OUT/library_title_mut.c"
+    if ! mutated "$OUT/library_title_mut.c" src/library/library.c \
+            "keeping a title allocation that did not change"; then
+        :
+    else
+        $CC $CFLAGS -Dmalloc=ht_malloc -Dfree=ht_free -Dstrdup=ht_strdup \
+            -include tools/hosttest/shim/ht_alloc.h \
+            -c "$OUT/library_title_mut.c" -o "$OUT/library_title_mut.o"
+        $CC $CFLAGS tools/hosttest/test_library_title.c "$OUT/library_title_mut.o" \
+            -o "$OUT/test_library_title_mut"
+        if "$OUT/test_library_title_mut" >"$OUT/library_title_mut.log" 2>&1; then
+            echo "MUTANT PASSED -- the title suite cannot see a finish that reallocates everyone" >&2
+            exit 1
+        fi
+        grep -E 'FAIL' "$OUT/library_title_mut.log"
+        echo "mutation detected, so a green title run above means something"
+    fi
+
     echo
     echo "== mutation: accept a target that is neither __osException nor +16"
     # Conker's Bad Fur Day and GoldenEye 007 both match a run of data whose reconstructed target

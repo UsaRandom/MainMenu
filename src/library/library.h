@@ -323,6 +323,9 @@ void library_sort (library_t *lib);
  * library, not per directory: incremental repair only rescans the folder that moved.
  *
  * Call after a scan, an index load, an incremental merge, and a rename.
+ *
+ * A title whose display string did not change keeps its allocation. A rename that used to
+ * free and strdup every record now touches only the ones the collision pass actually moved.
  */
 void library_finish (library_t *lib);
 

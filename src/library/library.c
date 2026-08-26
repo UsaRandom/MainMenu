@@ -428,26 +428,71 @@ void library_join_child (char *out, size_t cap, const char *dir, const char *nam
     snprintf(out, cap, "%s/%s", dir, name);
 }
 
-/** @brief Filename without directory or extension, as a fallback display title. */
-static char *title_from_filename (const char *name) {
+/**
+ * @brief Filename without directory or extension, as a view into @p path. Not a new string.
+ *
+ * library_finish() used this as a malloc on every record, every call, including the hundreds of
+ * titles a rename does not change. Comparing against the live path lets a title that is already
+ * right keep its allocation.
+ */
+static void filename_stem (const char *path, const char **stem, size_t *len) {
+    if (path == NULL || path[0] == '\0') {
+        *stem = "";
+        *len = 0;
+        return;
+    }
+    const char *slash = strrchr(path, '/');
+    const char *name = (slash != NULL && slash[1] != '\0') ? slash + 1 : path;
     const char *dot = strrchr(name, '.');
-    size_t n = dot ? (size_t)(dot - name) : strlen(name);
+    *stem = name;
+    *len = dot ? (size_t)(dot - name) : strlen(name);
+}
+
+char *library_title_from_path (const char *path) {
+    const char *stem;
+    size_t n;
+    filename_stem(path, &stem, &n);
+    if (n == 0 && (path == NULL || path[0] == '\0')) {
+        return NULL;
+    }
     char *t = malloc(n + 1);
     if (t == NULL) {
         return NULL;
     }
-    memcpy(t, name, n);
+    memcpy(t, stem, n);
     t[n] = '\0';
     return t;
 }
 
-char *library_title_from_path (const char *path) {
-    if (path == NULL || path[0] == '\0') {
-        return NULL;
+static bool title_equals_stem (const char *title, const char *path) {
+    if (title == NULL) {
+        return false;
     }
-    const char *slash = strrchr(path, '/');
-    const char *name = (slash != NULL && slash[1] != '\0') ? slash + 1 : path;
-    return title_from_filename(name);
+    const char *stem;
+    size_t n;
+    filename_stem(path, &stem, &n);
+    return strlen(title) == n && memcmp(title, stem, n) == 0;
+}
+
+/**
+ * @brief True when @p r->title is already the string library_finish() would assign.
+ *
+ * The guard, not the collision walk, is what a rename used to skip: every C-up freed and
+ * reallocated every title in the library, including the ones that did not move. On a real card
+ * that is hundreds of heap operations next to the 1.28 MB body font, and the inspector then
+ * died in rdpq_font_render_paragraph with a garbage atlas pointer. See AUDIT.md 1bk.
+ */
+static bool title_is_current (const lib_record_t *r, bool collide) {
+    if (r->title == NULL) {
+        return false;
+    }
+    if (collide) {
+        return title_equals_stem(r->title, r->path);
+    }
+    if (r->given != NULL) {
+        return strcmp(r->title, r->given) == 0;
+    }
+    return title_equals_stem(r->title, r->path);
 }
 
 /** @brief Trim trailing spaces from a fixed-width ROM header title. */
@@ -656,7 +701,7 @@ static int scan_dir (library_t *lib, const char *dir, int depth,
                     memset(rec, 0, sizeof(*rec));
                     rec->system = system;
                     rec->path = strdup(child);
-                    rec->given = title_from_filename(names[i]);
+                    rec->given = library_title_from_path(names[i]);
                     rec->art_state = ART_PENDING;
                     /* Not zero: zero is ART_PORTRAIT, and a record that has never been probed
                      * must be distinguishable from one whose cover really is portrait -- the
@@ -736,6 +781,10 @@ void library_finish (library_t *lib) {
                     break;
                 }
             }
+        }
+
+        if (title_is_current(r, collide)) {
+            continue;
         }
 
         free(r->title);

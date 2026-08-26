@@ -172,6 +172,28 @@ void thumbcache_prepare_shuffle (thumbcache_t *tc, const library_t *lib) {
     if (tc == NULL || lib == NULL) {
         return;
     }
+
+    /* Drop anything that holds a record pointer or a rom_id that qsort is about to invalidate.
+     * rebind used to abort AFTER the sort, which is the window a completed PNG would write
+     * ART_READY onto whoever landed in the hole. Abort does not call back. */
+    if (tc->decoding_slot >= 0) {
+        image_decoder_abort();
+        int s = tc->decoding_slot;
+        if (tc->slots[s].art != NULL) {
+            surface_free(tc->slots[s].art);
+            free(tc->slots[s].art);
+            tc->slots[s].art = NULL;
+        }
+        tc->slots[s].used = false;
+        tc->slots[s].rom_id = 0xFFFF;
+        tc->decoding_slot = -1;
+    }
+    if (tc->build_active) {
+        image_decoder_abort();
+        tc->build_active = false;
+        tc->build_rec = NULL;
+    }
+
     for (int i = 0; i < THUMB_SLOTS; i++) {
         shuffle_path[i] = NULL;
         if (tc->slots[i].used && tc->slots[i].rom_id < (uint16_t)lib->count) {

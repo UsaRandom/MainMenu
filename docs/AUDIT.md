@@ -6848,3 +6848,39 @@ drawing code on every later trip rendered cleanly. Nothing in the tree accounts 
 difference; the freeze of that build was later traced to the audio bank's machinery, and the
 glitch may have been the same wreckage, but that is an inference, not a finding. Recorded so the
 next person who sees sprite corruption knows it has been seen once before.
+
+## 1bk. Naming a game smashed the body font, and the inspector died on the next paint
+
+A 1.3.0 card on an M64 (firmware 2.18.0) crashed after about five C-up renames, always on B
+back to the grid, with numbers that moved each time. Two inspector dumps:
+
+| | crash 1 | crash 2 |
+|---|---|---|
+| exception | read from invalid address | same |
+| BadVAddr | `0x1045F77D` | `0xF77FEFC5` |
+| site | `rspq_block_run` of a font atlas block | `rdpq_font_render_paragraph` loading `sprite->hslices` |
+| drawing | sheet heading marquee (`detail_render` line 402) | grid player chip (`draw_chip`) |
+| font object (`s0`) | `0x80317660` | `0x80317660` |
+
+The body font is the largest allocation in the program (measured at 1,284,208 bytes with CJK).
+Both stacks die inside `rdpq_font_render_paragraph` while indexing `fnt->atlases[]`. Crash 2
+draws `profile_name()`, a short string that never changes during this session and is painted on
+every grid frame while browsing -- so the *string* is not the bad pointer. The atlas table
+inside the font blob is.
+
+`library_finish()` ran on every rename and did `free(title); title = strdup(given)` for every
+record, including the ones the collision pass left alone. On a card of hundreds of titles that
+is hundreds of heap operations against a 1.28 MB neighbour, every C-up. The inspector then
+died on the next text paint: the heading still runs during the sheet's close animation, which
+is why B looked like the trigger.
+
+Not reproduced on hardware in this session. What is verified: a host test of 32 unique titles
+where a second `library_finish()` must allocate nothing, and renaming one of them must allocate
+one title, not 32. Pointer equality cannot see this bug -- a sequential free then strdup of the
+same length is handed the same address back -- so the test compiles `library.c` against counted
+`malloc`/`strdup`. A mutation that forces the skip off goes red on that count.
+
+Also: `thumbcache_prepare_shuffle()` now aborts an in-flight decode *before* the sort.
+`decode_done` holds a `lib_record_t *`; after qsort that pointer is a different game. rebind
+still defends the same case after the sort. The decoder is polled from the main loop, so this
+window is closed rather than observed.

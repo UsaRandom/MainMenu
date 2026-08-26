@@ -122,6 +122,9 @@ static void apply_pending_rename (app_t *app) {
      * will not restart, which is a blank tile until the next boot. */
     thumbcache_prepare_shuffle(app->thumbs, app->lib);
     if (!library_set_title(app->lib, &app->lib->records[id], pending_name)) {
+        /* prepare_shuffle armed the remap and dropped any decode; disarm even on a refused
+         * write so the next rename does not rebind a shuffle that never sorted. */
+        thumbcache_rebind(app->thumbs, app->lib);
         sound_play_effect(SFX_ERROR);
         return;
     }
